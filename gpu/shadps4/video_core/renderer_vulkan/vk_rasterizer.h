@@ -160,6 +160,7 @@ private:
     std::unique_ptr<CameraMotion> camera_motion; // bbport: motion vectors (docs/upscaler.md)
     bool gbuffer_draw = false;
     std::unique_ptr<TemporalUpscaler> upscaler; // bbport: FSR (docs/upscaler.md)
+    std::array<float, 2> draw_jitter{};         ///< viewport offset of the current draw, pixels
     const bool host_markers_enabled;
     const bool guest_markers_enabled;
 

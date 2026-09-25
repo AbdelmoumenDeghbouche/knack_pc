@@ -78,8 +78,32 @@ void TemporalUpscaler::OnSceneColor(VideoCore::ImageId color) {
     scene_color = color;
 }
 
+namespace {
+float Halton(u32 index, u32 base) {
+    float f = 1.0f, result = 0.0f;
+    for (u32 i = index; i > 0; i /= base) {
+        f /= float(base);
+        result += f * float(i % base);
+    }
+    return result;
+}
+} // namespace
+
 void TemporalUpscaler::OnFrameStart() {
     done_this_frame = false;
+    // Halton(2, 3) over 8 phases (FSR's count for a 1:1 ratio). BB_JITTER=0 or toggle 1 << 25
+    // disables it.
+    static const bool jitter_enabled = [] {
+        const char* env = std::getenv("BB_JITTER");
+        return !env || env[0] != '0';
+    }();
+    if (!enabled || failed || !jitter_enabled || BbToggle::Disabled(1u << 24) ||
+        BbToggle::Disabled(1u << 25)) {
+        jitter = {};
+        return;
+    }
+    jitter_index = jitter_index % 8 + 1;
+    jitter = {Halton(jitter_index, 2) - 0.5f, Halton(jitter_index, 3) - 0.5f};
 }
 
 void TemporalUpscaler::OnDispatch(u64 cs_hash) {
@@ -309,7 +333,7 @@ void TemporalUpscaler::Run() {
     info.exposure.structSize = sizeof(info.exposure);
     info.reactiveMask.structSize = sizeof(info.reactiveMask);
     info.transparencyAndCompositionMask.structSize = sizeof(info.transparencyAndCompositionMask);
-    info.jitterOffset = {0.0f, 0.0f};
+    info.jitterOffset = {jitter[0], jitter[1]};
     info.motionVectorScale = {1.0f, 1.0f};
     info.renderSize = {w, h};
     info.outputSize = {w, h};

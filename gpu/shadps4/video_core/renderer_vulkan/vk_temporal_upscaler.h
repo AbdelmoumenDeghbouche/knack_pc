@@ -7,6 +7,7 @@
 
 #pragma once
 
+#include <array>
 #include <chrono>
 #include <memory>
 
@@ -47,6 +48,11 @@ public:
     /// Start of a frame in the command stream (display pass).
     void OnFrameStart();
 
+    /// This frame's sub-pixel jitter in pixels (screen x right, y down); zero when off.
+    [[nodiscard]] std::array<float, 2> Jitter() const noexcept {
+        return jitter;
+    }
+
 private:
     void Run();
     bool EnsureResources(u32 width, u32 height);
@@ -62,6 +68,8 @@ private:
     u64 trigger_hash = 0x9a9cf8a9;
     VideoCore::ImageId scene_color{};
     bool done_this_frame = false;
+    std::array<float, 2> jitter{};
+    u32 jitter_index = 0;
     bool reset = true;
     u64 frame_id = 0;
     std::chrono::steady_clock::time_point last_frame{};

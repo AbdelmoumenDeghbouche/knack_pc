@@ -311,6 +311,13 @@ void Rasterizer::Draw(bool is_indexed, u32 index_offset, const PreparedDraw* pre
     }
 
     pipeline->BindResources(set_writes, push_data);
+    // bbport: jitter geometry drawn with the scene depth, not full-screen passes (a shifted
+    // full-screen quad leaves an edge column unwritten).
+    draw_jitter = {};
+    if (upscaler->Enabled() && db_desc.first && db_desc.first == camera_motion->Depth() &&
+        (regs.num_indices > 6 || regs.num_instances.NumInstances() > 1)) {
+        draw_jitter = upscaler->Jitter();
+    }
     UpdateDynamicState(pipeline, is_indexed);
     scheduler.BeginRendering(state);
 
@@ -388,6 +395,10 @@ void Rasterizer::DrawIndirect(bool is_indexed, VAddr arg_address, u32 offset, u3
     }
 
     pipeline->BindResources(set_writes, push_data);
+    draw_jitter = {};
+    if (upscaler->Enabled() && db_desc.first && db_desc.first == camera_motion->Depth()) {
+        draw_jitter = upscaler->Jitter();
+    }
     UpdateDynamicState(pipeline, is_indexed);
     scheduler.BeginRendering(state);
 
@@ -1608,8 +1619,10 @@ void Rasterizer::UpdateViewportScissorState() const {
             const auto yoffset = vp_ctl.yoffset_enable ? vp.yoffset : 0.f;
             const auto yscale = vp_ctl.yscale_enable ? vp.yscale : 1.f;
 
-            viewport.x = xoffset - xscale;
-            viewport.y = yoffset - yscale;
+            // bbport: sub-pixel jitter of scene geometry for the temporal upscaler; the same
+            // shift as jittering the projection.
+            viewport.x = xoffset - xscale + draw_jitter[0];
+            viewport.y = yoffset - yscale + draw_jitter[1];
             viewport.width = xscale * 2.0f;
             viewport.height = yscale * 2.0f;
         }
