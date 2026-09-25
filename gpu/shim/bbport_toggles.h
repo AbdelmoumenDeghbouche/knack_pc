@@ -34,4 +34,9 @@ namespace BbStats {
 /// Guest writes caught by page protection, and pages currently left unprotected as hot.
 inline std::atomic<std::uint64_t> tracker_faults{0};
 inline std::atomic<std::int64_t> hot_pages{0};
+/// Stall diagnostics (BB_FRAME_STATS): per-frame deltas printed for frames over 40 ms.
+inline std::atomic<std::uint64_t> images_registered{0};
+inline std::atomic<std::uint64_t> image_upload_bytes{0};
+inline std::atomic<std::uint64_t> buffer_upload_bytes{0};
+inline std::atomic<int> gpu_thread_clock{-1}; ///< clockid_t of the GPU command thread
 } // namespace BbStats

@@ -3,6 +3,7 @@
 
 #include <chrono>
 #include <cstdio>
+#include <time.h>
 #include "common/assert.h"
 #include "bbport_toggles.h"
 #include "common/debug.h"
@@ -257,8 +258,32 @@ void VideoOutDriver::Flip(const Request& req) {
         static u32 frames;
         static double worst_ms;
         const auto now = Clock::now();
-        worst_ms = std::max(worst_ms, std::chrono::duration<double, std::milli>(now - last).count());
+        const double frame_ms = std::chrono::duration<double, std::milli>(now - last).count();
+        worst_ms = std::max(worst_ms, frame_ms);
         last = now;
+        // Stall diagnostics: what happened during a long frame.
+        static u64 last_gpu_ns, last_images, last_image_bytes, last_buffer_bytes;
+        u64 gpu_ns = 0;
+        if (const int clock = BbStats::gpu_thread_clock.load(); clock != -1) {
+            timespec ts{};
+            clock_gettime(static_cast<clockid_t>(clock), &ts);
+            gpu_ns = u64(ts.tv_sec) * 1000000000ull + u64(ts.tv_nsec);
+        }
+        const u64 images = BbStats::images_registered.load();
+        const u64 image_bytes = BbStats::image_upload_bytes.load();
+        const u64 buffer_bytes = BbStats::buffer_upload_bytes.load();
+        if (frame_ms > 40.0 && last_gpu_ns != 0) {
+            std::printf("Stall: %.1f ms frame; GPU thread on CPU %.1f ms; %llu images registered, "
+                        "%.1f MB image uploads, %.1f MB buffer uploads\n",
+                        frame_ms, (gpu_ns - last_gpu_ns) / 1e6,
+                        static_cast<unsigned long long>(images - last_images),
+                        (image_bytes - last_image_bytes) / 1e6,
+                        (buffer_bytes - last_buffer_bytes) / 1e6);
+        }
+        last_gpu_ns = gpu_ns;
+        last_images = images;
+        last_image_bytes = image_bytes;
+        last_buffer_bytes = buffer_bytes;
         ++frames;
         const double window = std::chrono::duration<double>(now - window_start).count();
         if (window >= 5.0) {

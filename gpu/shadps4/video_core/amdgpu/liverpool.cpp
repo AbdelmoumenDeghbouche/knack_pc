@@ -2,6 +2,9 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #include <chrono>
+#include <pthread.h>
+#include <time.h>
+#include "bbport_toggles.h"
 #include <cstdio>
 #include <boost/preprocessor/stringize.hpp>
 
@@ -93,6 +96,9 @@ void Liverpool::ProcessCommands() {
 
 void Liverpool::Process(std::stop_token stoken) {
     Common::SetCurrentThreadName("shadPS4:GpuCommandProcessor");
+    if (clockid_t clock; pthread_getcpuclockid(pthread_self(), &clock) == 0) {
+        BbStats::gpu_thread_clock.store(static_cast<int>(clock));
+    }
     gpu_id = std::this_thread::get_id();
 #ifdef __linux__
     gpu_tid = gettid();
