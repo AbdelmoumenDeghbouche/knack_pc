@@ -5,6 +5,7 @@
 #include <chrono>
 #include <ranges>
 
+#include "bbport_toggles.h"
 #include "common/hash.h"
 #include "common/io_file.h"
 #include "common/path_util.h"
@@ -672,6 +673,46 @@ vk::ShaderModule PipelineCache::CompileModule(Shader::Info& info, Shader::Runtim
     return module;
 }
 
+// bbport: the parts of a stage's resources that StageSpecialization reads, without addresses.
+static void BuildSpecializationKey(const Shader::Info& info,
+                                   boost::container::small_vector<u32, 256>& key) {
+    key.clear();
+    const auto push = [&key](const auto& value) {
+        static_assert(sizeof(value) % sizeof(u32) == 0);
+        const auto* words = reinterpret_cast<const u32*>(&value);
+        key.insert(key.end(), words, words + sizeof(value) / sizeof(u32));
+    };
+    const auto push_addressed = [&](auto sharp) {
+        key.push_back(sharp ? 1u : 0u);
+        sharp.base_address = 0;
+        push(sharp);
+    };
+    for (const auto& desc : info.buffers) {
+        push_addressed(desc.GetSharp(info));
+    }
+    for (const auto& desc : info.images) {
+        push_addressed(desc.GetSharp(info));
+    }
+    for (const auto& desc : info.fmasks) {
+        push_addressed(desc.GetSharp(info));
+    }
+    for (const auto& desc : info.samplers) {
+        const auto sharp = desc.GetSharp(info);
+        key.push_back(sharp ? 1u : 0u);
+        push(sharp);
+    }
+    if (info.has_fetch_shader) {
+        const u64 code = reinterpret_cast<u64>(
+            Shader::Gcn::GetFetchShaderCode(info, info.fetch_shader_sgpr_base));
+        push(code);
+        if (const auto fetch = Shader::Gcn::ParseFetchShader(info)) {
+            for (const auto& attrib : fetch->attributes) {
+                push_addressed(attrib.GetSharp(info));
+            }
+        }
+    }
+}
+
 PipelineCache::Result PipelineCache::GetProgram(HwStage hw_stage, SwStage sw_stage,
                                                 const Shader::ShaderParams& params,
                                                 Shader::Backend::Bindings& binding) {
@@ -687,6 +728,7 @@ PipelineCache::Result PipelineCache::GetProgram(HwStage hw_stage, SwStage sw_sta
 
         RegisterShaderMeta(program->info, spec.fetch_shader_data, spec, perm_hash, 0);
         program->AddPermut(module, std::move(spec));
+        program->has_last = false;
         return std::make_tuple(&program->info, module, program->modules[0].spec.fetch_shader_data,
                                perm_hash);
     }
@@ -696,6 +738,24 @@ PipelineCache::Result PipelineCache::GetProgram(HwStage hw_stage, SwStage sw_sta
     info.pgm_base = params.Base(); // Needs to be actualized for inline cbuffer address fixup
     info.user_data = params.user_data;
     info.RefreshFlatBuf();
+
+    const bool memo = sw_stage != SwStage::TessellationControl &&
+                      sw_stage != SwStage::TessellationEval &&
+                      !BbToggle::Disabled(BbToggle::SpecializationMemo);
+    thread_local boost::container::small_vector<u32, 256> key;
+    if (memo) {
+        BuildSpecializationKey(info, key);
+        if (program->has_last && program->last_used < program->modules.size() &&
+            program->last_binding == binding && program->last_runtime == runtime_info &&
+            std::ranges::equal(program->last_key, key)) {
+            info.AddBindings(binding);
+            const size_t idx = program->last_used;
+            return std::make_tuple(&program->info, program->modules[idx].module,
+                                   program->modules[idx].spec.fetch_shader_data,
+                                   HashCombine(params.hash, idx));
+        }
+    }
+    const auto binding_start = binding;
     auto spec = Shader::StageSpecialization(info, runtime_info, profile, binding);
 
     size_t perm_idx = program->modules.size();
@@ -722,6 +782,13 @@ PipelineCache::Result PipelineCache::GetProgram(HwStage hw_stage, SwStage sw_sta
         module = it->module;
         perm_idx = std::distance(program->modules.begin(), it);
         perm_hash = HashCombine(params.hash, perm_idx);
+    }
+    if (memo) {
+        program->last_used = perm_idx;
+        program->last_key.assign(key.begin(), key.end());
+        program->last_runtime = runtime_info;
+        program->last_binding = binding_start;
+        program->has_last = true;
     }
     return std::make_tuple(&program->info, module,
                            program->modules[perm_idx].spec.fetch_shader_data, perm_hash);

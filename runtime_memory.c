@@ -498,7 +498,8 @@ void *runtime_low_map(size_t size, int prot) {
  * 4 page tracking early exit, 8 pending-op poll limit, 16 threaded Vulkan recording,
  * 32 texture descriptor cache, 64 lock-free upload check, 128 image lookup cache,
  * 256 buffer uploads on the recording thread, 512 barrier tracker insert memo,
- * 1024 texture binding memo, 2048 page-granular read tracking for barriers. */
+ * 1024 texture binding memo, 2048 page-granular read tracking for barriers,
+ * 4096 shader specialization memo. */
 uint32_t runtime_disabled_optimizations;
 static void *toggle_watcher(void *path) {
     for (uint32_t last=UINT32_MAX;;) {
