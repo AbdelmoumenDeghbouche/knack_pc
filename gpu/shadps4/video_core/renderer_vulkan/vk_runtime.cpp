@@ -742,7 +742,7 @@ bool Runtime::IsBufferAccessed(const VideoCore::Buffer* handle, u64 offset, u64 
 
 void Runtime::AccessBuffer(const VideoCore::Buffer* handle, u64 offset, u64 size,
                            vk::PipelineStageFlags2 src_stage, vk::AccessFlags2 src_access) {
-    const AddressRange range = {
+    AddressRange range = {
         .resource = reinterpret_cast<u64>(handle),
         .range_start = offset,
         .range_end = offset + size - 1,
@@ -760,6 +760,14 @@ void Runtime::AccessBuffer(const VideoCore::Buffer* handle, u64 offset, u64 size
         vk::AccessFlagBits2::eDepthStencilAttachmentWrite | vk::AccessFlagBits2::eTransferWrite |
         vk::AccessFlagBits2::eMemoryWrite | vk::AccessFlagBits2::eTransformFeedbackWriteEXT;
 
+    // bbport: reads are tracked at 4 KiB granularity. Constant data comes from ring allocations
+    // at a new offset every draw; rounded, they land in ranges already present and the
+    // insert returns early instead of growing the tree until the next barrier flush.
+    // Wider read ranges only add barriers, never drop one.
+    if (!(src_access & WRITE_MASK) && !BbToggle::Disabled(BbToggle::CoarseReadTracking)) {
+        range.range_start &= ~u64{0xFFF};
+        range.range_end |= 0xFFF;
+    }
     const auto insert = [&](Access access) {
         if (BbToggle::Disabled(BbToggle::AccessMemo)) {
             barrier_tracker.InsertRange(range, access);

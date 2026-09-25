@@ -222,9 +222,13 @@ void Scheduler::RecorderThread(std::stop_token stoken) {
         static const auto spin_time = std::chrono::microseconds(
             std::thread::hardware_concurrency() >= 12 ? 200 : 20);
         const auto spin_until = std::chrono::steady_clock::now() + spin_time;
-        while (queued_chunks.load(std::memory_order_acquire) == 0 && !stoken.stop_requested() &&
-               std::chrono::steady_clock::now() < spin_until) {
+        for (u32 spins = 1; queued_chunks.load(std::memory_order_acquire) == 0; ++spins) {
             __builtin_ia32_pause();
+            // The clock is read every 256 pauses, not per iteration.
+            if (!(spins & 255) &&
+                (stoken.stop_requested() || std::chrono::steady_clock::now() >= spin_until)) {
+                break;
+            }
         }
         std::unique_ptr<RecordChunk> chunk;
         {
