@@ -45,6 +45,7 @@ Rasterizer::Rasterizer(const Instance& instance_, Scheduler& scheduler_, Runtime
       guest_markers_enabled{EmulatorSettings.IsVkGuestMarkersEnabled()} {
     // Before the rasterizer is bound: Liverpool enqueues buffers only once it sees it.
     draw_prep = std::make_unique<DrawPreparation>(pipeline_cache);
+    camera_motion = std::make_unique<CameraMotion>(instance, scheduler, texture_cache, runtime);
     if (!EmulatorSettings.IsNullGPU()) {
         liverpool->BindRasterizer(this);
     }
@@ -205,6 +206,10 @@ void Rasterizer::PrepareRenderState(const GraphicsPipeline* pipeline) {
     } else {
         db_desc.first = {};
     }
+    // bbport: the G-buffer pass (5+ color targets) holds the scene depth.
+    if (camera_motion->Enabled() && std::popcount(key.mrt_mask) >= 5 && db_desc.first) {
+        camera_motion->OnGBufferPass(db_desc.first);
+    }
 }
 
 static std::pair<u32, u32> GetDrawOffsets(
@@ -258,6 +263,12 @@ void Rasterizer::Draw(bool is_indexed, u32 index_offset, const PreparedDraw* pre
     }
 
     const auto& regs = liverpool->regs;
+    // bbport: the pass copying a finished frame to a display buffer; the previous draw's
+    // target is that frame.
+    if (camera_motion->Enabled() && regs.color_buffers[0] &&
+        FrameCapture::IsDisplayBuffer(regs.color_buffers[0].Address())) {
+        camera_motion->OnDisplayPass(cb_descs[0].first);
+    }
     const GraphicsPipeline* pipeline = pipeline_cache.GetGraphicsPipeline({}, prepared);
     if (prepared) {
         draw_prep->Count(pipeline != nullptr &&
@@ -876,6 +887,10 @@ void Rasterizer::BindBuffers(const Shader::Info& stage, Shader::Backend::Binding
             }
         } else {
             const auto vsharp = desc.GetSharp(stage);
+            if (vsharp.GetSize() == 864 && camera_motion->Enabled() &&
+                memory->IsValidGpuMapping(vsharp.base_address, 0)) {
+                camera_motion->OnConstants(reinterpret_cast<const float*>(vsharp.base_address));
+            }
             if (FrameCapture::Active() && vsharp.base_address != 0 && vsharp.GetSize() != 0 &&
                 memory->IsValidGpuMapping(vsharp.base_address, 0)) {
                 FrameCapture::Buffer(stage.pgm_hash, binding.buffer, vsharp.base_address,

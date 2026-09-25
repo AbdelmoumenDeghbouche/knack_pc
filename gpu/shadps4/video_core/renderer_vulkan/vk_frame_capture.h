@@ -27,6 +27,7 @@ public:
     /// VideoOut: a display buffer the game registered. A pass drawing into one starts a frame
     /// in the GPU command stream (the flip itself runs a frame behind).
     static void AddDisplayBuffer(VAddr address);
+    static bool IsDisplayBuffer(VAddr address);
 
     /// GPU thread: whether passes are being looked at (armed or recording; cheap).
     static bool Active() {

@@ -1,0 +1,51 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
+// bbport: camera motion vectors from depth and the current/previous camera (Bloodborne's scene
+// constants, see docs/upscaler.md). DEBUG_OVERLAY blends them as colors into the frame.
+#version 450
+#extension GL_EXT_samplerless_texture_functions : require
+
+layout(local_size_x = 8, local_size_y = 8) in;
+
+layout(binding = 0) uniform texture2D depth_tex; // D32, depth 0..1 (D3D projection)
+#ifdef DEBUG_OVERLAY
+layout(binding = 1, rgba8) uniform image2D color_img;
+#else
+layout(binding = 1, rg16f) uniform writeonly image2D motion_img; // pixels, previous - current
+#endif
+
+layout(push_constant) uniform Constants {
+    vec4 reproject[3]; // previous view * inverse current view, rows (3x4)
+    vec4 proj;         // current: x scale, y scale, z scale, z offset
+    vec4 prev_proj;    // previous: x scale, y scale, z scale, z offset
+    vec2 size;         // pixels
+};
+
+void main() {
+    const ivec2 pixel = ivec2(gl_GlobalInvocationID.xy);
+    if (pixel.x >= int(size.x) || pixel.y >= int(size.y)) {
+        return;
+    }
+    const float depth = texelFetch(depth_tex, pixel, 0).r;
+    const vec2 uv = (vec2(pixel) + 0.5) / size;
+    const vec2 ndc = vec2(uv.x * 2.0 - 1.0, 1.0 - uv.y * 2.0);
+
+    // Clip z = zs * z + zo, w = z; depth = zs + zo / z.
+    const float z = proj.w / max(depth - proj.z, 1e-7);
+    const vec4 view = vec4(ndc.x * z / proj.x, ndc.y * z / proj.y, z, 1.0);
+    const vec3 prev_view =
+        vec3(dot(reproject[0], view), dot(reproject[1], view), dot(reproject[2], view));
+    const vec2 prev_ndc =
+        vec2(prev_view.x * prev_proj.x, prev_view.y * prev_proj.y) / max(prev_view.z, 1e-4);
+    const vec2 prev_uv = vec2(prev_ndc.x * 0.5 + 0.5, 0.5 - prev_ndc.y * 0.5);
+    const vec2 motion = (prev_uv - uv) * size;
+    const bool sky = depth >= 0.99999;
+
+#ifdef DEBUG_OVERLAY
+    // Red/green: horizontal/vertical motion (grey = none), 16 pixels to full scale.
+    const vec3 mv_color = sky ? vec3(0.0, 0.0, 0.3) : vec3(0.5) + vec3(motion / 32.0, 0.0);
+    const vec4 original = imageLoad(color_img, pixel);
+    imageStore(color_img, pixel, vec4(mix(original.rgb, mv_color, 0.75), original.a));
+#else
+    imageStore(motion_img, pixel, vec4(sky ? vec2(0.0) : motion, 0.0, 0.0));
+#endif
+}

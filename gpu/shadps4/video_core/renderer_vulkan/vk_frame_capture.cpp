@@ -139,6 +139,11 @@ void FrameCapture::OnFlip(VAddr presented_address) {
 
 void FrameCapture::Poll() {}
 
+bool FrameCapture::IsDisplayBuffer(VAddr address) {
+    std::scoped_lock lk{display_mutex};
+    return std::ranges::find(display_buffers, address) != display_buffers.end();
+}
+
 void FrameCapture::AddDisplayBuffer(VAddr address) {
     std::scoped_lock lk{display_mutex};
     if (std::ranges::find(display_buffers, address) == display_buffers.end()) {

@@ -7,6 +7,7 @@
 #include "common/shared_first_mutex.h"
 #include "video_core/buffer_cache/buffer_cache.h"
 #include "video_core/page_manager.h"
+#include "video_core/renderer_vulkan/vk_camera_motion.h"
 #include "video_core/renderer_vulkan/vk_draw_prep.h"
 #include "video_core/renderer_vulkan/vk_pipeline_cache.h"
 #include "video_core/renderer_vulkan/vk_scheduler.h"
@@ -155,6 +156,7 @@ private:
     Common::SharedFirstMutex mapped_ranges_mutex;
     PipelineCache pipeline_cache;
     std::unique_ptr<DrawPreparation> draw_prep;
+    std::unique_ptr<CameraMotion> camera_motion; // bbport: motion vectors (docs/upscaler.md)
     const bool host_markers_enabled;
     const bool guest_markers_enabled;
 
