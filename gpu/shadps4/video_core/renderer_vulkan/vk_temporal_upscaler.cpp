@@ -260,6 +260,10 @@ void TemporalUpscaler::Run() {
                                vk::ImageUsageFlagBits::eTransferSrc,
                            vk::ImageAspectFlagBits::eColor,
                            FFX_VK_PORTABLE_RESOURCE_STATE_UNORDERED_ACCESS);
+    // Optional inputs, absent: a described but null image.
+    info.exposure.structSize = sizeof(info.exposure);
+    info.reactiveMask.structSize = sizeof(info.reactiveMask);
+    info.transparencyAndCompositionMask.structSize = sizeof(info.transparencyAndCompositionMask);
     info.jitterOffset = {0.0f, 0.0f};
     info.motionVectorScale = {1.0f, 1.0f};
     info.renderSize = {w, h};
