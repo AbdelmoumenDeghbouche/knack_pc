@@ -202,18 +202,21 @@ private:
     // cost a protection fault in the writing thread plus an mprotect with TLB shootdowns on
     // every upload. After HotFaults faults a page stays writable and counts as always CPU
     // modified, so it is uploaded on every use instead. The set is rebuilt every HotPeriod.
-    static constexpr u8 HotFaults = 4;
-    static constexpr auto HotPeriod = std::chrono::seconds(2);
+    // A short period re-protects thousands of pages at once and each faults again before it is
+    // hot, a fault storm (a 2 s period gave ~20k faults/s and frame spikes).
+    static constexpr u8 HotFaults = 2;
+    static constexpr auto HotPeriod = std::chrono::seconds(20);
 
     void CountWriteFaults(size_t start_page, size_t end_page) {
-        if (BbToggle::Disabled(BbToggle::HotPages)) {
-            return;
-        }
+        const bool hot_enabled = !BbToggle::Disabled(BbToggle::HotPages);
         for (size_t page = start_page; page < end_page; ++page) {
             if (writeable.Get(page)) {
                 continue; // not protected: no fault
             }
             BbStats::tracker_faults.fetch_add(1, std::memory_order_relaxed);
+            if (!hot_enabled) {
+                continue;
+            }
             if (write_faults[page] < HotFaults) {
                 ++write_faults[page];
                 continue;
