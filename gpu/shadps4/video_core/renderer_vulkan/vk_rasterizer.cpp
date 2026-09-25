@@ -102,6 +102,45 @@ bool Rasterizer::FilterDraw() {
     return true;
 }
 
+template <typename... Parts>
+VideoCore::ImageId Rasterizer::FindTargetMemoized(VideoCore::TextureCache::ImageDesc& desc,
+                                                  auto&& make_desc, const Parts&... parts) {
+    static_assert((sizeof(Parts) + ...) <= 256, "target memo key too large");
+    std::array<u8, 256> key{};
+    u32 key_size = 0;
+    const auto append = [&](const auto& part) {
+        std::memcpy(key.data() + key_size, &part, sizeof(part));
+        key_size += sizeof(part);
+    };
+    (append(parts), ...);
+    u64 hash = 0xCBF29CE484222325ull;
+    for (u32 i = 0; i < key_size; i += 8) {
+        u64 word;
+        std::memcpy(&word, key.data() + i, 8);
+        hash = (hash ^ word) * 0x100000001B3ull;
+        hash ^= hash >> 29;
+    }
+    auto& memo = target_memo[hash % target_memo.size()];
+    const u64 generation = texture_cache.RegistryGeneration();
+    if (memo.generation == generation && memo.key_size == key_size &&
+        std::memcmp(memo.key.data(), key.data(), key_size) == 0 &&
+        !BbToggle::Disabled(BbToggle::TextureBindingMemo)) {
+        desc = memo.desc;
+        texture_cache.MarkFound(memo.image_id);
+        return memo.image_id;
+    }
+    make_desc();
+    const VideoCore::ImageId image_id = texture_cache.FindImage(desc);
+    if (generation == texture_cache.RegistryGeneration()) {
+        memo.key = key;
+        memo.key_size = key_size;
+        memo.generation = generation;
+        memo.image_id = image_id;
+        memo.desc = desc;
+    }
+    return image_id;
+}
+
 void Rasterizer::PrepareRenderState(const GraphicsPipeline* pipeline) {
     // Prefetch render targets to handle overlaps with bound textures (e.g. mipgen)
     const auto& key = pipeline->GetGraphicsKey();
@@ -121,8 +160,9 @@ void Rasterizer::PrepareRenderState(const GraphicsPipeline* pipeline) {
             continue;
         }
         const auto& hint = liverpool->last_cb_extent[cb];
-        std::construct_at(&desc, col_buf, hint);
-        image_id = bound_images.emplace_back(texture_cache.FindImage(desc));
+        const u32 tag = 1;
+        image_id = bound_images.emplace_back(FindTargetMemoized(
+            desc, [&] { std::construct_at(&desc, col_buf, hint); }, tag, col_buf, hint));
         auto& image = texture_cache.GetImage(image_id);
         image.binding.is_target = 1u;
     }
@@ -132,9 +172,14 @@ void Rasterizer::PrepareRenderState(const GraphicsPipeline* pipeline) {
         const auto htile_address = regs.depth_htile_data_base.GetAddress();
         const auto& hint = liverpool->last_db_extent;
         auto& [image_id, desc] = db_desc;
-        std::construct_at(&desc, regs.depth_buffer, regs.depth_view, regs.depth_control,
-                          htile_address, hint);
-        image_id = bound_images.emplace_back(texture_cache.FindImage(desc));
+        const u32 tag = 2;
+        image_id = bound_images.emplace_back(FindTargetMemoized(
+            desc,
+            [&] {
+                std::construct_at(&desc, regs.depth_buffer, regs.depth_view, regs.depth_control,
+                                  htile_address, hint);
+            },
+            tag, regs.depth_buffer, regs.depth_view, regs.depth_control, htile_address, hint));
         auto& image = texture_cache.GetImage(image_id);
         image.binding.is_target = 1u;
     } else {

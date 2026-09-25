@@ -176,6 +176,19 @@ private:
         VideoCore::TextureCache::ImageDesc found_desc;
     };
     std::array<ImageDescCacheEntry, 512> image_desc_cache{};
+    // bbport: render/depth target lookups memoized by their raw register bytes while image
+    // registrations are unchanged (the descriptions depend only on those registers).
+    struct TargetMemo {
+        std::array<u8, 256> key{};
+        u32 key_size = 0;
+        u64 generation = ~0ULL;
+        VideoCore::ImageId image_id{};
+        VideoCore::TextureCache::ImageDesc desc;
+    };
+    std::array<TargetMemo, 64> target_memo{};
+    template <typename... Parts>
+    VideoCore::ImageId FindTargetMemoized(VideoCore::TextureCache::ImageDesc& desc,
+                                          auto&& make_desc, const Parts&... parts);
     ImageDescCacheEntry& CachedImageDescEntry(const AmdGpu::Image& sharp,
                                               const Shader::ImageResource& res);
     const VideoCore::TextureCache::ImageDesc& CachedImageDesc(const AmdGpu::Image& sharp,

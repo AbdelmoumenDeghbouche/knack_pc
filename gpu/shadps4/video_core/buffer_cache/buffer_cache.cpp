@@ -392,8 +392,16 @@ bool BufferCache::SynchronizeMemoryFromImage(const Buffer* arena, VAddr device_a
             LOG_WARNING(Render_Vulkan, "Unhandled metadata type {}", magic_enum::enum_name(*type));
         }
     }
+    // bbport: most texel buffers alias no image; remember misses until images change.
+    const u64 generation = texture_cache.RegistryGeneration();
+    auto& miss = image_miss_cache[((device_addr >> 6) ^ size * 0x9E3779B1u) % image_miss_cache.size()];
+    if (miss.address == device_addr && miss.size == size && miss.generation == generation &&
+        !BbToggle::Disabled(BbToggle::TextureBindingMemo)) {
+        return false;
+    }
     const ImageId image_id = texture_cache.FindImageFromRange(device_addr, size);
     if (!image_id) {
+        miss = {device_addr, size, generation};
         return false;
     }
     Image& image = texture_cache.GetImage(image_id);

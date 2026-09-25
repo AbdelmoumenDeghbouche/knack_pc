@@ -132,6 +132,13 @@ private:
 
     const Vulkan::Instance& instance;
     Vulkan::Scheduler& scheduler;
+    // bbport: texel buffer ranges known not to alias an image, per image registry generation.
+    struct ImageMiss {
+        VAddr address = 0;
+        u32 size = 0;
+        u64 generation = ~0ULL;
+    };
+    std::array<ImageMiss, 256> image_miss_cache{};
     Vulkan::Runtime& runtime;
     Vulkan::StagingBufferPool& staging_pool;
     AmdGpu::Liverpool* liverpool;
