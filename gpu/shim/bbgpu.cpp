@@ -1,4 +1,5 @@
 // bbport: glue between the C loader and the vendored shadPS4 video core.
+#include "bbport_copy.h"
 #include "bbport_toggles.h"
 #include <algorithm>
 #include <atomic>
@@ -96,7 +97,7 @@ void MemoryManager::InvalidateMemory(VAddr address, u64 size) {
 u64 MemoryManager::ClampRangeSize(VAddr virtual_addr, u64 size) {
     return runtime_memory_clamp(virtual_addr, size);
 }
-void MemoryManager::CopySparseMemory(VAddr source, u8* dest, u64 size) {
+static void CopySparseSerial(VAddr source, u8* dest, u64 size) {
     while (size) {
         uintptr_t start = 0, end = 0;
         int mapped = 0;
@@ -108,6 +109,17 @@ void MemoryManager::CopySparseMemory(VAddr source, u8* dest, u64 size) {
         else std::memset(dest, 0, n);
         source += n; dest += n; size -= n;
     }
+}
+void MemoryManager::CopySparseMemory(VAddr source, u8* dest, u64 size) {
+    // bbport: large uploads (streaming) are split across the copy threads.
+    constexpr u64 Chunk = 512 * 1024;
+    if (size < 4 * Chunk || !BbCopy::Enabled()) {
+        return CopySparseSerial(source, dest, size);
+    }
+    BbCopy::ParallelFor((size + Chunk - 1) / Chunk, [&](std::size_t i) {
+        const u64 offset = i * Chunk;
+        CopySparseSerial(source + offset, dest + offset, std::min(Chunk, size - offset));
+    });
 }
 bool MemoryManager::TryWriteBacking(void* address, const void* data, u64 size) {
     return runtime_memory_write_backing(reinterpret_cast<uintptr_t>(address), data, size) != 0;

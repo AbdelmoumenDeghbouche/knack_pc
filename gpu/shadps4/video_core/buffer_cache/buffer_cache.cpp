@@ -5,6 +5,7 @@
 #include <bit>
 #include <cstdlib>
 #include <magic_enum/magic_enum.hpp>
+#include "bbport_copy.h"
 #include "bbport_toggles.h"
 #include "common/alignment.h"
 #include "core/memory.h"
@@ -401,18 +402,36 @@ const Buffer* BufferCache::UploadCopies(const Buffer* arena, std::span<vk::Buffe
         }
         scheduler.ReserveRecordData(host_copies.size() * sizeof(HostCopy) + 64);
         const auto list = scheduler.RecordData(std::span<const HostCopy>{host_copies});
-        scheduler.Record([list, memory = memory, staging, sched = &scheduler,
+        scheduler.Record([list, memory = memory, staging, sched = &scheduler, total_size_bytes,
                           seq = scheduler.IssueHostCopy()](vk::CommandBuffer) {
-            for (const auto& copy : list) {
-                memory->CopySparseMemory(copy.source, copy.destination, copy.size);
+            // Many copies of a streaming upload go to the copy threads; small lists stay here.
+            const auto copy = [&](std::size_t i) {
+                memory->CopySparseMemory(list[i].source, list[i].destination, list[i].size);
+            };
+            if (total_size_bytes >= 2_MB && list.size() > 1) {
+                BbCopy::ParallelFor(list.size(), copy);
+            } else {
+                for (std::size_t i = 0; i < list.size(); ++i) {
+                    copy(i);
+                }
             }
             staging.Flush();
             sched->CompleteHostCopy(seq);
         });
         return staging.buffer;
     }
+    const auto copy = [&](std::size_t i) {
+        memory->CopySparseMemory(copies[i].dstOffset, staging.mapped + copies[i].srcOffset,
+                                 copies[i].size);
+    };
+    if (total_size_bytes >= 2_MB && copies.size() > 1) {
+        BbCopy::ParallelFor(copies.size(), copy);
+    } else {
+        for (std::size_t i = 0; i < copies.size(); ++i) {
+            copy(i);
+        }
+    }
     for (auto& copy : copies) {
-        memory->CopySparseMemory(copy.dstOffset, staging.mapped + copy.srcOffset, copy.size);
         copy.srcOffset += staging.offset;
         copy.dstOffset -= arena->cpu_addr;
     }
