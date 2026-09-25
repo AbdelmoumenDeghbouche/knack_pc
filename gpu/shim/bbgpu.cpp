@@ -1,5 +1,6 @@
 // bbport: glue between the C loader and the vendored shadPS4 video core.
 #include "bbport_copy.h"
+#include <sys/resource.h>
 #include "bbport_toggles.h"
 #include <algorithm>
 #include <atomic>
@@ -112,6 +113,25 @@ static void CopySparseSerial(VAddr source, u8* dest, u64 size) {
                                           std::memory_order_relaxed);
         }
     } cpu_timer;
+    // Kernel time and page faults inside large copies.
+    struct Usage {
+        bool on;
+        rusage start{};
+        explicit Usage(bool on_) : on{on_} {
+            if (on) getrusage(RUSAGE_THREAD, &start);
+        }
+        ~Usage() {
+            if (!on) return;
+            rusage end{};
+            getrusage(RUSAGE_THREAD, &end);
+            BbStats::copy_sys_us.fetch_add(
+                u64(end.ru_stime.tv_sec - start.ru_stime.tv_sec) * 1000000 +
+                    u64(end.ru_stime.tv_usec) - u64(start.ru_stime.tv_usec),
+                std::memory_order_relaxed);
+            BbStats::copy_minflt.fetch_add(end.ru_minflt - start.ru_minflt,
+                                           std::memory_order_relaxed);
+        }
+    } usage{size >= 64 * 1024};
     while (size) {
         uintptr_t start = 0, end = 0;
         int mapped = 0;

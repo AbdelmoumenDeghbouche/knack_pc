@@ -268,8 +268,9 @@ void VideoOutDriver::Flip(const Request& req) {
         const u64 pc = BbStats::protect_calls.load(), pp = BbStats::protect_pages.load(),
                   rc = BbStats::protect_revoke_calls.load(), rp = BbStats::protect_revoke_pages.load();
         const u64 minflt = BbStats::gpu_minor_faults.load(), sigf = BbStats::gpu_signal_faults.load();
-        static u64 last_copy_cpu;
-        const u64 copy_cpu = BbStats::t_copy_cpu.load();
+        static u64 last_copy_cpu, last_copy_sys, last_copy_flt;
+        const u64 copy_cpu = BbStats::t_copy_cpu.load(), copy_sys = BbStats::copy_sys_us.load(),
+                  copy_flt = BbStats::copy_minflt.load();
         static u64 last_proc_flt, last_copy_ns, last_copy_bytes, last_rf, last_trf, last_twf;
         const u64 rf = BbStats::read_faults.load(), trf = BbStats::t_read_faults.load(),
                   twf = BbStats::t_write_faults.load();
@@ -340,14 +341,17 @@ void VideoOutDriver::Flip(const Request& req) {
         last_rp = rp;
         last_minflt = minflt;
         if (frame_ms > 40.0 && last_gpu_ns != 0 && copy_ns > last_copy_ns) {
-            std::printf("       guest copies %.1f MB in %.1f thread-ms, %.1f ms on CPU "
-                        "(%.2f GB/s per thread)\n",
+            std::printf("       guest copies %.1f MB in %.1f thread-ms, %.1f ms on CPU (kernel %.1f ms, "
+                        "%llu page faults in large copies) (%.2f GB/s per thread)\n",
                         (copy_bytes - last_copy_bytes) / 1e6, (copy_ns - last_copy_ns) / 1e6,
-                        (copy_cpu - last_copy_cpu) / 1e6,
+                        (copy_cpu - last_copy_cpu) / 1e6, (copy_sys - last_copy_sys) / 1e3,
+                        static_cast<unsigned long long>(copy_flt - last_copy_flt),
                         double(copy_bytes - last_copy_bytes) / double(copy_ns - last_copy_ns));
         }
         last_copy_ns = copy_ns;
         last_copy_cpu = copy_cpu;
+        last_copy_sys = copy_sys;
+        last_copy_flt = copy_flt;
         last_copy_bytes = copy_bytes;
         last_proc_flt = proc_flt;
         last_sigf = sigf;
