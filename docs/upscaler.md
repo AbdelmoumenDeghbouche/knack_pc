@@ -46,3 +46,17 @@ The previous frame's matrices are not there; the port keeps them itself.
 4. Upscaler at the scene color stage (before post and UI): FSR 3.1 first (open, native Vulkan,
    also frame generation), then DLSS (native on Linux), XeSS/XeFG and OptiScaler through a
    loader for their Windows DLLs.
+
+## Status
+
+- Camera motion vectors: verified by reprojecting the previous frame (`BB_DEBUG_MOTION=1`,
+  toggles 1<<22 reprojected frame, 1<<23 error map): static geometry matches.
+- FSR 3.1 (`BB_UPSCALER=fsr3`, FireBurn/FSR-Vulkan submodule): scene color before the
+  post-processing combine (compute shader 9a9cf8a9), 1:1, RGB written back (the game keeps data
+  in the alpha). Toggle 1<<24 switches it off at run time.
+- Jitter: viewport offset of scene geometry (drawn with the scene depth, not full-screen
+  quads), Halton(2,3) 8 phases; sign checked by sharpness (correct 255, flipped 208, off 271 —
+  1:1 jitter trades high-frequency aliasing for a slightly softer image). Toggle 1<<25 off.
+- Frame-to-frame difference while standing still: ~33% lower with FSR.
+- Missing: motion of animated objects (characters, cloth, foliage), reactive/transparency
+  masks for particles and fog, render-resolution scaling, frame generation.

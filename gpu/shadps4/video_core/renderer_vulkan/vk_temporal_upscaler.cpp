@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "video_core/renderer_vulkan/vk_temporal_upscaler.h"
 
+#include <algorithm>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -345,7 +346,12 @@ void TemporalUpscaler::Run() {
     info.cameraFar = 3000.0f;
     info.cameraVerticalFovRadians = camera_motion.VerticalFov();
     info.viewSpaceToMeters = 1.0f;
-    info.sharpness = 0.2f;
+    // RCAS strength 0..1 (BB_FSR_SHARPNESS); jitter at 1:1 softens the image slightly.
+    static const float sharpness = [] {
+        const char* env = std::getenv("BB_FSR_SHARPNESS");
+        return env ? std::clamp(float(std::atof(env)), 0.0f, 1.0f) : 0.3f;
+    }();
+    info.sharpness = sharpness;
     info.enableSharpening = VK_TRUE;
     info.reset = reset ? VK_TRUE : VK_FALSE;
     info.frameId = frame_id++;
