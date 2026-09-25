@@ -10,6 +10,7 @@
 
 #include "common/types.h"
 #include "video_core/renderer_vulkan/vk_common.h"
+#include "video_core/buffer_cache/buffer.h"
 #include "video_core/texture_cache/image.h"
 
 namespace VideoCore {
@@ -65,6 +66,9 @@ private:
     vk::UniqueDescriptorSetLayout desc_layout;
     vk::UniquePipelineLayout pipeline_layout;
     vk::UniquePipeline overlay_pipeline;
+    /// Debug: the last two finished frames (RGBA8 packed), for the reprojection check.
+    std::unique_ptr<VideoCore::Buffer> frames[2];
+    u32 frame_index = 0;
 };
 
 } // namespace Vulkan

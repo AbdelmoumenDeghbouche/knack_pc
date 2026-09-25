@@ -52,13 +52,21 @@ CameraMotion::CameraMotion(const Instance& instance_, Scheduler& scheduler_,
         return;
     }
     const auto device = instance.GetDevice();
-    const std::array<vk::DescriptorSetLayoutBinding, 2> bindings = {{
+    const std::array<vk::DescriptorSetLayoutBinding, 4> bindings = {{
         {.binding = 0,
          .descriptorType = vk::DescriptorType::eSampledImage,
          .descriptorCount = 1,
          .stageFlags = vk::ShaderStageFlagBits::eCompute},
         {.binding = 1,
          .descriptorType = vk::DescriptorType::eStorageImage,
+         .descriptorCount = 1,
+         .stageFlags = vk::ShaderStageFlagBits::eCompute},
+        {.binding = 2,
+         .descriptorType = vk::DescriptorType::eStorageBuffer,
+         .descriptorCount = 1,
+         .stageFlags = vk::ShaderStageFlagBits::eCompute},
+        {.binding = 3,
+         .descriptorType = vk::DescriptorType::eStorageBuffer,
          .descriptorCount = 1,
          .stageFlags = vk::ShaderStageFlagBits::eCompute},
     }};
@@ -87,6 +95,10 @@ CameraMotion::CameraMotion(const Instance& instance_, Scheduler& scheduler_,
                 .layout = *pipeline_layout,
             }));
     device.destroyShaderModule(module);
+    for (auto& frame : frames) {
+        frame = std::make_unique<VideoCore::Buffer>(instance, 0, 3840ull * 2160 * 4,
+                                                    VideoCore::MemoryType::DeviceLocal);
+    }
     std::printf("GPU: camera motion debug overlay on\n");
 }
 
@@ -166,10 +178,14 @@ void CameraMotion::Overlay(VideoCore::ImageId frame) {
         .proj = current.proj,
         .prev_proj = previous.proj,
         .size = {float(color.info.size.width), float(color.info.size.height)},
-        .mode = BbToggle::Disabled(1u << 20) ? 1u : BbToggle::Disabled(1u << 21) ? 2u : 0u,
+        .mode = BbToggle::Disabled(1u << 20)   ? 1u
+                : BbToggle::Disabled(1u << 21) ? 2u
+                : BbToggle::Disabled(1u << 22) ? 3u
+                : BbToggle::Disabled(1u << 23) ? 4u
+                                               : 0u,
     };
-    static u32 frames = 0;
-    if (++frames % 200 == 0) {
+    static u32 log_counter = 0;
+    if (++log_counter % 200 == 0) {
         const auto& m = push.reproject;
         std::printf("Camera motion: proj %g %g %g %g prev %g %g %g %g\n"
                     "  view  %8.4f %8.4f %8.4f %9.3f | %8.4f %8.4f %8.4f %9.3f | %8.4f %8.4f %8.4f %9.3f\n"
@@ -188,7 +204,12 @@ void CameraMotion::Overlay(VideoCore::ImageId frame) {
                                              .imageLayout = vk::ImageLayout::eGeneral};
     const vk::DescriptorImageInfo color_info{.imageView = color_view,
                                              .imageLayout = vk::ImageLayout::eGeneral};
-    const std::array<vk::WriteDescriptorSet, 2> writes = {{
+    const auto& prev_frame = *frames[frame_index ^ 1];
+    const auto& next_frame = *frames[frame_index];
+    frame_index ^= 1;
+    const vk::DescriptorBufferInfo prev_info{prev_frame.Handle(), 0, prev_frame.SizeBytes()};
+    const vk::DescriptorBufferInfo next_info{next_frame.Handle(), 0, next_frame.SizeBytes()};
+    const std::array<vk::WriteDescriptorSet, 4> writes = {{
         {.dstBinding = 0,
          .descriptorCount = 1,
          .descriptorType = vk::DescriptorType::eSampledImage,
@@ -197,12 +218,28 @@ void CameraMotion::Overlay(VideoCore::ImageId frame) {
          .descriptorCount = 1,
          .descriptorType = vk::DescriptorType::eStorageImage,
          .pImageInfo = &color_info},
+        {.dstBinding = 2,
+         .descriptorCount = 1,
+         .descriptorType = vk::DescriptorType::eStorageBuffer,
+         .pBufferInfo = &prev_info},
+        {.dstBinding = 3,
+         .descriptorCount = 1,
+         .descriptorType = vk::DescriptorType::eStorageBuffer,
+         .pBufferInfo = &next_info},
     }};
     const auto cmdbuf = scheduler.CommandBuffer();
     cmdbuf.bindPipeline(vk::PipelineBindPoint::eCompute, *overlay_pipeline);
     cmdbuf.pushDescriptorSetKHR(vk::PipelineBindPoint::eCompute, *pipeline_layout, 0, writes);
     cmdbuf.pushConstants(*pipeline_layout, vk::ShaderStageFlagBits::eCompute, 0, sizeof(push),
                          &push);
+    // The previous frame buffer was written by the last dispatch.
+    const vk::MemoryBarrier2 frame_barrier{
+        .srcStageMask = vk::PipelineStageFlagBits2::eComputeShader,
+        .srcAccessMask = vk::AccessFlagBits2::eShaderWrite,
+        .dstStageMask = vk::PipelineStageFlagBits2::eComputeShader,
+        .dstAccessMask = vk::AccessFlagBits2::eShaderRead | vk::AccessFlagBits2::eShaderWrite,
+    };
+    cmdbuf.pipelineBarrier2({.memoryBarrierCount = 1, .pMemoryBarriers = &frame_barrier});
     cmdbuf.dispatch((color.info.size.width + 7) / 8, (color.info.size.height + 7) / 8, 1);
 
     scheduler.DeferOperation([device, depth_view, color_view] {

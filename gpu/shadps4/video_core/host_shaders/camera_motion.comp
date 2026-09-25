@@ -9,6 +9,8 @@ layout(local_size_x = 8, local_size_y = 8) in;
 layout(binding = 0) uniform texture2D depth_tex; // D32, depth 0..1 (D3D projection)
 #ifdef DEBUG_OVERLAY
 layout(binding = 1, rgba8) uniform image2D color_img;
+layout(binding = 2, std430) readonly buffer PrevFrame { uint prev_frame[]; };
+layout(binding = 3, std430) writeonly buffer NextFrame { uint next_frame[]; };
 #else
 layout(binding = 1, rg16f) uniform writeonly image2D motion_img; // pixels, previous - current
 #endif
@@ -18,7 +20,8 @@ layout(push_constant) uniform Constants {
     vec4 proj;         // current: x scale, y scale, z scale, z offset
     vec4 prev_proj;    // previous: x scale, y scale, z scale, z offset
     vec2 size;         // pixels
-    uint mode;         // debug: 0 motion, 1 raw depth, 2 view z / 50
+    uint mode;         // debug: 0 motion, 1 raw depth, 2 view z / 50, 3 reprojected previous
+                       // frame, 4 |reprojected previous - current|
 };
 
 void main() {
@@ -43,6 +46,18 @@ void main() {
     const bool sky = depth >= 0.99999;
 
 #ifdef DEBUG_OVERLAY
+    const vec4 current = imageLoad(color_img, pixel);
+    next_frame[pixel.y * int(size.x) + pixel.x] = packUnorm4x8(current);
+    if (mode == 3 || mode == 4) {
+        const ivec2 prev_pixel = ivec2(floor(uv * size + motion));
+        vec4 prev = vec4(0.0, 0.0, 0.0, 1.0);
+        if (all(greaterThanEqual(prev_pixel, ivec2(0))) && all(lessThan(prev_pixel, ivec2(size)))) {
+            prev = unpackUnorm4x8(prev_frame[prev_pixel.y * int(size.x) + prev_pixel.x]);
+        }
+        const vec3 out_color = mode == 3 ? prev.rgb : abs(prev.rgb - current.rgb) * 4.0;
+        imageStore(color_img, pixel, vec4(out_color, current.a));
+        return;
+    }
     if (mode != 0) {
         const float v = mode == 1 ? depth : z / 50.0;
         imageStore(color_img, pixel, vec4(fract(v * 4.0), v, v < 0.0 ? 1.0 : 0.0, 1.0));
@@ -50,8 +65,7 @@ void main() {
     }
     // Red/green: horizontal/vertical motion (grey = none), 64 pixels to full scale.
     const vec3 mv_color = sky ? vec3(0.0, 0.0, 0.3) : vec3(0.5) + vec3(motion / 128.0, 0.0);
-    const vec4 original = imageLoad(color_img, pixel);
-    imageStore(color_img, pixel, vec4(mix(original.rgb, mv_color, 0.75), original.a));
+    imageStore(color_img, pixel, vec4(mix(current.rgb, mv_color, 0.75), current.a));
 #else
     imageStore(motion_img, pixel, vec4(sky ? vec2(0.0) : motion, 0.0, 0.0));
 #endif
