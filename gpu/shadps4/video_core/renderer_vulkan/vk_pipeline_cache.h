@@ -48,13 +48,6 @@ struct Program {
     Shader::Info info;
     ModuleList modules{};
     size_t last_used = 0; ///< bbport: permutation of the previous lookup, compared first
-    // bbport: specialization inputs of the previous lookup: resource sharps without their
-    // addresses (plus validity), runtime info and binding start. Equal inputs select the
-    // same permutation without building a StageSpecialization.
-    boost::container::small_vector<u32, 256> last_key;
-    Shader::RuntimeInfo last_runtime{};
-    Shader::Backend::Bindings last_binding{};
-    bool has_last = false;
 
     Program() = default;
     Program(Shader::HwStage stage, Shader::SwStage l_stage, Shader::ShaderParams params)
