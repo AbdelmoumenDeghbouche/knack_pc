@@ -776,6 +776,19 @@ public:
     /// Waits until every recorded command is in the command buffer.
     void SyncRecording();
 
+    /// bbport: guest memory copies deferred to the recording thread must be done before the
+    /// guest learns the GPU is past them (it may then rewrite the memory, e.g. UI vertices:
+    /// flickering). Each deferred copy takes a number and reports it when done.
+    [[nodiscard]] u64 IssueHostCopy() noexcept {
+        return ++host_copies_issued;
+    }
+    void CompleteHostCopy(u64 seq) noexcept {
+        host_copies_done.store(seq, std::memory_order_release);
+    }
+    /// GPU thread, before a write the guest can observe (fences, labels): waits for the
+    /// deferred copies issued so far.
+    void WaitHostCopies();
+
     /// CommandBuffer() calls that waited for a recording thread (BB_FRAME_STATS).
     static inline std::atomic<u64> direct_recordings{0};
 
@@ -861,6 +874,8 @@ private:
     std::atomic<size_t> queued_chunks{0}; ///< recorder_queue.size() for lock-free polling
     bool recorder_sleeping = false; ///< waiting on recorder_cv (guarded by recorder_mutex)
     bool direct_mode = false; ///< the command buffer is recorded on the caller's thread
+    u64 host_copies_issued = 0;
+    std::atomic<u64> host_copies_done{0};
     std::jthread recorder_thread;
     tracy::VkCtxScope* profiler_scope{};
 };

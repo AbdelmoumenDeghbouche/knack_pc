@@ -834,6 +834,10 @@ Liverpool::Task Liverpool::ProcessGraphics(std::span<const u32> dcb, std::span<c
                 break;
             }
             case PM4ItOpcode::EventWriteEos: {
+                // bbport: copies deferred to the recording thread precede writes the guest sees.
+                if (rasterizer) {
+                    rasterizer->WaitHostCopies();
+                }
                 const auto* event_eos = reinterpret_cast<const PM4CmdEventWriteEos*>(header);
                 if (rasterizer) {
                     rasterizer->ProcessDownloadImages();
@@ -855,6 +859,10 @@ Liverpool::Task Liverpool::ProcessGraphics(std::span<const u32> dcb, std::span<c
                 break;
             }
             case PM4ItOpcode::EventWriteEop: {
+                // bbport: copies deferred to the recording thread precede writes the guest sees.
+                if (rasterizer) {
+                    rasterizer->WaitHostCopies();
+                }
                 const auto* event_eop = reinterpret_cast<const PM4CmdEventWriteEop*>(header);
                 if (rasterizer) {
                     rasterizer->ProcessDownloadImages();
@@ -907,6 +915,10 @@ Liverpool::Task Liverpool::ProcessGraphics(std::span<const u32> dcb, std::span<c
                 break;
             }
             case PM4ItOpcode::WriteData: {
+                // bbport: copies deferred to the recording thread precede writes the guest sees.
+                if (rasterizer) {
+                    rasterizer->WaitHostCopies();
+                }
                 const auto* write_data = reinterpret_cast<const PM4CmdWriteData*>(header);
                 ASSERT(write_data->dst_sel.Value() == 2 || write_data->dst_sel.Value() == 5);
                 const u32 data_size = (header->type3.count.Value() - 2) * 4;
@@ -1257,6 +1269,10 @@ Liverpool::Task Liverpool::ProcessCompute(std::span<const u32> acb, u32 vqid) {
             break;
         }
         case PM4ItOpcode::WriteData: {
+            // bbport: copies deferred to the recording thread precede writes the guest sees.
+            if (rasterizer) {
+                rasterizer->WaitHostCopies();
+            }
             const auto* write_data = reinterpret_cast<const PM4CmdWriteData*>(header);
             ASSERT(write_data->dst_sel.Value() == 2 || write_data->dst_sel.Value() == 5);
             const u32 data_size = (header->type3.count.Value() - 2) * 4;
@@ -1288,6 +1304,10 @@ Liverpool::Task Liverpool::ProcessCompute(std::span<const u32> acb, u32 vqid) {
             break;
         }
         case PM4ItOpcode::ReleaseMem: {
+            // bbport: copies deferred to the recording thread precede writes the guest sees.
+            if (rasterizer) {
+                rasterizer->WaitHostCopies();
+            }
             const auto* release_mem = reinterpret_cast<const PM4CmdReleaseMem*>(header);
             if (rasterizer) {
                 rasterizer->ProcessDownloadImages();

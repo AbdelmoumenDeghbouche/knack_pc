@@ -187,10 +187,12 @@ std::pair<const Buffer*, u64> BufferCache::ObtainBuffer(VAddr device_addr, u32 s
             !BbToggle::Disabled(BbToggle::DeferredStreamCopies)) {
             if (const auto offset = stream_buffer.Reserve(size, instance.UniformMinAlignment())) {
                 scheduler.Record([memory = memory, stream = &stream_buffer, device_addr, size,
-                                  offset = *offset](vk::CommandBuffer) {
+                                  offset = *offset, sched = &scheduler,
+                                  seq = scheduler.IssueHostCopy()](vk::CommandBuffer) {
                     memory->CopySparseMemory(device_addr, stream->mapped_data.data() + offset,
                                              size);
                     stream->Flush(offset, size);
+                    sched->CompleteHostCopy(seq);
                 });
                 return {&stream_buffer, *offset};
             }
@@ -397,11 +399,13 @@ const Buffer* BufferCache::UploadCopies(const Buffer* arena, std::span<vk::Buffe
         }
         scheduler.ReserveRecordData(host_copies.size() * sizeof(HostCopy) + 64);
         const auto list = scheduler.RecordData(std::span<const HostCopy>{host_copies});
-        scheduler.Record([list, memory = memory, staging](vk::CommandBuffer) {
+        scheduler.Record([list, memory = memory, staging, sched = &scheduler,
+                          seq = scheduler.IssueHostCopy()](vk::CommandBuffer) {
             for (const auto& copy : list) {
                 memory->CopySparseMemory(copy.source, copy.destination, copy.size);
             }
             staging.Flush();
+            sched->CompleteHostCopy(seq);
         });
         return staging.buffer;
     }

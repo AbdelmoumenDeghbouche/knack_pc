@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright 2025 shadPS4 Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+#include <thread>
 #include <algorithm>
 #include <cstdio>
 #include <cstdlib>
@@ -167,6 +168,16 @@ std::unique_ptr<RecordChunk> Scheduler::AcquireChunk() {
     auto chunk = std::move(free_chunks.back());
     free_chunks.pop_back();
     return chunk;
+}
+
+void Scheduler::WaitHostCopies() {
+    if (host_copies_done.load(std::memory_order_acquire) >= host_copies_issued) {
+        return;
+    }
+    KickRecording(true);
+    while (host_copies_done.load(std::memory_order_acquire) < host_copies_issued) {
+        std::this_thread::yield();
+    }
 }
 
 void Scheduler::KickRecording(bool force) {
