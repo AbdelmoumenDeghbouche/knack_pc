@@ -3,6 +3,7 @@
 
 #include <algorithm>
 #include <magic_enum/magic_enum.hpp>
+#include "bbport_toggles.h"
 #include "common/alignment.h"
 #include "core/memory.h"
 #include "video_core/amdgpu/liverpool.h"
@@ -348,6 +349,30 @@ const Buffer* BufferCache::UploadCopies(const Buffer* arena, std::span<vk::Buffe
         return nullptr;
     }
     const auto staging = staging_pool.Request(total_size_bytes, MemoryType::HostUncached);
+    // bbport: with threaded recording the guest memory is copied into staging by the recording
+    // thread, right before the copy command that reads it (both run before submission).
+    if (scheduler.IsRecordingDeferred() && !BbToggle::Disabled(BbToggle::DeferredUploads)) {
+        struct HostCopy {
+            VAddr source;
+            u8* destination;
+            u64 size;
+        };
+        boost::container::small_vector<HostCopy, 16> host_copies;
+        for (auto& copy : copies) {
+            host_copies.push_back({copy.dstOffset, staging.mapped + copy.srcOffset, copy.size});
+            copy.srcOffset += staging.offset;
+            copy.dstOffset -= arena->cpu_addr;
+        }
+        scheduler.ReserveRecordData(host_copies.size() * sizeof(HostCopy) + 64);
+        const auto list = scheduler.RecordData(std::span<const HostCopy>{host_copies});
+        scheduler.Record([list, memory = memory, staging](vk::CommandBuffer) {
+            for (const auto& copy : list) {
+                memory->CopySparseMemory(copy.source, copy.destination, copy.size);
+            }
+            staging.Flush();
+        });
+        return staging.buffer;
+    }
     for (auto& copy : copies) {
         memory->CopySparseMemory(copy.dstOffset, staging.mapped + copy.srcOffset, copy.size);
         copy.srcOffset += staging.offset;

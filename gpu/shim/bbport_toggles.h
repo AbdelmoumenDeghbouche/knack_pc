@@ -15,6 +15,8 @@ enum : std::uint32_t {
     ImageDescCache = 32,
     LockFreeUploadCheck = 64,
     FindImageCache = 128,
+    DeferredUploads = 256,
+    AccessMemo = 512,
 };
 inline bool Disabled(std::uint32_t bit) {
     return (__atomic_load_n(&runtime_disabled_optimizations, __ATOMIC_RELAXED) & bit) != 0;

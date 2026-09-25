@@ -84,6 +84,17 @@ private:
     BarrierTracker barrier_tracker;
     VideoCore::Image::Barriers image_barriers;
     vk::MemoryBarrier2 memory_barrier{};
+    // bbport: ranges inserted into barrier_tracker since its last Clear(); re-inserting a
+    // contained range is a no-op, and draws re-bind the same ranges constantly.
+    struct AccessMemo {
+        u64 resource;
+        u64 start;
+        u64 end;
+        u32 epoch;
+        u32 access;
+    };
+    std::array<AccessMemo, 512> access_memo{};
+    u32 access_epoch = 1;
 };
 
 } // namespace Vulkan

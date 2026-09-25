@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #include <boost/container/small_vector.hpp>
+#include "bbport_toggles.h"
 #include "video_core/buffer_cache/buffer.h"
 #include "video_core/renderer_vulkan/liverpool_to_vk.h"
 #include "video_core/renderer_vulkan/vk_instance.h"
@@ -759,11 +760,28 @@ void Runtime::AccessBuffer(const VideoCore::Buffer* handle, u64 offset, u64 size
         vk::AccessFlagBits2::eDepthStencilAttachmentWrite | vk::AccessFlagBits2::eTransferWrite |
         vk::AccessFlagBits2::eMemoryWrite | vk::AccessFlagBits2::eTransformFeedbackWriteEXT;
 
+    const auto insert = [&](Access access) {
+        if (BbToggle::Disabled(BbToggle::AccessMemo)) {
+            barrier_tracker.InsertRange(range, access);
+            return;
+        }
+        u64 hash = range.resource ^ range.range_start * 0x9E3779B97F4A7C15ull ^
+                   range.range_end << 13 ^ u64(access) << 61;
+        hash = (hash ^ hash >> 31) * 0xFF51AFD7ED558CCDull;
+        auto& memo = access_memo[(hash ^ hash >> 29) % access_memo.size()];
+        if (memo.epoch == access_epoch && memo.resource == range.resource &&
+            memo.start == range.range_start && memo.end == range.range_end &&
+            memo.access == u32(access)) {
+            return;
+        }
+        barrier_tracker.InsertRange(range, access);
+        memo = {range.resource, range.range_start, range.range_end, access_epoch, u32(access)};
+    };
     if (src_access & WRITE_MASK) {
-        barrier_tracker.InsertRange(range, Access::Write);
+        insert(Access::Write);
     }
     if (src_access & READ_MASK) {
-        barrier_tracker.InsertRange(range, Access::Read);
+        insert(Access::Read);
     }
 
     memory_barrier.srcStageMask |= src_stage;
@@ -804,6 +822,7 @@ void Runtime::FlushBarriers() {
 
     image_barriers.clear();
     barrier_tracker.Clear();
+    ++access_epoch;
 }
 
 } // namespace Vulkan
