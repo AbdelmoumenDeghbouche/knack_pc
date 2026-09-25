@@ -333,7 +333,9 @@ void TemporalUpscaler::Run() {
     info.exposure.structSize = sizeof(info.exposure);
     info.reactiveMask.structSize = sizeof(info.reactiveMask);
     info.transparencyAndCompositionMask.structSize = sizeof(info.transparencyAndCompositionMask);
-    info.jitterOffset = {jitter[0], jitter[1]};
+    // Toggle 1 << 26 (tests): the opposite sign convention for FSR.
+    const float sign = BbToggle::Disabled(1u << 26) ? -1.0f : 1.0f;
+    info.jitterOffset = {sign * jitter[0], sign * jitter[1]};
     info.motionVectorScale = {1.0f, 1.0f};
     info.renderSize = {w, h};
     info.outputSize = {w, h};
