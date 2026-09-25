@@ -30,8 +30,24 @@ public:
     ~CameraMotion();
 
     [[nodiscard]] bool Enabled() const noexcept {
-        return debug_overlay;
+        return debug_overlay || for_upscaler;
     }
+
+    /// Both cameras and the scene depth of the current frame are known.
+    [[nodiscard]] bool Ready() const noexcept {
+        return current.valid && previous.valid && depth_id;
+    }
+    [[nodiscard]] VideoCore::ImageId Depth() const noexcept {
+        return depth_id;
+    }
+    /// Vertical field of view and near/far planes of the current camera.
+    [[nodiscard]] float VerticalFov() const noexcept;
+    [[nodiscard]] float Near() const noexcept;
+
+    /// Records the motion vector pass: `depth_view` (depth aspect, General layout) into
+    /// `motion_view` (RG16F storage, General), pixels, previous minus current.
+    void RecordMotion(vk::CommandBuffer cmdbuf, vk::ImageView depth_view, vk::ImageView motion_view,
+                      u32 width, u32 height);
 
     /// A bound constant buffer of 864 bytes: checks the scene constant signature.
     void OnConstants(const float* data);
@@ -58,6 +74,10 @@ private:
     VideoCore::TextureCache& texture_cache;
     Runtime& runtime;
     bool debug_overlay = false;
+    bool for_upscaler = false;
+    vk::UniqueDescriptorSetLayout motion_desc_layout;
+    vk::UniquePipelineLayout motion_pipeline_layout;
+    vk::UniquePipeline motion_pipeline;
 
     Camera current, previous;
     bool frame_has_camera = false;

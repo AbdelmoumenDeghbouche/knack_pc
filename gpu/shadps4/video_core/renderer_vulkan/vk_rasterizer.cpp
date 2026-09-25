@@ -46,6 +46,8 @@ Rasterizer::Rasterizer(const Instance& instance_, Scheduler& scheduler_, Runtime
     // Before the rasterizer is bound: Liverpool enqueues buffers only once it sees it.
     draw_prep = std::make_unique<DrawPreparation>(pipeline_cache);
     camera_motion = std::make_unique<CameraMotion>(instance, scheduler, texture_cache, runtime);
+    upscaler = std::make_unique<TemporalUpscaler>(instance, scheduler, texture_cache, runtime,
+                                                  *camera_motion);
     if (!EmulatorSettings.IsNullGPU()) {
         liverpool->BindRasterizer(this);
     }
@@ -212,6 +214,17 @@ void Rasterizer::PrepareRenderState(const GraphicsPipeline* pipeline) {
     if (gbuffer_draw) {
         camera_motion->OnGBufferPass(db_desc.first);
     }
+    // bbport: scene color: a full-size RGBA16F target drawn with the scene depth.
+    if (upscaler->Enabled() && db_desc.first && db_desc.first == camera_motion->Depth() &&
+        cb_descs[0].first && std::popcount(key.mrt_mask) <= 2) {
+        const auto& color = texture_cache.GetImage(cb_descs[0].first);
+        const auto& depth = texture_cache.GetImage(db_desc.first);
+        if (color.info.pixel_format == vk::Format::eR16G16B16A16Sfloat &&
+            color.info.size.width == depth.info.size.width &&
+            color.info.size.height == depth.info.size.height) {
+            upscaler->OnSceneColor(cb_descs[0].first);
+        }
+    }
 }
 
 static std::pair<u32, u32> GetDrawOffsets(
@@ -270,6 +283,7 @@ void Rasterizer::Draw(bool is_indexed, u32 index_offset, const PreparedDraw* pre
     if (camera_motion->Enabled() && regs.color_buffers[0] &&
         FrameCapture::IsDisplayBuffer(regs.color_buffers[0].Address())) {
         camera_motion->OnDisplayPass(cb_descs[0].first);
+        upscaler->OnFrameStart();
     }
     const GraphicsPipeline* pipeline = pipeline_cache.GetGraphicsPipeline({}, prepared);
     if (prepared) {
@@ -420,6 +434,9 @@ void Rasterizer::DispatchDirect() {
     }
 
     const auto& cs = pipeline->GetStage(Shader::SwStage::Compute);
+    if (upscaler->Enabled()) {
+        upscaler->OnDispatch(cs.pgm_hash);
+    }
     if (ExecuteShaderHLE(cs, liverpool->regs, cs_program, *this)) {
         return;
     }

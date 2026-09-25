@@ -1,12 +1,14 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "video_core/renderer_vulkan/vk_camera_motion.h"
 
+#include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 
 #include "bbport_toggles.h"
 
+#include "video_core/host_shaders/camera_motion_comp.h"
 #include "video_core/host_shaders/camera_motion_debug_comp.h"
 #include "video_core/renderer_vulkan/vk_instance.h"
 #include "video_core/renderer_vulkan/vk_runtime.h"
@@ -48,10 +50,47 @@ CameraMotion::CameraMotion(const Instance& instance_, Scheduler& scheduler_,
     : instance{instance_}, scheduler{scheduler_}, texture_cache{texture_cache_}, runtime{runtime_} {
     const char* env = std::getenv("BB_DEBUG_MOTION");
     debug_overlay = env && env[0] == '1';
+    const char* upscaler = std::getenv("BB_UPSCALER");
+    for_upscaler = upscaler && upscaler[0] != '\0' && std::strcmp(upscaler, "off") != 0;
+    const auto device = instance.GetDevice();
+    if (for_upscaler) {
+        const std::array<vk::DescriptorSetLayoutBinding, 2> motion_bindings = {{
+            {.binding = 0,
+             .descriptorType = vk::DescriptorType::eSampledImage,
+             .descriptorCount = 1,
+             .stageFlags = vk::ShaderStageFlagBits::eCompute},
+            {.binding = 1,
+             .descriptorType = vk::DescriptorType::eStorageImage,
+             .descriptorCount = 1,
+             .stageFlags = vk::ShaderStageFlagBits::eCompute},
+        }};
+        motion_desc_layout = Check(device.createDescriptorSetLayoutUnique({
+            .flags = vk::DescriptorSetLayoutCreateFlagBits::ePushDescriptorKHR,
+            .bindingCount = static_cast<u32>(motion_bindings.size()),
+            .pBindings = motion_bindings.data(),
+        }));
+        const vk::PushConstantRange range{.stageFlags = vk::ShaderStageFlagBits::eCompute,
+                                          .offset = 0,
+                                          .size = sizeof(PushConstants)};
+        motion_pipeline_layout = Check(device.createPipelineLayoutUnique({
+            .setLayoutCount = 1,
+            .pSetLayouts = &*motion_desc_layout,
+            .pushConstantRangeCount = 1,
+            .pPushConstantRanges = &range,
+        }));
+        const auto motion_module = CompileSPV(CAMERA_MOTION_COMP, device);
+        motion_pipeline = Check(device.createComputePipelineUnique(
+            {}, vk::ComputePipelineCreateInfo{
+                    .stage = {.stage = vk::ShaderStageFlagBits::eCompute,
+                              .module = motion_module,
+                              .pName = "main"},
+                    .layout = *motion_pipeline_layout,
+                }));
+        device.destroyShaderModule(motion_module);
+    }
     if (!debug_overlay) {
         return;
     }
-    const auto device = instance.GetDevice();
     const std::array<vk::DescriptorSetLayoutBinding, 4> bindings = {{
         {.binding = 0,
          .descriptorType = vk::DescriptorType::eSampledImage,
@@ -103,6 +142,46 @@ CameraMotion::CameraMotion(const Instance& instance_, Scheduler& scheduler_,
 }
 
 CameraMotion::~CameraMotion() = default;
+
+float CameraMotion::VerticalFov() const noexcept {
+    return 2.0f * std::atan(1.0f / current.proj[1]);
+}
+
+float CameraMotion::Near() const noexcept {
+    // depth = zs + zo / z is 0 at the near plane.
+    return -current.proj[3] / current.proj[2];
+}
+
+void CameraMotion::RecordMotion(vk::CommandBuffer cmdbuf, vk::ImageView depth_view,
+                                vk::ImageView motion_view, u32 width, u32 height) {
+    const PushConstants push{
+        .reproject = Multiply(previous.view, current.inv_view),
+        .proj = current.proj,
+        .prev_proj = previous.proj,
+        .size = {float(width), float(height)},
+        .mode = 0,
+    };
+    const vk::DescriptorImageInfo depth_info{.imageView = depth_view,
+                                             .imageLayout = vk::ImageLayout::eGeneral};
+    const vk::DescriptorImageInfo motion_info{.imageView = motion_view,
+                                              .imageLayout = vk::ImageLayout::eGeneral};
+    const std::array<vk::WriteDescriptorSet, 2> writes = {{
+        {.dstBinding = 0,
+         .descriptorCount = 1,
+         .descriptorType = vk::DescriptorType::eSampledImage,
+         .pImageInfo = &depth_info},
+        {.dstBinding = 1,
+         .descriptorCount = 1,
+         .descriptorType = vk::DescriptorType::eStorageImage,
+         .pImageInfo = &motion_info},
+    }};
+    cmdbuf.bindPipeline(vk::PipelineBindPoint::eCompute, *motion_pipeline);
+    cmdbuf.pushDescriptorSetKHR(vk::PipelineBindPoint::eCompute, *motion_pipeline_layout, 0,
+                                writes);
+    cmdbuf.pushConstants(*motion_pipeline_layout, vk::ShaderStageFlagBits::eCompute, 0,
+                         sizeof(push), &push);
+    cmdbuf.dispatch((width + 7) / 8, (height + 7) / 8, 1);
+}
 
 void CameraMotion::OnConstants(const float* data) {
     // Scene constants: far plane 3000, 1/far, and the render size.
