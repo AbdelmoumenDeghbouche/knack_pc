@@ -847,7 +847,7 @@ private:
     };
     std::queue<PendingOp> pending_ops;
     std::recursive_mutex pending_ops_mutex;
-    std::chrono::steady_clock::time_point last_pending_refresh{}; // bbport
+    u32 pending_polls = 0; // bbport
     std::queue<PendingOp> priority_pending_ops;
     std::mutex priority_pending_ops_mutex;
     std::condition_variable_any priority_pending_ops_cv;

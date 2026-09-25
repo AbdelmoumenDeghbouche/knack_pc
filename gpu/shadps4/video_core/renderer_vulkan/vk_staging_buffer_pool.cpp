@@ -59,7 +59,6 @@ StagingBufferPool::~StagingBufferPool() = default;
 
 StagingBufferRef StagingBufferPool::Request(u64 size, MemoryType type, u64 alignment,
                                             bool deferred) {
-    BbStats::Timer timer{BbStats::t_staging};
     Ring& ring = rings[u32(type)];
     if (deferred || size > BLOCK_SIZE) {
         return RequestLarge(size, type, deferred);

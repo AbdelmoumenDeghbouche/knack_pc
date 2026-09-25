@@ -172,6 +172,10 @@ std::unique_ptr<RecordChunk> Scheduler::AcquireChunk() {
 }
 
 void Scheduler::WaitHostCopies() {
+    if (!BbStats::enabled) {
+        BbCopy::WaitAsync();
+        return;
+    }
     BbStats::Timer timer{BbStats::t_host_wait};
     BbCopy::WaitAsync();
 }
@@ -294,17 +298,15 @@ void Scheduler::Wait(u64 tick) {
 void Scheduler::PopPendingOperations() {
     std::unique_lock lk(pending_ops_mutex);
     // bbport: this runs on every draw and dispatch. Querying the timeline semaphore is an
-    // ioctl, so it is skipped when nothing waits and limited to one query per 250 us.
+    // ioctl, so it is skipped when nothing waits and done once per 32 calls (~0.3 ms; reading
+    // the clock per draw instead was itself a hot spot).
     if (pending_ops.empty()) {
         return;
     }
     if (!work_semaphore.IsFree(pending_ops.front().gpu_tick)) {
-        const auto now = std::chrono::steady_clock::now();
-        if (now - last_pending_refresh < std::chrono::microseconds(250) &&
-            !BbToggle::Disabled(BbToggle::PendingPollLimit)) {
+        if ((++pending_polls & 31) != 0 && !BbToggle::Disabled(BbToggle::PendingPollLimit)) {
             return;
         }
-        last_pending_refresh = now;
         work_semaphore.Refresh();
     }
     while (!pending_ops.empty() && work_semaphore.IsFree(pending_ops.front().gpu_tick)) {
