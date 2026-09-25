@@ -56,5 +56,7 @@ struct Timer {
 };
 /// GPU thread rusage, refreshed after each graphics submission.
 inline std::atomic<std::uint64_t> gpu_sys_us{0}, gpu_user_us{0}, gpu_invol_switches{0},
-    gpu_vol_switches{0};
+    gpu_vol_switches{0}, gpu_minor_faults{0};
+/// Protection faults (signals) taken by the GPU thread itself.
+inline std::atomic<std::uint64_t> gpu_signal_faults{0};
 } // namespace BbStats

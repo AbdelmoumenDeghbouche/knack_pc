@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #include <boost/container/small_vector.hpp>
+#include "bbport_toggles.h"
 #include "common/assert.h"
 #include "common/debug.h"
 #include "common/div_ceil.h"
@@ -402,6 +403,9 @@ struct SignalImpl : public PageManager::Impl {
         const auto addr = reinterpret_cast<VAddr>(fault_address);
         const auto is_gpu_thread =
             std::this_thread::get_id() == rasterizer->GetGpuCommandProcessorThread();
+        if (is_gpu_thread) {
+            BbStats::gpu_signal_faults.fetch_add(1, std::memory_order_relaxed);
+        }
         if (Common::IsWriteError(context)) {
             return rasterizer->OnWriteFault(addr, is_gpu_thread);
         } else {

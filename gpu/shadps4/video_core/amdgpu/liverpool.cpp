@@ -1074,6 +1074,7 @@ Liverpool::Task Liverpool::ProcessGraphics(std::span<const u32> dcb, std::span<c
                                       std::memory_order_relaxed);
             BbStats::gpu_invol_switches.store(usage.ru_nivcsw, std::memory_order_relaxed);
             BbStats::gpu_vol_switches.store(usage.ru_nvcsw, std::memory_order_relaxed);
+            BbStats::gpu_minor_faults.store(usage.ru_minflt, std::memory_order_relaxed);
         }
     }
 
