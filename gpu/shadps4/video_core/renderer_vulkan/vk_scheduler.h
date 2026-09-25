@@ -177,15 +177,58 @@ struct DynamicState {
     /// flags that committing clears).
     void Commit(const Instance& instance, const vk::CommandBuffer& cmdbuf);
 
-    /// bbport: true when Commit() would record anything.
+    /// bbport: true when Commit() would record anything. Flags that Commit() defers (their
+    /// test is disabled) do not count.
     [[nodiscard]] bool AnyDirty() const noexcept {
+        auto pending = dirty_state;
+        if (!depth_test_enabled) {
+            pending.depth_compare_op = false;
+        }
+        if (!depth_bounds_test_enabled) {
+            pending.depth_bounds = false;
+        }
+        if (!depth_bias_enabled) {
+            pending.depth_bias = false;
+        }
+        if (!stencil_test_enabled) {
+            pending.stencil_front_ops = pending.stencil_back_ops = false;
+            pending.stencil_front_reference = pending.stencil_back_reference = false;
+            pending.stencil_front_write_mask = pending.stencil_back_write_mask = false;
+            pending.stencil_front_compare_mask = pending.stencil_back_compare_mask = false;
+        }
         static constexpr decltype(dirty_state) clean{};
-        return std::memcmp(&dirty_state, &clean, sizeof(dirty_state)) != 0;
+        return std::memcmp(&pending, &clean, sizeof(pending)) != 0;
     }
 
     /// Invalidates all dynamic state to be flushed into the next command buffer.
     void Invalidate() {
-        std::memset(&dirty_state, 0xFF, sizeof(dirty_state));
+        // bbport: named flags only; padding bits set by a memset made AnyDirty() always true.
+        dirty_state.viewports = true;
+        dirty_state.scissors = true;
+        dirty_state.depth_test_enabled = true;
+        dirty_state.depth_write_enabled = true;
+        dirty_state.depth_compare_op = true;
+        dirty_state.depth_bounds_test_enabled = true;
+        dirty_state.depth_bounds = true;
+        dirty_state.depth_bias_enabled = true;
+        dirty_state.depth_bias = true;
+        dirty_state.stencil_test_enabled = true;
+        dirty_state.stencil_front_ops = true;
+        dirty_state.stencil_front_reference = true;
+        dirty_state.stencil_front_write_mask = true;
+        dirty_state.stencil_front_compare_mask = true;
+        dirty_state.stencil_back_ops = true;
+        dirty_state.stencil_back_reference = true;
+        dirty_state.stencil_back_write_mask = true;
+        dirty_state.stencil_back_compare_mask = true;
+        dirty_state.primitive_restart_enable = true;
+        dirty_state.rasterizer_discard_enable = true;
+        dirty_state.cull_mode = true;
+        dirty_state.front_face = true;
+        dirty_state.blend_constants = true;
+        dirty_state.color_write_masks = true;
+        dirty_state.line_width = true;
+        dirty_state.feedback_loop_enabled = true;
     }
 
     void SetViewports(const Viewports& viewports_) {

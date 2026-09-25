@@ -3,6 +3,7 @@
 
 #include <xxhash.h>
 
+#include "bbport_toggles.h"
 #include "common/assert.h"
 #include "common/debug.h"
 #include "common/div_ceil.h"
@@ -500,6 +501,29 @@ ImageId TextureCache::FindImage(ImageDesc& desc, bool exact_fmt) {
     ASSERT(info.guest_address != 0);
 
     std::scoped_lock lock{mutex};
+
+    const u64 key_hash = (info.guest_address >> 8) * 0x9E3779B97F4A7C15ull ^ info.guest_size ^
+                         u64(info.pixel_format) << 40 ^ u64(info.size.width) << 20 ^
+                         info.size.height ^ u64(exact_fmt) << 63;
+    auto& cached = find_image_cache[(key_hash ^ key_hash >> 29) % find_image_cache.size()];
+    if (cached.generation == registry_generation && cached.address == info.guest_address &&
+        cached.size == info.guest_size && cached.extent == info.size &&
+        cached.format == info.pixel_format && cached.type == info.type &&
+        cached.exact_fmt == exact_fmt && cached.binding == desc.type &&
+        cached.levels == info.resources.levels && cached.layers == info.resources.layers &&
+        !BbToggle::Disabled(BbToggle::FindImageCache)) {
+        Image& image = slot_images[cached.image_id];
+        image.tick_accessed_last = scheduler.CurrentTick();
+        TouchImage(image);
+        if (cached.view_mip > 0) {
+            desc.view_info.range.base.level = cached.view_mip;
+        }
+        if (cached.view_slice > 0) {
+            desc.view_info.range.base.layer = cached.view_slice;
+        }
+        return cached.image_id;
+    }
+
     ImageIds image_ids;
     ForEachImageInRegion(info.guest_address, info.guest_size,
                          [&](ImageId image_id, Image& image) { image_ids.push_back(image_id); });
@@ -577,6 +601,21 @@ ImageId TextureCache::FindImage(ImageDesc& desc, bool exact_fmt) {
         desc.view_info.range.base.layer = view_slice;
     }
 
+    cached = FindImageCacheEntry{
+        .address = info.guest_address,
+        .size = info.guest_size,
+        .extent = info.size,
+        .format = info.pixel_format,
+        .type = info.type,
+        .exact_fmt = exact_fmt,
+        .binding = desc.type,
+        .levels = info.resources.levels,
+        .layers = info.resources.layers,
+        .generation = registry_generation,
+        .image_id = image_id,
+        .view_mip = view_mip,
+        .view_slice = view_slice,
+    };
     return image_id;
 }
 
@@ -797,6 +836,7 @@ void TextureCache::RegisterImage(ImageId image_id) {
     ASSERT_MSG(False(image.flags & ImageFlagBits::Registered),
                "Trying to register an already registered image");
     image.flags |= ImageFlagBits::Registered;
+    ++registry_generation;
     total_used_memory += Common::AlignUp(image.info.guest_size, 1024);
     image.lru_id = lru_cache.Insert(image_id, gc_tick);
     ForEachPage(image.info.guest_address, image.info.guest_size,
@@ -808,6 +848,7 @@ void TextureCache::UnregisterImage(ImageId image_id) {
     ASSERT_MSG(True(image.flags & ImageFlagBits::Registered),
                "Trying to unregister an already unregistered image");
     image.flags &= ~ImageFlagBits::Registered;
+    ++registry_generation;
     lru_cache.Free(image.lru_id);
     total_used_memory -= Common::AlignUp(image.info.guest_size, 1024);
     ForEachPage(image.info.guest_address, image.info.guest_size, [this, image_id](u64 page) {

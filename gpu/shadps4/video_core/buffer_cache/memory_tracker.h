@@ -9,6 +9,7 @@
 #include <type_traits>
 #include <vector>
 
+#include "bbport_toggles.h"
 #include "common/debug.h"
 #include "common/types.h"
 #include "core/emulator_settings.h"
@@ -91,6 +92,15 @@ public:
                             auto&& on_upload) {
         IteratePages<true>(query_cpu_range, query_size,
                            [&func, is_written](RegionManager* manager, u64 offset, size_t size) {
+                               // bbport: read-only bindings skip the region lock when no page
+                               // in range is CPU-modified. A guest write sets its bit in the
+                               // fault handler before the store, and the draw that uses the
+                               // data reaches this thread through the submission queue lock.
+                               if (!is_written &&
+                                   !BbToggle::Disabled(BbToggle::LockFreeUploadCheck) &&
+                                   !manager->template IsRegionModified<Type::CPU>(offset, size)) {
+                                   return;
+                               }
                                manager->lock.lock();
                                manager->template ForEachModifiedRange<Type::CPU, true>(
                                    manager->GetCpuAddr() + offset, size, func);

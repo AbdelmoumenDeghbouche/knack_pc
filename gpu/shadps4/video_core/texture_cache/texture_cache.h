@@ -353,6 +353,24 @@ private:
     const bool readback_linear_images;
     PageTable page_table;
     std::mutex mutex;
+    // bbport: FindImage results for unchanged image registrations (guarded by `mutex`).
+    struct FindImageCacheEntry {
+        VAddr address = 0;
+        u64 size = 0;
+        Extent3D extent{};
+        vk::Format format{};
+        AmdGpu::ImageType type{};
+        bool exact_fmt = false;
+        BindingType binding{};
+        u32 levels = 0;
+        u32 layers = 0;
+        u64 generation = ~0ULL;
+        ImageId image_id{};
+        int view_mip = -1;
+        int view_slice = -1;
+    };
+    std::array<FindImageCacheEntry, 256> find_image_cache{};
+    u64 registry_generation = 0;
     std::mutex samplers_mutex;
     std::mutex download_images_mutex;
     struct MetaDataInfo {
