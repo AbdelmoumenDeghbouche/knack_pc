@@ -568,21 +568,35 @@ public:
         }
     }
 
-    /// Copies `data` into recording storage that lives until the command that uses it has
-    /// been recorded (the same chunk). With threaded recording off, returns `data` itself.
-    template <typename T>
-    std::span<const T> RecordData(std::span<const T> data) {
-        if (!recorder_thread.joinable() || direct_mode || data.empty() ||
-            BbToggle::Disabled(BbToggle::ThreadedRecording)) {
-            return data;
+    /// True when Record() defers commands (and RecordData() copies into chunks).
+    [[nodiscard]] bool IsRecordingDeferred() const noexcept {
+        return recorder_thread.joinable() && !direct_mode &&
+               !BbToggle::Disabled(BbToggle::ThreadedRecording);
+    }
+
+    /// Makes room for `bytes` of RecordData() plus the command that uses them in the current
+    /// chunk: data and command must share a chunk, which is recycled once executed.
+    void ReserveRecordData(size_t bytes) {
+        if (!IsRecordingDeferred()) {
+            return;
         }
-        // Room for the data and the command that follows it, so both stay in one chunk.
-        const size_t bytes = data.size_bytes();
         ASSERT(bytes + 1024 <= RecordChunk::Capacity);
         if (RecordChunk::Capacity - record_chunk->Size() < bytes + 1024) {
             full_chunks.push_back(std::move(record_chunk));
             record_chunk = AcquireChunk();
         }
+    }
+
+    /// Copies `data` into recording storage that lives until the command that uses it has
+    /// been recorded (the same chunk). With threaded recording off, returns `data` itself.
+    template <typename T>
+    std::span<const T> RecordData(std::span<const T> data) {
+        if (!IsRecordingDeferred() || data.empty()) {
+            return data;
+        }
+        // Room for the data and the command that follows it, so both stay in one chunk.
+        const size_t bytes = data.size_bytes();
+        ReserveRecordData(bytes + alignof(T));
         auto* dst = static_cast<T*>(record_chunk->Allocate(bytes, alignof(T)));
         std::memcpy(dst, data.data(), bytes);
         return {dst, data.size()};

@@ -22,53 +22,6 @@ Pipeline::Pipeline(const Instance& instance_, Scheduler& scheduler_, DescriptorH
 
 Pipeline::~Pipeline() = default;
 
-namespace {
-// bbport: descriptor writes copied with the infos they point to, for deferred recording.
-struct RecordedWrites {
-    boost::container::small_vector<vk::WriteDescriptorSet, 32> writes;
-    boost::container::small_vector<vk::DescriptorBufferInfo, 32> buffers;
-    boost::container::small_vector<vk::DescriptorImageInfo, 32> images;
-    boost::container::small_vector<vk::BufferView, 8> views;
-
-    explicit RecordedWrites(const Pipeline::DescriptorWrites& set_writes) {
-        writes.assign(set_writes.begin(), set_writes.end());
-        for (const auto& write : set_writes) {
-            if (write.pBufferInfo) {
-                buffers.insert(buffers.end(), write.pBufferInfo,
-                               write.pBufferInfo + write.descriptorCount);
-            }
-            if (write.pImageInfo) {
-                images.insert(images.end(), write.pImageInfo,
-                              write.pImageInfo + write.descriptorCount);
-            }
-            if (write.pTexelBufferView) {
-                views.insert(views.end(), write.pTexelBufferView,
-                             write.pTexelBufferView + write.descriptorCount);
-            }
-        }
-    }
-
-    /// Points the writes at this object's copies; the object must not move afterwards.
-    std::span<const vk::WriteDescriptorSet> Resolve() {
-        size_t buffer = 0, image = 0, view = 0;
-        for (auto& write : writes) {
-            if (write.pBufferInfo) {
-                write.pBufferInfo = buffers.data() + buffer;
-                buffer += write.descriptorCount;
-            }
-            if (write.pImageInfo) {
-                write.pImageInfo = images.data() + image;
-                image += write.descriptorCount;
-            }
-            if (write.pTexelBufferView) {
-                write.pTexelBufferView = views.data() + view;
-                view += write.descriptorCount;
-            }
-        }
-        return writes;
-    }
-};
-} // namespace
 
 void Pipeline::BindResources(DescriptorWrites& set_writes,
                              const Shader::PushData& push_data) const {
@@ -86,9 +39,39 @@ void Pipeline::BindResources(DescriptorWrites& set_writes,
     }
 
     if (uses_push_descriptors) {
-        scheduler.Record([bind_point, layout, recorded = RecordedWrites{set_writes}](
-                             vk::CommandBuffer cmdbuf) mutable {
-            cmdbuf.pushDescriptorSetKHR(bind_point, layout, 0, recorded.Resolve());
+        if (!scheduler.IsRecordingDeferred()) {
+            scheduler.Record([&](vk::CommandBuffer cmdbuf) {
+                cmdbuf.pushDescriptorSetKHR(bind_point, layout, 0, set_writes);
+            });
+            return;
+        }
+        // Writes and the infos they point to are laid out in the recording chunk, with the
+        // pointers already aimed at those copies: the command only carries a span.
+        size_t bytes = set_writes.size() * sizeof(vk::WriteDescriptorSet) + 64;
+        for (const auto& write : set_writes) {
+            bytes += write.descriptorCount *
+                         (sizeof(vk::DescriptorBufferInfo) + sizeof(vk::DescriptorImageInfo) +
+                          sizeof(vk::BufferView)) +
+                     32;
+        }
+        scheduler.ReserveRecordData(bytes);
+        const auto writes = scheduler.RecordData(std::span<const vk::WriteDescriptorSet>{set_writes});
+        auto* patched = const_cast<vk::WriteDescriptorSet*>(writes.data());
+        for (size_t i = 0; i < writes.size(); ++i) {
+            auto& write = patched[i];
+            if (write.pBufferInfo) {
+                write.pBufferInfo = scheduler.RecordData(std::span{write.pBufferInfo, write.descriptorCount}).data();
+            }
+            if (write.pImageInfo) {
+                write.pImageInfo = scheduler.RecordData(std::span{write.pImageInfo, write.descriptorCount}).data();
+            }
+            if (write.pTexelBufferView) {
+                write.pTexelBufferView =
+                    scheduler.RecordData(std::span{write.pTexelBufferView, write.descriptorCount}).data();
+            }
+        }
+        scheduler.Record([bind_point, layout, writes](vk::CommandBuffer cmdbuf) {
+            cmdbuf.pushDescriptorSetKHR(bind_point, layout, 0, writes);
         });
         return;
     }

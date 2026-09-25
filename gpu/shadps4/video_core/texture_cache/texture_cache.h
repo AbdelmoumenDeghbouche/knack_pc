@@ -369,7 +369,7 @@ private:
         int view_mip = -1;
         int view_slice = -1;
     };
-    std::array<FindImageCacheEntry, 256> find_image_cache{};
+    std::array<FindImageCacheEntry, 1024> find_image_cache{};
     u64 registry_generation = 0;
     std::mutex samplers_mutex;
     std::mutex download_images_mutex;

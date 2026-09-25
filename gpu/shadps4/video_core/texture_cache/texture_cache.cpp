@@ -502,11 +502,27 @@ ImageId TextureCache::FindImage(ImageDesc& desc, bool exact_fmt) {
 
     std::scoped_lock lock{mutex};
 
-    const u64 key_hash = (info.guest_address >> 8) * 0x9E3779B97F4A7C15ull ^ info.guest_size ^
-                         u64(info.pixel_format) << 40 ^ u64(info.size.width) << 20 ^
-                         info.size.height ^ u64(exact_fmt) << 63;
-    auto& cached = find_image_cache[(key_hash ^ key_hash >> 29) % find_image_cache.size()];
-    if (cached.generation == registry_generation && cached.address == info.guest_address &&
+    u64 key_hash = info.guest_address ^ info.guest_size << 17 ^ u64(info.pixel_format) << 40 ^
+                   u64(info.size.width) << 24 ^ info.size.height ^ u64(desc.type) << 58 ^
+                   u64(exact_fmt) << 63;
+    key_hash = (key_hash ^ key_hash >> 33) * 0xFF51AFD7ED558CCDull;
+    key_hash = (key_hash ^ key_hash >> 33) * 0xC4CEB9FE1A85EC53ull;
+    key_hash ^= key_hash >> 33;
+    auto& cached = find_image_cache[key_hash % find_image_cache.size()];
+    // An exact match stays valid while that image is registered with the same description;
+    // resolved overlaps (views into other images) only until any image registration changes.
+    const auto still_exact = [&] {
+        if (cached.view_mip >= 0 || cached.view_slice >= 0 || !cached.image_id) {
+            return false;
+        }
+        const Image& image = slot_images[cached.image_id];
+        return True(image.flags & ImageFlagBits::Registered) &&
+               image.info.guest_address == info.guest_address &&
+               image.info.guest_size == info.guest_size && image.info.size == info.size &&
+               image.info.pixel_format == info.pixel_format;
+    };
+    if ((cached.generation == registry_generation || still_exact()) &&
+        cached.address == info.guest_address &&
         cached.size == info.guest_size && cached.extent == info.size &&
         cached.format == info.pixel_format && cached.type == info.type &&
         cached.exact_fmt == exact_fmt && cached.binding == desc.type &&
