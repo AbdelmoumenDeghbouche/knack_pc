@@ -27,6 +27,12 @@
 #include <fcntl.h>
 #include <linux/userfaultfd.h>
 #include <poll.h>
+#include <unordered_set>
+#include <cstdio>
+#include <cstdlib>
+#include <limits>
+#include <mutex>
+#include <unistd.h>
 #include <sys/ioctl.h>
 #include <sys/syscall.h>
 #else
@@ -100,6 +106,24 @@ struct PageManager::Impl {
     }
 
     virtual void Protect(VAddr address, size_t size, Core::MemoryPermission perms) = 0;
+
+    static bool GuestFaultSignalHandler(void* context, void* fault_address) {
+        const auto addr = reinterpret_cast<VAddr>(fault_address);
+        const auto is_gpu_thread =
+            std::this_thread::get_id() == rasterizer->GetGpuCommandProcessorThread();
+        if (is_gpu_thread) {
+            BbStats::gpu_signal_faults.fetch_add(1, std::memory_order_relaxed);
+        }
+        if (Common::IsWriteError(context)) {
+            BbStats::Timer timer{BbStats::t_write_faults};
+            return rasterizer->OnWriteFault(addr, is_gpu_thread);
+        } else {
+            BbStats::read_faults.fetch_add(1, std::memory_order_relaxed);
+            BbStats::Timer timer{BbStats::t_read_faults};
+            return rasterizer->ReadMemory(addr, 8, is_gpu_thread);
+        }
+        return false;
+    }
 
     template <bool track, bool is_read>
     void UpdatePageWatchers(VAddr addr, u64 size) {
@@ -248,10 +272,19 @@ struct PageManager::Impl {
 };
 
 #ifdef __linux__
+// bbport: write tracking with userfaultfd write-protection instead of mprotect. mprotect takes
+// the address space lock for writing and splits mappings; while guest threads fault on
+// per-frame buffers and the GPU thread re-protects uploaded pages, every page fault in the
+// process (copy threads included) waits for it. UFFDIO_WRITEPROTECT changes page table bits
+// under the lock for reading. Read protection (readbacks) still uses mprotect: userfaultfd
+// write-protection cannot deny reads. BB_UFFD=1.
 struct UffdImpl : public PageManager::Impl {
 private:
     std::jthread ufd_thread;
     int uffd;
+    std::mutex read_revoked_mutex;
+    std::unordered_set<u64> read_revoked_pages; ///< 4 KiB pages denied reads with mprotect
+    std::atomic<size_t> num_read_revoked{0};
 
 public:
     UffdImpl(Vulkan::Rasterizer* rasterizer_) : Impl() {
@@ -264,117 +297,114 @@ public:
             throw std::runtime_error("userfaultfd");
         }
 
-        // Request uffdio features from kernel.
-        uffdio_api api;
+        // Guest memory is a shared memfd mapping: write-protection there needs the shmem
+        // feature, and unpopulated pages must be protectable too.
+        uffdio_api api{};
         api.api = UFFD_API;
-        api.features = UFFD_FEATURE_THREAD_ID;
-        const int ret = ioctl(uffd, UFFDIO_API, &api);
-        if (ret != 0) {
+        api.features =
+            UFFD_FEATURE_THREAD_ID | UFFD_FEATURE_WP_HUGETLBFS_SHMEM | UFFD_FEATURE_WP_UNPOPULATED;
+        if (ioctl(uffd, UFFDIO_API, &api) != 0) {
             LOG_ERROR(Common_Memory,
                       "uffdio_api call failed: {}, falling back to signal implementation",
                       Common::GetLastErrorMsg());
+            close(uffd);
             throw std::runtime_error("uffdio_api");
         }
 
-        // Create uffd handler thread
-        ufd_thread = std::jthread([&](std::stop_token token) { UffdHandler(token); });
+        // Read faults (readbacks) still arrive as signals.
+        Core::Signals::Instance()->RegisterAccessViolationHandler(
+            GuestFaultSignalHandler, std::numeric_limits<u32>::min());
+
+        ufd_thread = std::jthread([this](std::stop_token token) { UffdHandler(token); });
+        std::printf("GPU: memory tracking with userfaultfd write-protection\n");
     }
 
     ~UffdImpl() = default;
 
     void OnMap(VAddr address, size_t size) override {
-        uffdio_register reg;
+        uffdio_register reg{};
         reg.range.start = address;
         reg.range.len = size;
         reg.mode = UFFDIO_REGISTER_MODE_WP;
-        const int ret = ioctl(uffd, UFFDIO_REGISTER, &reg);
-        ASSERT_MSG(ret != -1, "Uffdio register failed with error: {}", Common::GetLastErrorMsg());
+        if (ioctl(uffd, UFFDIO_REGISTER, &reg) == -1) {
+            LOG_ERROR(Common_Memory, "Uffdio register {:#x}+{:#x} failed: {}", address, size,
+                      Common::GetLastErrorMsg());
+        }
     }
 
     void OnUnmap(VAddr address, size_t size) override {
-        uffdio_range range;
+        uffdio_range range{};
         range.start = address;
         range.len = size;
-        const int ret = ioctl(uffd, UFFDIO_UNREGISTER, &range);
-        ASSERT_MSG(ret != -1, "Uffdio unregister failed with error: {}", Common::GetLastErrorMsg());
+        ioctl(uffd, UFFDIO_UNREGISTER, &range);
     }
 
     void Protect(VAddr address, size_t size, Core::MemoryPermission perms) override {
-        bool allow_write = True(perms & Core::MemoryPermission::Write);
-        uffdio_writeprotect wp;
+        auto& address_space = Core::Memory::Instance()->GetAddressSpace();
+        const bool allow_read = True(perms & Core::MemoryPermission::Read);
+        const bool allow_write = True(perms & Core::MemoryPermission::Write);
+        const u64 first = address >> 12, last = (address + size + 4095) >> 12;
+        if (!allow_read) {
+            // Readbacks: deny all access with mprotect.
+            address_space.Protect(address, size, Core::MemoryPermission::None);
+            std::scoped_lock lk{read_revoked_mutex};
+            for (u64 page = first; page < last; ++page) {
+                read_revoked_pages.insert(page);
+            }
+            num_read_revoked.store(read_revoked_pages.size(), std::memory_order_release);
+            return;
+        }
+        if (num_read_revoked.load(std::memory_order_acquire) != 0) {
+            std::scoped_lock lk{read_revoked_mutex};
+            bool restore = false;
+            for (u64 page = first; page < last; ++page) {
+                restore |= read_revoked_pages.erase(page) != 0;
+            }
+            num_read_revoked.store(read_revoked_pages.size(), std::memory_order_release);
+            if (restore) {
+                address_space.Protect(address, size, Core::MemoryPermission::ReadWrite);
+            }
+        }
+        uffdio_writeprotect wp{};
         wp.range.start = address;
         wp.range.len = size;
         wp.mode = allow_write ? UFFDIO_WRITEPROTECT_MODE_DONTWAKE : UFFDIO_WRITEPROTECT_MODE_WP;
-        const int ret = ioctl(uffd, UFFDIO_WRITEPROTECT, &wp);
-        ASSERT_MSG(ret != -1, "Uffdio writeprotect failed with error: {}",
-                   Common::GetLastErrorMsg());
+        if (ioctl(uffd, UFFDIO_WRITEPROTECT, &wp) == -1) {
+            LOG_ERROR(Common_Memory, "Uffdio writeprotect {:#x}+{:#x} failed: {}", address, size,
+                      Common::GetLastErrorMsg());
+        }
     }
 
     void UffdHandler(std::stop_token token) {
-        Common::SetCurrentThreadName("shadPS4:Uffd");
-
-        auto regions = Core::Memory::Instance()->GetAddressSpace().GetUsableRegions();
-        for (auto& region : regions) {
-            OnMap(region.lower(), region.upper());
-        }
-        LOG_INFO(Common_Memory, "registered reserved memory with userfaultfd");
-
+        Common::SetCurrentThreadName("bb:Uffd");
         while (!token.stop_requested()) {
-            pollfd pollfd;
+            pollfd pollfd{};
             pollfd.fd = uffd;
             pollfd.events = POLLIN;
-
-            // Block until the descriptor is ready for data reads.
-            const int pollres = poll(&pollfd, 1, -1);
-            switch (pollres) {
-            case -1:
-                perror("Poll userfaultfd");
-                continue;
-                break;
-            case 0:
-                continue;
-            case 1:
-                break;
-            default:
-                UNREACHABLE_MSG("Unexpected number of descriptors {} out of poll", pollres);
-            }
-
-            // We don't want an error condition to have occured.
-            ASSERT_MSG(!(pollfd.revents & POLLERR), "POLLERR on userfaultfd");
-
-            // We waited until there is data to read, we don't care about anything else.
-            if (!(pollfd.revents & POLLIN)) {
+            // Short timeout so the stop request is seen.
+            const int pollres = poll(&pollfd, 1, 100);
+            if (pollres <= 0 || !(pollfd.revents & POLLIN)) {
                 continue;
             }
-
-            // Read message from kernel.
             uffd_msg msg;
             const int readret = read(uffd, &msg, sizeof(msg));
-            if (readret == -1) {
-                if (errno == EAGAIN || errno == EWOULDBLOCK) {
-                    continue;
-                }
-                LOG_ERROR(Common_Memory, "Unexpected result of uffd read: {}",
-                          Common::GetLastErrorMsg());
-                break;
+            if (readret != sizeof(msg)) {
+                continue;
             }
-            ASSERT_MSG(readret == sizeof(msg), "Unexpected short read, exiting");
-            ASSERT(msg.arg.pagefault.flags & UFFD_PAGEFAULT_FLAG_WP);
-
-            // Notify rasterizer about the fault.
+            if (msg.event != UFFD_EVENT_PAGEFAULT) {
+                continue;
+            }
             const VAddr addr = msg.arg.pagefault.address;
             const auto ptid = msg.arg.pagefault.feat.ptid;
-            rasterizer->InvalidateMemory(addr, 1,
-                                         ptid == rasterizer->GetGpuCommandProcessorThreadId());
-
-            // Some calls to InvalidateMemory never reach the UFFDIO_WRITEPROTECT ioctl in
-            // ::Protect, therefore we use MODE_DONTWAKE and wake the thread with UFFDIO_WAKE here
-            uffdio_range wake;
-            wake.start = msg.arg.pagefault.address;
+            {
+                BbStats::Timer timer{BbStats::t_write_faults};
+                rasterizer->OnWriteFault(addr, ptid == rasterizer->GetGpuCommandProcessorThreadId());
+            }
+            // Protect() clears with DONTWAKE (it may run for pages nobody waits on).
+            uffdio_range wake{};
+            wake.start = addr & ~u64(PM_PAGE_SIZE - 1);
             wake.len = PM_PAGE_SIZE;
-            const int ret = ioctl(uffd, UFFDIO_WAKE, &wake);
-            ASSERT_MSG(ret != -1, "Waking thread {} failed with: {}", ptid,
-                       Common::GetLastErrorMsg());
+            ioctl(uffd, UFFDIO_WAKE, &wake);
         }
     }
 };
@@ -399,28 +429,11 @@ struct SignalImpl : public PageManager::Impl {
         impl.Protect(address, size, perms);
     }
 
-    static bool GuestFaultSignalHandler(void* context, void* fault_address) {
-        const auto addr = reinterpret_cast<VAddr>(fault_address);
-        const auto is_gpu_thread =
-            std::this_thread::get_id() == rasterizer->GetGpuCommandProcessorThread();
-        if (is_gpu_thread) {
-            BbStats::gpu_signal_faults.fetch_add(1, std::memory_order_relaxed);
-        }
-        if (Common::IsWriteError(context)) {
-            BbStats::Timer timer{BbStats::t_write_faults};
-            return rasterizer->OnWriteFault(addr, is_gpu_thread);
-        } else {
-            BbStats::read_faults.fetch_add(1, std::memory_order_relaxed);
-            BbStats::Timer timer{BbStats::t_read_faults};
-            return rasterizer->ReadMemory(addr, 8, is_gpu_thread);
-        }
-        return false;
-    }
 };
 
 PageManager::PageManager(Vulkan::Rasterizer* rasterizer_) {
 #ifdef __linux__
-    if (EmulatorSettings.IsUserfaultfdTracking()) {
+    if (std::getenv("BB_UFFD") && std::getenv("BB_UFFD")[0] == '1') {
         try {
             impl = std::make_unique<UffdImpl>(rasterizer_);
             LOG_INFO(Config, "Memory tracking method: userfaultfd");
