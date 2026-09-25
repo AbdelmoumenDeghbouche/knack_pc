@@ -739,7 +739,7 @@ PipelineCache::Result PipelineCache::GetProgram(PipelineSelection& sel, HwStage 
         }
         const Program* program = found_program->second.get();
         auto [it_info, new_info] = worker.infos.try_emplace(program, *program->info_template);
-        auto& info = it_info.value();
+        auto& info = it_info->second;
         info.pgm_base = params.Base();
         info.user_data = params.user_data;
         // The walk of resource tables and the fetch shader parse read guest memory through

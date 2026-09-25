@@ -3,6 +3,7 @@
 
 #pragma once
 
+#include <unordered_map>
 #include <shared_mutex>
 #include <variant>
 #include <boost/container/static_vector.hpp>
@@ -104,7 +105,8 @@ struct PrepWorker {
         VAddr pgm_base;
         const std::vector<u32>* flat;
     };
-    tsl::robin_map<const Program*, Shader::Info> infos;
+    // Node-based: stages keep pointers to these Infos while later stages are inserted.
+    std::unordered_map<const Program*, Shader::Info> infos;
     boost::container::static_vector<Stage, MaxShaderStages> stages;
     bool failed = false;
 };
