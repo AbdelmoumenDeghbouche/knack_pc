@@ -54,3 +54,10 @@ compared by screenshot and frame rate.
 
 Must scale down to the Steam Deck (4 cores / 8 threads): worker count follows
 `hardware_concurrency()`, no busy waiting when cores are scarce, no AVX-512.
+
+## Results
+
+Step 1 (draw preparation, 4 workers, toggle 8192), Hunter's Nightmare, same view:
+71.5 FPS with prepared draws vs 64.1 without (+11.5%), identical screenshots.
+97–98% of direct draws use the prepared pipeline; each `bb:DrawPrep` worker ~10% of a core.
+The GPU thread is still ~90% busy: texture/buffer binding is the next target (step 2).
