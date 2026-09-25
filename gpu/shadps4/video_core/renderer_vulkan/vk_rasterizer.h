@@ -157,6 +157,7 @@ private:
     PipelineCache pipeline_cache;
     std::unique_ptr<DrawPreparation> draw_prep;
     std::unique_ptr<CameraMotion> camera_motion; // bbport: motion vectors (docs/upscaler.md)
+    bool gbuffer_draw = false;
     const bool host_markers_enabled;
     const bool guest_markers_enabled;
 

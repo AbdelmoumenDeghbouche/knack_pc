@@ -41,8 +41,8 @@ void main() {
     const bool sky = depth >= 0.99999;
 
 #ifdef DEBUG_OVERLAY
-    // Red/green: horizontal/vertical motion (grey = none), 16 pixels to full scale.
-    const vec3 mv_color = sky ? vec3(0.0, 0.0, 0.3) : vec3(0.5) + vec3(motion / 32.0, 0.0);
+    // Red/green: horizontal/vertical motion (grey = none), 64 pixels to full scale.
+    const vec3 mv_color = sky ? vec3(0.0, 0.0, 0.3) : vec3(0.5) + vec3(motion / 128.0, 0.0);
     const vec4 original = imageLoad(color_img, pixel);
     imageStore(color_img, pixel, vec4(mix(original.rgb, mv_color, 0.75), original.a));
 #else

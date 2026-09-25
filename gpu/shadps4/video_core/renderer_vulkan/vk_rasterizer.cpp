@@ -206,8 +206,10 @@ void Rasterizer::PrepareRenderState(const GraphicsPipeline* pipeline) {
     } else {
         db_desc.first = {};
     }
-    // bbport: the G-buffer pass (5+ color targets) holds the scene depth.
-    if (camera_motion->Enabled() && std::popcount(key.mrt_mask) >= 5 && db_desc.first) {
+    // bbport: the G-buffer pass (5+ color targets) holds the scene depth, and its constants the
+    // main camera (shadow passes bind the same layout with the light's camera).
+    gbuffer_draw = camera_motion->Enabled() && std::popcount(key.mrt_mask) >= 5 && db_desc.first;
+    if (gbuffer_draw) {
         camera_motion->OnGBufferPass(db_desc.first);
     }
 }
@@ -407,6 +409,7 @@ void Rasterizer::DispatchDirect() {
     RENDERER_TRACE;
     BbStats::dispatches.fetch_add(1, std::memory_order_relaxed);
     FrameCapture::Poll();
+    gbuffer_draw = false;
 
     scheduler.PopPendingOperations();
 
@@ -887,7 +890,7 @@ void Rasterizer::BindBuffers(const Shader::Info& stage, Shader::Backend::Binding
             }
         } else {
             const auto vsharp = desc.GetSharp(stage);
-            if (vsharp.GetSize() == 864 && camera_motion->Enabled() &&
+            if (vsharp.GetSize() == 864 && gbuffer_draw &&
                 memory->IsValidGpuMapping(vsharp.base_address, 0)) {
                 camera_motion->OnConstants(reinterpret_cast<const float*>(vsharp.base_address));
             }
