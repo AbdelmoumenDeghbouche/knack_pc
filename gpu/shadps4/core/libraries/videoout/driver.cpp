@@ -472,14 +472,17 @@ void VideoOutDriver::SubmitFlipInternal(VideoOutPort* port, s32 index, s64 flip_
         frame = presenter->PrepareFrame(group, buffer.address_left);
     }
 
-    std::scoped_lock lock{mutex};
-    requests.push({
-        .frame = frame,
-        .port = port,
-        .flip_arg = flip_arg,
-        .index = index,
-        .eop = is_eop,
-    });
+    {
+        std::scoped_lock lock{mutex};
+        requests.push({
+            .frame = frame,
+            .port = port,
+            .flip_arg = flip_arg,
+            .index = index,
+            .eop = is_eop,
+        });
+    }
+    request_cv.notify_one();
 }
 
 void VideoOutDriver::PresentThread(std::stop_token token) {
@@ -510,8 +513,13 @@ void VideoOutDriver::PresentThread(std::stop_token token) {
         return {};
     };
 
+    // bbport: with a frame limit (uncapped presets) a queued flip is presented as soon as it
+    // arrives and its slot allows, between vblanks, instead of on the next vblank tick.
+    const bool immediate_flips = frame_limit != 0;
+
     while (!token.stop_requested()) {
         timer.Start();
+        const auto tick_deadline = std::chrono::steady_clock::now() + vblank_period;
 
         if (DebugState.IsGuestThreadsPaused()) {
             DrawLastFrame();
@@ -566,7 +574,33 @@ void VideoOutDriver::PresentThread(std::stop_token token) {
             main_port.vblank_cv.notify_all();
         }
 
-        timer.End();
+        if (!immediate_flips || main_port.flip_rate != 0) {
+            timer.End();
+            continue;
+        }
+        while (!token.stop_requested()) {
+            {
+                std::unique_lock lk{mutex};
+                if (!request_cv.wait_until(lk, tick_deadline,
+                                           [&] { return !requests.empty(); })) {
+                    break; // next vblank
+                }
+            }
+            if (std::chrono::steady_clock::now() < next_flip) {
+                if (next_flip >= tick_deadline) {
+                    break;
+                }
+                std::this_thread::sleep_until(next_flip);
+            }
+            const auto now = std::chrono::steady_clock::now();
+            const auto request = receive_request();
+            if (request) {
+                next_flip = std::max(next_flip + frame_period, now - frame_period);
+                Flip(request);
+                FRAME_END;
+            }
+        }
+        std::this_thread::sleep_until(tick_deadline);
     }
 }
 

@@ -112,6 +112,7 @@ private:
     void PresentThread(std::stop_token token);
 
     std::mutex mutex;
+    std::condition_variable request_cv; ///< bbport: a flip was queued (immediate flips)
     VideoOutPort main_port{};
     std::jthread present_thread;
     std::queue<Request> requests;
