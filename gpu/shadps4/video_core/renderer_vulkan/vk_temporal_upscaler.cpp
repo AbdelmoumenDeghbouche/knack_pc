@@ -7,6 +7,8 @@
 
 #include "bbport_toggles.h"
 #include "ffx_vk_portable.h"
+#include "video_core/host_shaders/upscale_merge_comp.h"
+#include "video_core/renderer_vulkan/vk_shader_util.h"
 #include "video_core/renderer_vulkan/vk_camera_motion.h"
 #include "video_core/renderer_vulkan/vk_instance.h"
 #include "video_core/renderer_vulkan/vk_runtime.h"
@@ -161,6 +163,42 @@ bool TemporalUpscaler::EnsureResources(u32 w, u32 h) {
                  vk::ImageUsageFlagBits::eTransferSrc,
         .initialLayout = vk::ImageLayout::eUndefined,
     });
+    output_view = Check(device.createImageViewUnique({
+        .image = vk::Image(output_image),
+        .viewType = vk::ImageViewType::e2D,
+        .format = vk::Format::eR16G16B16A16Sfloat,
+        .subresourceRange = {vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1},
+    }));
+    if (!merge_pipeline) {
+        const std::array<vk::DescriptorSetLayoutBinding, 2> bindings = {{
+            {.binding = 0,
+             .descriptorType = vk::DescriptorType::eStorageImage,
+             .descriptorCount = 1,
+             .stageFlags = vk::ShaderStageFlagBits::eCompute},
+            {.binding = 1,
+             .descriptorType = vk::DescriptorType::eStorageImage,
+             .descriptorCount = 1,
+             .stageFlags = vk::ShaderStageFlagBits::eCompute},
+        }};
+        merge_desc_layout = Check(device.createDescriptorSetLayoutUnique({
+            .flags = vk::DescriptorSetLayoutCreateFlagBits::ePushDescriptorKHR,
+            .bindingCount = static_cast<u32>(bindings.size()),
+            .pBindings = bindings.data(),
+        }));
+        merge_pipeline_layout = Check(device.createPipelineLayoutUnique({
+            .setLayoutCount = 1,
+            .pSetLayouts = &*merge_desc_layout,
+        }));
+        const auto module = CompileSPV(UPSCALE_MERGE_COMP, device);
+        merge_pipeline = Check(device.createComputePipelineUnique(
+            {}, vk::ComputePipelineCreateInfo{
+                    .stage = {.stage = vk::ShaderStageFlagBits::eCompute,
+                              .module = module,
+                              .pName = "main"},
+                    .layout = *merge_pipeline_layout,
+                }));
+        device.destroyShaderModule(module);
+    }
     motion_view = Check(device.createImageViewUnique({
         .image = vk::Image(motion_image),
         .viewType = vk::ImageViewType::e2D,
@@ -181,7 +219,7 @@ void TemporalUpscaler::Run() {
     const u32 w = color.info.size.width, h = color.info.size.height;
     if (color.info.pixel_format != vk::Format::eR16G16B16A16Sfloat ||
         depth.info.size.width != w || depth.info.size.height != h ||
-        !(color.usage_flags & vk::ImageUsageFlagBits::eTransferDst)) {
+        !(color.usage_flags & vk::ImageUsageFlagBits::eStorage)) {
         return;
     }
     if (!EnsureResources(w, h)) {
@@ -195,6 +233,13 @@ void TemporalUpscaler::Run() {
         .viewType = vk::ImageViewType::e2D,
         .format = depth_format,
         .subresourceRange = {vk::ImageAspectFlagBits::eDepth, 0, 1, 0, 1},
+    }));
+
+    const auto color_view = Check(device.createImageView({
+        .image = vk::Image(color.backing->image),
+        .viewType = vk::ImageViewType::e2D,
+        .format = vk::Format::eR16G16B16A16Sfloat,
+        .subresourceRange = {vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1},
     }));
 
     scheduler.EndRendering();
@@ -297,23 +342,36 @@ void TemporalUpscaler::Run() {
         failed = true;
     } else {
         reset = false;
-        // The result replaces the scene color the post-processing reads next.
+        // The result replaces the scene color's RGB (its alpha carries data for the post).
         own_barrier(vk::Image(output_image), vk::ImageLayout::eGeneral, all, rw,
-                    vk::ImageLayout::eTransferSrcOptimal, vk::PipelineStageFlagBits2::eTransfer,
-                    vk::AccessFlagBits2::eTransferRead);
-        runtime.Transit(&color, vk::ImageLayout::eTransferDstOptimal,
-                        vk::PipelineStageFlagBits2::eTransfer, vk::AccessFlagBits2::eTransferWrite);
+                    vk::ImageLayout::eGeneral, vk::PipelineStageFlagBits2::eComputeShader,
+                    vk::AccessFlagBits2::eShaderRead);
+        runtime.Transit(&color, vk::ImageLayout::eGeneral, vk::PipelineStageFlagBits2::eComputeShader,
+                        vk::AccessFlagBits2::eShaderRead | vk::AccessFlagBits2::eShaderWrite);
         runtime.FlushBarriers();
-        const vk::ImageCopy copy{
-            .srcSubresource = {vk::ImageAspectFlagBits::eColor, 0, 0, 1},
-            .dstSubresource = {vk::ImageAspectFlagBits::eColor, 0, 0, 1},
-            .extent = {w, h, 1},
-        };
-        cmdbuf.copyImage(vk::Image(output_image), vk::ImageLayout::eTransferSrcOptimal,
-                         vk::Image(color.backing->image), vk::ImageLayout::eTransferDstOptimal,
-                         copy);
+        const vk::DescriptorImageInfo out_info{.imageView = *output_view,
+                                               .imageLayout = vk::ImageLayout::eGeneral};
+        const vk::DescriptorImageInfo scene_info{.imageView = color_view,
+                                                 .imageLayout = vk::ImageLayout::eGeneral};
+        const std::array<vk::WriteDescriptorSet, 2> writes = {{
+            {.dstBinding = 0,
+             .descriptorCount = 1,
+             .descriptorType = vk::DescriptorType::eStorageImage,
+             .pImageInfo = &out_info},
+            {.dstBinding = 1,
+             .descriptorCount = 1,
+             .descriptorType = vk::DescriptorType::eStorageImage,
+             .pImageInfo = &scene_info},
+        }};
+        cmdbuf.bindPipeline(vk::PipelineBindPoint::eCompute, *merge_pipeline);
+        cmdbuf.pushDescriptorSetKHR(vk::PipelineBindPoint::eCompute, *merge_pipeline_layout, 0,
+                                    writes);
+        cmdbuf.dispatch((w + 7) / 8, (h + 7) / 8, 1);
     }
-    scheduler.DeferOperation([device, depth_view] { device.destroyImageView(depth_view); });
+    scheduler.DeferOperation([device, depth_view, color_view] {
+        device.destroyImageView(depth_view);
+        device.destroyImageView(color_view);
+    });
 }
 
 } // namespace Vulkan

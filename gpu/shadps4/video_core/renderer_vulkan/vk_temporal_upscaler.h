@@ -71,6 +71,10 @@ private:
     VideoCore::UniqueImage motion_image;
     VideoCore::UniqueImage output_image;
     vk::UniqueImageView motion_view;
+    vk::UniqueImageView output_view;
+    vk::UniqueDescriptorSetLayout merge_desc_layout;
+    vk::UniquePipelineLayout merge_pipeline_layout;
+    vk::UniquePipeline merge_pipeline;
 };
 
 } // namespace Vulkan
