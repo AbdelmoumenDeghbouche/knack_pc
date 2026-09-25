@@ -164,10 +164,10 @@ bool PipelineCache::LoadComputePipeline(Serialization::Archive& ar) {
 
     it.value() =
         std::make_unique<ComputePipeline>(instance, scheduler, desc_heap, profile, *pipeline_cache,
-                                          compute_key, *infos[0], modules[0], sdata, true);
+                                          compute_key, *sel.infos[0], sel.modules[0], sdata, true);
 
-    infos.fill(nullptr);
-    modules.fill(nullptr);
+    sel.infos.fill(nullptr);
+    sel.modules.fill(nullptr);
 
     return true;
 }
@@ -209,13 +209,13 @@ bool GraphicsPipeline::SerializationSupport::Deserialize(Serialization::Archive&
 }
 
 bool PipelineCache::LoadGraphicsPipeline(Serialization::Archive& ar) {
-    graphics_key.Deserialize(ar);
+    sel.graphics_key.Deserialize(ar);
 
     GraphicsPipeline::SerializationSupport sdata{};
     sdata.Deserialize(ar);
 
     for (int stage_idx = 0; stage_idx < MaxShaderStages; ++stage_idx) {
-        const auto& hash = graphics_key.stage_hashes[stage_idx];
+        const auto& hash = sel.graphics_key.stage_hashes[stage_idx];
         if (!hash) {
             continue;
         }
@@ -234,16 +234,16 @@ bool PipelineCache::LoadGraphicsPipeline(Serialization::Archive& ar) {
         }
     }
 
-    const auto [it, is_new] = graphics_pipelines.try_emplace(graphics_key);
+    const auto [it, is_new] = graphics_pipelines.try_emplace(sel.graphics_key);
     ASSERT(is_new);
 
     it.value() = std::make_unique<GraphicsPipeline>(
-        instance, scheduler, desc_heap, profile, graphics_key, *pipeline_cache, infos,
-        runtime_infos, fetch_shader, modules, sdata, true);
+        instance, scheduler, desc_heap, profile, sel.graphics_key, *pipeline_cache, sel.infos,
+        sel.runtime_infos, sel.fetch_shader, sel.modules, sdata, true);
 
-    infos.fill(nullptr);
-    modules.fill(nullptr);
-    fetch_shader.reset();
+    sel.infos.fill(nullptr);
+    sel.modules.fill(nullptr);
+    sel.fetch_shader.reset();
 
     return true;
 }
@@ -253,7 +253,7 @@ bool PipelineCache::LoadPipelineStage(Serialization::Archive& ar, size_t stage) 
     Shader::StageSpecialization spec{};
     spec.info = &program->info;
     size_t perm_idx{};
-    if (!LoadShaderMeta(ar, program->info, fetch_shader, spec, perm_idx)) {
+    if (!LoadShaderMeta(ar, program->info, sel.fetch_shader, spec, perm_idx)) {
         return false;
     }
 
@@ -295,8 +295,8 @@ bool PipelineCache::LoadPipelineStage(Serialization::Archive& ar, size_t stage) 
     }
     it_pgm.value()->InsertPermut(module, std::move(spec), perm_idx);
 
-    infos[stage] = &it_pgm.value()->info;
-    modules[stage] = module;
+    sel.infos[stage] = &it_pgm.value()->info;
+    sel.modules[stage] = module;
 
     return true;
 }
