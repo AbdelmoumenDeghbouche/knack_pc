@@ -187,8 +187,10 @@ private:
         VideoCore::ImageId found_id{};
         VideoCore::TextureCache::ImageDesc found_desc;
         u64 pinned = 0; ///< bind_epoch of the BindTextures call referencing found_desc
+        u64 last_use = 0;
     };
-    std::array<ImageDescCacheEntry, 512> image_desc_cache{};
+    std::array<ImageDescCacheEntry, 4096> image_desc_cache{};
+    u64 desc_use_counter = 0;
     /// Entries replacing pinned cache slots during one BindTextures call.
     boost::container::static_vector<ImageDescCacheEntry, Shader::NUM_IMAGES> image_desc_overflow;
     boost::container::static_vector<VideoCore::TextureCache::ImageDesc, Shader::NUM_IMAGES * 2>
@@ -204,9 +206,19 @@ private:
         VideoCore::TextureCache::ImageDesc desc;
     };
     std::array<TargetMemo, 64> target_memo{};
+    // bbport: consecutive draws mostly keep their targets; the slot's description (cb_descs,
+    // db_desc) is then still the right one and is neither looked up nor copied.
+    struct LastTarget {
+        std::array<u8, 256> key{};
+        u32 key_size = 0;
+        u64 generation = ~0ULL;
+        VideoCore::ImageId image_id{};
+    };
+    std::array<LastTarget, AmdGpu::NUM_COLOR_BUFFERS + 1> last_targets{}; ///< CBs, then DB
     template <typename... Parts>
     VideoCore::ImageId FindTargetMemoized(VideoCore::TextureCache::ImageDesc& desc,
-                                          auto&& make_desc, const Parts&... parts);
+                                          LastTarget& last, auto&& make_desc,
+                                          const Parts&... parts);
     ImageDescCacheEntry& CachedImageDescEntry(const AmdGpu::Image& sharp,
                                               const Shader::ImageResource& res);
     const VideoCore::TextureCache::ImageDesc& CachedImageDesc(const AmdGpu::Image& sharp,

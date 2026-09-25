@@ -106,7 +106,8 @@ bool Rasterizer::FilterDraw() {
 
 template <typename... Parts>
 VideoCore::ImageId Rasterizer::FindTargetMemoized(VideoCore::TextureCache::ImageDesc& desc,
-                                                  auto&& make_desc, const Parts&... parts) {
+                                                  LastTarget& last, auto&& make_desc,
+                                                  const Parts&... parts) {
     static_assert((sizeof(Parts) + ...) <= 256, "target memo key too large");
     std::array<u8, 256> key{};
     u32 key_size = 0;
@@ -115,6 +116,19 @@ VideoCore::ImageId Rasterizer::FindTargetMemoized(VideoCore::TextureCache::Image
         key_size += sizeof(part);
     };
     (append(parts), ...);
+    const u64 generation = texture_cache.RegistryGeneration();
+    const bool memo_enabled = !BbToggle::Disabled(BbToggle::TextureBindingMemo);
+    if (memo_enabled && last.generation == generation && last.key_size == key_size &&
+        std::memcmp(last.key.data(), key.data(), key_size) == 0) {
+        texture_cache.MarkFound(last.image_id);
+        return last.image_id;
+    }
+    const auto remember = [&](VideoCore::ImageId image_id) {
+        last.key = key;
+        last.key_size = key_size;
+        last.generation = generation;
+        last.image_id = image_id;
+    };
     u64 hash = 0xCBF29CE484222325ull;
     for (u32 i = 0; i < key_size; i += 8) {
         u64 word;
@@ -123,12 +137,11 @@ VideoCore::ImageId Rasterizer::FindTargetMemoized(VideoCore::TextureCache::Image
         hash ^= hash >> 29;
     }
     auto& memo = target_memo[hash % target_memo.size()];
-    const u64 generation = texture_cache.RegistryGeneration();
     if (memo.generation == generation && memo.key_size == key_size &&
-        std::memcmp(memo.key.data(), key.data(), key_size) == 0 &&
-        !BbToggle::Disabled(BbToggle::TextureBindingMemo)) {
+        std::memcmp(memo.key.data(), key.data(), key_size) == 0 && memo_enabled) {
         desc = memo.desc;
         texture_cache.MarkFound(memo.image_id);
+        remember(memo.image_id);
         return memo.image_id;
     }
     make_desc();
@@ -139,6 +152,9 @@ VideoCore::ImageId Rasterizer::FindTargetMemoized(VideoCore::TextureCache::Image
         memo.generation = generation;
         memo.image_id = image_id;
         memo.desc = desc;
+        remember(image_id);
+    } else {
+        last.generation = ~0ULL;
     }
     return image_id;
 }
@@ -164,7 +180,8 @@ void Rasterizer::PrepareRenderState(const GraphicsPipeline* pipeline) {
         const auto& hint = liverpool->last_cb_extent[cb];
         const u32 tag = 1;
         image_id = bound_images.emplace_back(FindTargetMemoized(
-            desc, [&] { std::construct_at(&desc, col_buf, hint); }, tag, col_buf, hint));
+            desc, last_targets[cb], [&] { std::construct_at(&desc, col_buf, hint); }, tag,
+            col_buf, hint));
         auto& image = texture_cache.GetImage(image_id);
         image.binding.is_target = 1u;
     }
@@ -176,7 +193,7 @@ void Rasterizer::PrepareRenderState(const GraphicsPipeline* pipeline) {
         auto& [image_id, desc] = db_desc;
         const u32 tag = 2;
         image_id = bound_images.emplace_back(FindTargetMemoized(
-            desc,
+            desc, last_targets[AmdGpu::NUM_COLOR_BUFFERS],
             [&] {
                 std::construct_at(&desc, regs.depth_buffer, regs.depth_view, regs.depth_control,
                                   htile_address, hint);
@@ -891,14 +908,28 @@ Rasterizer::ImageDescCacheEntry& Rasterizer::CachedImageDescEntry(const AmdGpu::
         hash = (hash ^ word) * 0xFF51AFD7ED558CCDull;
         hash ^= hash >> 32;
     }
-    auto* slot = &image_desc_cache[hash % image_desc_cache.size()];
-    if (slot->flags != flags || slot->sharp != key ||
-        BbToggle::Disabled(BbToggle::ImageDescCache)) {
+    // Two-way set associative: a frame binds a few thousand distinct T#s.
+    auto* set = &image_desc_cache[(hash % (image_desc_cache.size() / 2)) * 2];
+    const auto matches = [&](const ImageDescCacheEntry& e) {
+        return e.flags == flags && e.sharp == key;
+    };
+    const bool disabled = BbToggle::Disabled(BbToggle::ImageDescCache);
+    ImageDescCacheEntry* slot = nullptr;
+    if (!disabled && matches(set[0])) {
+        slot = &set[0];
+    } else if (!disabled && matches(set[1])) {
+        slot = &set[1];
+    } else {
+        // Replace the least recently used way that no binding of this call points at.
+        slot = set[0].last_use <= set[1].last_use ? &set[0] : &set[1];
         if (slot->pinned == bind_epoch) {
-            // A binding of this call points at the slot's description: keep it intact.
+            slot = slot == &set[0] ? &set[1] : &set[0];
+        }
+        if (slot->pinned == bind_epoch) {
             slot = &image_desc_overflow.emplace_back();
         }
     }
+    slot->last_use = ++desc_use_counter;
     auto& entry = *slot;
     if (entry.flags != flags || entry.sharp != key ||
         BbToggle::Disabled(BbToggle::ImageDescCache)) {
@@ -921,7 +952,9 @@ void Rasterizer::BindTextures(const Shader::Info& stage, Shader::Backend::Bindin
 
     for (const auto& image_desc : stage.images) {
         const auto tsharp = image_desc.GetSharp(stage);
-        if (texture_cache.IsMeta(tsharp.Address())) {
+        // bbport: a hash lookup per texture per draw for a diagnostic only.
+        static const bool warn_meta = std::getenv("BB_WARN_META_TEXTURE") != nullptr;
+        if (warn_meta && texture_cache.IsMeta(tsharp.Address())) {
             LOG_WARNING(Render_Vulkan, "Unexpected metadata read by a shader (texture)");
         }
 
@@ -946,7 +979,11 @@ void Rasterizer::BindTextures(const Shader::Info& stage, Shader::Backend::Bindin
         }
 
         const Shader::MipStorageFallbackMode mip_fallback_mode = image_desc.mip_fallback_mode;
-        const u32 num_bindings = image_desc.NumBindings(stage);
+        // Same as image_desc.NumBindings(stage), without fetching the T# again.
+        const u32 num_bindings =
+            mip_fallback_mode == Shader::MipStorageFallbackMode::DynamicIndex
+                ? static_cast<u32>(tsharp.last_level - tsharp.base_level + 1)
+                : 1u;
 
         auto& desc_entry = CachedImageDescEntry(tsharp, image_desc);
         for (auto i = 0; i < num_bindings; i++) {
@@ -1117,6 +1154,7 @@ RenderState Rasterizer::BeginRendering(const GraphicsPipeline* pipeline) {
         }
         auto* image = &texture_cache.GetImage(image_id);
         if (image->binding.needs_rebind) {
+            last_targets[cb].generation = ~0ULL; // FindImage may rewrite the description
             image_id = bound_images.emplace_back(texture_cache.FindImage(desc));
             image = &texture_cache.GetImage(image_id);
         }

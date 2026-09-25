@@ -855,6 +855,7 @@ void TextureCache::RegisterImage(ImageId image_id) {
     ++registry_generation;
     total_used_memory += Common::AlignUp(image.info.guest_size, 1024);
     image.lru_id = lru_cache.Insert(image_id, gc_tick);
+    image.lru_touched_tick = gc_tick;
     ForEachPage(image.info.guest_address, image.info.guest_size,
                 [this, image_id](u64 page) { page_table[page].push_back(image_id); });
 }
@@ -1105,6 +1106,10 @@ void TextureCache::RunGarbageCollector() {
 }
 
 void TextureCache::TouchImage(const Image& image) {
+    if (image.lru_touched_tick == gc_tick) {
+        return;
+    }
+    image.lru_touched_tick = gc_tick;
     lru_cache.Touch(image.lru_id, gc_tick);
 }
 

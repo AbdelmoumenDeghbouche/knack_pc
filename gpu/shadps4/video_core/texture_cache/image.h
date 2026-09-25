@@ -162,6 +162,8 @@ public:
     boost::container::static_vector<u64, 16> mip_hashes{};
     u64 image_uid{};
     u64 lru_id{};
+    /// bbport: gc tick of the last LRU touch; skips the LRU list (a cache miss) when current.
+    mutable u64 lru_touched_tick = ~0ULL;
     u64 tick_accessed_last{};
     u64 hash{};
 
