@@ -75,3 +75,28 @@ ring timeout followed. Left opt-in behind BB_HOT_PAGES=1.
 Texture description cache 2-way/4096, same-target fast path, LRU touch skip, no per-texture
 meta lookup: other outdoor view, 93.9 FPS; with the texture memos off (mask 1056) 65.6 FPS.
 Close to the 100 Hz display cap (vblank-paced), so further gains need an uncapped test.
+
+## Streaming stutter (BB_FRAME_STATS "Stall:" lines)
+
+Running through new areas gave 60–170 ms frames (also in shadPS4). The GPU thread was busy
+the whole frame, mostly in the kernel, uploading 50–400 MB of textures and buffers per frame.
+Findings, in the order they were fixed:
+
+1. Guest-to-staging copies ran on one thread (the recording thread, textures on the GPU
+   thread). They now start at once on copy threads (`BbCopy::Async`, `bbport_copy.cpp`);
+   small copies are batched per thread (one wakeup per ~512 KiB — one per copy cost 25% FPS).
+   Guest-visible fences and queue submission wait for them (`Scheduler::WaitHostCopies`),
+   which keeps the fix for UI flicker (the guest reused buffers before deferred copies ran).
+2. Copies then ran at 0.2–0.4 GB/s per thread, almost all in the kernel: the first CPU access
+   to a new staging block makes the kernel allocate and clear it (~2 ms per 16 MiB), and the
+   staging pool freed blocks after 3 s idle, between streaming bursts. It now keeps 512 MiB
+   (`BB_STAGING_KEEP_MB`), frees the rest after 30 s and populates 128 MiB at startup.
+3. Write faults: a 256 KiB unprotect window (`BB_FAULT_WINDOW`) halves them again.
+   `BB_UFFD=1` tracks writes with userfaultfd write-protection instead of mprotect (no
+   address-space write lock, no mapping splits); read protection for readbacks still uses
+   mprotect. It removes the mprotect time but did not change the stalls measurably; opt-in.
+4. File reads into write-protected guest pages failed with EFAULT (kernel copies do not reach
+   the fault handler); reads now touch each destination page first.
+
+Result: stalls are mostly 40–50 ms (GPU thread ~30 ms of draw work plus ~12 ms of copies)
+instead of 60–170 ms; the area load frame 350 ms instead of 430–760 ms.
