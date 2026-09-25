@@ -1,6 +1,7 @@
 // bbport: shadPS4 settings used by the video core, read once from BB_* environment
 // variables (defaults match shadPS4 except the pipeline cache, which is on).
 #pragma once
+#include <algorithm>
 #include <cstdlib>
 #include <string>
 #include "common/types.h"
@@ -28,11 +29,13 @@ public:
     // bbport: Relaxed by default: without readbacks FaceGen reads stale GPU-written vertices
     // (vertex explosions); in Hunter's Nightmare it costs no measurable frame rate.
     u32 GetReadbacksMode() { static const auto value = u32(Number("BB_READBACKS", GpuReadbacksMode::Relaxed)); return value; }
-    // bbport: 0 follows the display refresh rate (uncapped frame rate presets).
+    // bbport: 0 follows the display refresh rate (uncapped frame rate presets), at most 120 Hz:
+    // above ~120 FPS the game's movement and animation timing breaks (running slows down).
+    // An explicit BB_VBLANK_HZ is used as given (frame rate measurements).
     u32 GetVblankFrequency() {
         static const u32 value = [] {
             const long hz = Number("BB_VBLANK_HZ", 60);
-            return hz > 0 ? u32(hz) : BbDisplayRefreshHz();
+            return hz > 0 ? u32(hz) : std::min<u32>(BbDisplayRefreshHz(), 120);
         }();
         return value;
     }
