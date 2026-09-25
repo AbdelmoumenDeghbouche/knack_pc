@@ -30,11 +30,24 @@ struct Entry {
     std::vector<u64> shaders; ///< vs/ps pairs (graphics) or cs (compute), first few
     std::vector<std::pair<Target, bool>> sampled; ///< textures (false) and storage images (true)
     std::string note;
+    std::vector<std::string> buffers; ///< dumped constants, per draw
 };
 
 // GPU thread only.
 std::vector<Entry> entries;
 std::vector<std::pair<Target, bool>> pending_sampled;
+std::vector<std::string> pending_buffers;
+
+void AddBuffers(Entry& entry) {
+    // Constants of full-screen passes (post-processing: camera matrices) and of the first draw
+    // of each geometry pass.
+    if (entry.draws <= 4) {
+        for (auto& b : pending_buffers) {
+            entry.buffers.push_back(std::move(b));
+        }
+    }
+    pending_buffers.clear();
+}
 bool pass_open = false;
 u64 start_flip = 0;
 
@@ -98,6 +111,9 @@ void Write(VAddr presented) {
         }
         if (!e.note.empty()) {
             std::fprintf(f, "  note: %s\n", e.note.c_str());
+        }
+        for (const auto& b : e.buffers) {
+            std::fprintf(f, "%s\n", b.c_str());
         }
     }
     std::fclose(f);
@@ -172,6 +188,7 @@ void FrameCapture::Draw(u64 vs_hash, u64 ps_hash, u32 num_indices, u32 num_insta
     AddShader(e, vs_hash);
     AddShader(e, ps_hash);
     AddSampled(e);
+    AddBuffers(e);
 }
 
 void FrameCapture::Dispatch(u64 cs_hash, u32 x, u32 y, u32 z) {
@@ -183,7 +200,22 @@ void FrameCapture::Dispatch(u64 cs_hash, u32 x, u32 y, u32 z) {
         entries.back().note = std::format("groups {}x{}x{}", x, y, z);
     }
     AddSampled(entries.back());
+    AddBuffers(entries.back());
     pass_open = false;
+}
+
+void FrameCapture::Buffer(u64 stage_hash, u32 slot, VAddr address, const void* data, u64 size) {
+    const u64 bytes = std::min<u64>(size, 1024) & ~u64(3);
+    std::string out = std::format("  buffer stage {:016x} slot {} at {:#x} size {}:", stage_hash,
+                                  slot, address, size);
+    const auto* words = static_cast<const float*>(data);
+    for (u64 i = 0; i < bytes / 4; ++i) {
+        if (i % 8 == 0) {
+            out += std::format("\n    [{:3}]", i);
+        }
+        out += std::format(" {:12.6g}", words[i]);
+    }
+    pending_buffers.push_back(std::move(out));
 }
 
 void FrameCapture::Sampled(const VideoCore::ImageInfo& info, bool storage) {

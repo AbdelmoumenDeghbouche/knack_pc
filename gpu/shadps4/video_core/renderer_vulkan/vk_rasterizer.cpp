@@ -831,6 +831,10 @@ void Rasterizer::BindBuffers(const Shader::Info& stage, Shader::Backend::Binding
             } else if (desc.buffer_type == Shader::BufferType::Flatbuf) {
                 auto& vk_buffer = buffer_cache.GetStreamBuffer();
                 const u32 ubo_size = stage.flattened_ud_buf.size() * sizeof(u32);
+                if (FrameCapture::Active()) {
+                    FrameCapture::Buffer(stage.pgm_hash, binding.buffer, 0,
+                                         stage.flattened_ud_buf.data(), ubo_size);
+                }
                 const u64 offset =
                     vk_buffer.Copy(stage.flattened_ud_buf.data(), ubo_size, alignment);
                 buffer_infos.emplace_back(vk_buffer.Handle(), offset, ubo_size);
@@ -872,6 +876,12 @@ void Rasterizer::BindBuffers(const Shader::Info& stage, Shader::Backend::Binding
             }
         } else {
             const auto vsharp = desc.GetSharp(stage);
+            if (FrameCapture::Active() && vsharp.base_address != 0 && vsharp.GetSize() != 0 &&
+                memory->IsValidGpuMapping(vsharp.base_address, 0)) {
+                FrameCapture::Buffer(stage.pgm_hash, binding.buffer, vsharp.base_address,
+                                     reinterpret_cast<const void*>(vsharp.base_address),
+                                     memory->ClampRangeSize(vsharp.base_address, vsharp.GetSize()));
+            }
             if (vsharp.base_address == 0 || vsharp.GetSize() == 0) {
                 buffer_infos.emplace_back(VK_NULL_HANDLE, 0, VK_WHOLE_SIZE);
             } else {
