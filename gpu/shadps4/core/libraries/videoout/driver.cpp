@@ -263,13 +263,13 @@ void VideoOutDriver::Flip(const Request& req) {
         last = now;
         // Stall diagnostics: what happened during a long frame.
         static u64 last_gpu_ns, last_images, last_image_bytes, last_buffer_bytes;
-        static u64 last_t[5], last_minflt, last_sigf, last_pc, last_pp, last_rc, last_rp;
+        static u64 last_t[6], last_minflt, last_sigf, last_pc, last_pp, last_rc, last_rp;
         const u64 pc = BbStats::protect_calls.load(), pp = BbStats::protect_pages.load(),
                   rc = BbStats::protect_revoke_calls.load(), rp = BbStats::protect_revoke_pages.load();
         const u64 minflt = BbStats::gpu_minor_faults.load(), sigf = BbStats::gpu_signal_faults.load();
-        const u64 t_now[5] = {BbStats::t_resident.load(), BbStats::t_protect.load(),
+        const u64 t_now[6] = {BbStats::t_resident.load(), BbStats::t_protect.load(),
                               BbStats::t_image_create.load(), BbStats::t_refresh.load(),
-                              BbStats::t_staging.load()};
+                              BbStats::t_staging.load(), BbStats::t_host_wait.load()};
         static u64 last_draws, last_dispatches, last_subs, last_sys, last_user, last_invol, last_vol;
         const u64 draws = BbStats::draws.load(), dispatches = BbStats::dispatches.load(),
                   subs = BbStats::submissions.load(), sys_us = BbStats::gpu_sys_us.load(),
@@ -301,10 +301,10 @@ void VideoOutDriver::Flip(const Request& req) {
         }
         if (frame_ms > 40.0 && last_gpu_ns != 0) {
             std::printf("       ms in: resident %.1f, protect %.1f, image create %.1f, "
-                        "image refresh %.1f, staging %.1f\n",
+                        "image refresh %.1f, staging %.1f, waiting for host copies %.1f\n",
                         (t_now[0] - last_t[0]) / 1e6, (t_now[1] - last_t[1]) / 1e6,
                         (t_now[2] - last_t[2]) / 1e6, (t_now[3] - last_t[3]) / 1e6,
-                        (t_now[4] - last_t[4]) / 1e6);
+                        (t_now[4] - last_t[4]) / 1e6, (t_now[5] - last_t[5]) / 1e6);
             std::printf("       GPU thread page faults %llu, protection faults %llu; protect calls %llu "
                         "(%llu pages), of which write-revoking %llu (%llu pages)\n",
                         static_cast<unsigned long long>(minflt - last_minflt),

@@ -502,7 +502,7 @@ void *runtime_low_map(size_t size, int prot) {
  * 8192 prepared draws from the draw-preparation workers,
  * 16384 small read-only buffer copies on the recording thread,
  * 32768 hot pages (opt-in with BB_HOT_PAGES=1),
- * 65536 unprotect the 64 KiB window around a guest write fault (BB_FAULT_WINDOW KiB),
+ * 65536 unprotect the 256 KiB window around a guest write fault (BB_FAULT_WINDOW KiB),
  * 131072 large guest memory copies split across copy threads (BB_COPY_THREADS). */
 uint32_t runtime_disabled_optimizations;
 /* Speculative readers of guest memory (GPU draw-preparation workers) register a recovery

@@ -174,6 +174,7 @@ void Scheduler::WaitHostCopies() {
     if (host_copies_done.load(std::memory_order_acquire) >= host_copies_issued) {
         return;
     }
+    BbStats::Timer timer{BbStats::t_host_wait};
     KickRecording(true);
     while (host_copies_done.load(std::memory_order_acquire) < host_copies_issued) {
         std::this_thread::yield();
