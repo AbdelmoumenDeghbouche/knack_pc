@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: Copyright 2024-2026 shadPS4 Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+#include <chrono>
+#include <cstdio>
 #include <boost/preprocessor/stringize.hpp>
 
 #include "common/assert.h"
@@ -218,8 +220,117 @@ Liverpool::Task Liverpool::ProcessCeUpdate(std::span<const u32> ccb) {
     FIBER_EXIT;
 }
 
+// bbport: BB_DCB_STATS=1 — structure of graphics command buffers (read-only scan, printed every
+// 5 s): how many buffers, draws per buffer, state set before the first draw. Input for
+// processing command buffers on several threads.
+namespace {
+struct DcbStats {
+    u64 buffers[2]{}, with_draws[2]{}, draws[2]{}, dispatches[2]{}, max_draws[2]{};
+    u64 clear_first[2]{}, ctx_before[2]{}, sh_before[2]{}, ibs[2]{}, dwords[2]{};
+    u64 hist[2][6]{}; // draws per buffer: 0, 1-9, 10-99, 100-499, 500-1999, 2000+
+    std::chrono::steady_clock::time_point window = std::chrono::steady_clock::now();
+};
+DcbStats g_dcb_stats;
+int g_dcb_depth;
+
+bool IsDrawOpcode(PM4ItOpcode op) {
+    switch (op) {
+    case PM4ItOpcode::DrawIndex2:
+    case PM4ItOpcode::DrawIndexOffset2:
+    case PM4ItOpcode::DrawIndexAuto:
+    case PM4ItOpcode::DrawIndirect:
+    case PM4ItOpcode::DrawIndirectMulti:
+    case PM4ItOpcode::DrawIndexIndirect:
+    case PM4ItOpcode::DrawIndexIndirectMulti:
+    case PM4ItOpcode::DrawIndexIndirectCountMulti:
+        return true;
+    default:
+        return false;
+    }
+}
+
+void ScanDcb(std::span<const u32> dcb, int depth) {
+    auto& st = g_dcb_stats;
+    const int d = depth > 0 ? 1 : 0;
+    u64 draws = 0, dispatches = 0, ctx = 0, sh = 0, ibs = 0;
+    bool clear_first = false;
+    st.dwords[d] += dcb.size();
+    for (size_t at = 0; at < dcb.size();) {
+        const auto* header = reinterpret_cast<const PM4Header*>(dcb.data() + at);
+        if (header->type == 2) {
+            ++at;
+            continue;
+        }
+        if (header->type != 3) {
+            break;
+        }
+        const PM4ItOpcode op = header->type3.opcode;
+        if (IsDrawOpcode(op)) {
+            ++draws;
+        } else if (op == PM4ItOpcode::DispatchDirect || op == PM4ItOpcode::DispatchIndirect) {
+            ++dispatches;
+        } else if (op == PM4ItOpcode::IndirectBuffer) {
+            ++ibs;
+        } else if (draws == 0) {
+            if (op == PM4ItOpcode::ClearState) {
+                clear_first = true;
+            } else if (op == PM4ItOpcode::SetContextReg) {
+                ctx += header->type3.NumWords() - 1;
+            } else if (op == PM4ItOpcode::SetShReg) {
+                sh += header->type3.NumWords() - 1;
+            }
+        }
+        at += header->type3.NumWords() + 1;
+    }
+    ++st.buffers[d];
+    st.draws[d] += draws;
+    st.dispatches[d] += dispatches;
+    st.ibs[d] += ibs;
+    st.max_draws[d] = std::max(st.max_draws[d], draws);
+    if (draws) {
+        ++st.with_draws[d];
+        st.clear_first[d] += clear_first;
+        st.ctx_before[d] += ctx;
+        st.sh_before[d] += sh;
+    }
+    const int bucket = draws == 0 ? 0 : draws < 10 ? 1 : draws < 100 ? 2 : draws < 500 ? 3
+                     : draws < 2000 ? 4 : 5;
+    ++st.hist[d][bucket];
+
+    const auto now = std::chrono::steady_clock::now();
+    const double secs = std::chrono::duration<double>(now - st.window).count();
+    if (depth == 0 && secs >= 5.0) {
+        for (int k = 0; k < 2; ++k) {
+            const double with = std::max<u64>(st.with_draws[k], 1);
+            std::printf("DCB stats %s: %.0f buffers/s (%.0f with draws), %.0f draws/s, %.0f "
+                        "dispatches/s, max %llu draws in one buffer, %.0f IBs/s, %.0f kdw/s; "
+                        "draw buffers: %.0f%% start with ClearState, %.0f ctx + %.0f sh reg "
+                        "writes before first draw; draws/buffer hist 0:%llu 1-9:%llu 10-99:%llu "
+                        "100-499:%llu 500-1999:%llu 2000+:%llu\n",
+                        k ? "indirect" : "submitted", st.buffers[k] / secs, st.with_draws[k] / secs,
+                        st.draws[k] / secs, st.dispatches[k] / secs,
+                        static_cast<unsigned long long>(st.max_draws[k]), st.ibs[k] / secs,
+                        st.dwords[k] / secs / 1000.0, 100.0 * st.clear_first[k] / with,
+                        st.ctx_before[k] / with, st.sh_before[k] / with,
+                        static_cast<unsigned long long>(st.hist[k][0]),
+                        static_cast<unsigned long long>(st.hist[k][1]),
+                        static_cast<unsigned long long>(st.hist[k][2]),
+                        static_cast<unsigned long long>(st.hist[k][3]),
+                        static_cast<unsigned long long>(st.hist[k][4]),
+                        static_cast<unsigned long long>(st.hist[k][5]));
+        }
+        st = DcbStats{};
+    }
+}
+} // namespace
+
 Liverpool::Task Liverpool::ProcessGraphics(std::span<const u32> dcb, std::span<const u32> ccb) {
     FIBER_ENTER(dcb_task_name);
+    static const bool dcb_stats = EmulatorSettingsImpl::Flag("BB_DCB_STATS", false);
+    const int dcb_depth = g_dcb_depth;
+    if (dcb_stats) {
+        ScanDcb(dcb, dcb_depth);
+    }
 
     cblock.Reset();
 
@@ -796,7 +907,10 @@ Liverpool::Task Liverpool::ProcessGraphics(std::span<const u32> dcb, std::span<c
                 const auto* indirect_buffer = reinterpret_cast<const PM4CmdIndirectBuffer*>(header);
                 auto task = ProcessGraphics(
                     {indirect_buffer->Address<const u32>(), indirect_buffer->ib_size}, {});
+                // Tasks start suspended: the nested body (and its scan) runs on this resume.
+                g_dcb_depth = dcb_depth + 1;
                 RESUME_GFX(task);
+                g_dcb_depth = dcb_depth;
 
                 while (!task.handle.done()) {
                     YIELD_GFX();
