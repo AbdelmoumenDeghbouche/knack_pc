@@ -62,7 +62,7 @@ struct FlatArena {
     size_t used = ChunkWords;
 
     const u32* Append(const std::vector<u32>& data) {
-        if (data.size() > ChunkWords - used) {
+        if (chunks.empty() || data.size() > ChunkWords - used) {
             chunks.push_back(std::make_unique<u32[]>(std::max(ChunkWords, data.size())));
             used = 0;
         }
