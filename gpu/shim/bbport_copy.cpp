@@ -7,8 +7,8 @@
 #include <cstdlib>
 #include <deque>
 #include <memory>
-#include <string>
 #include <mutex>
+#include <string>
 #include <thread>
 #include <vector>
 
@@ -27,6 +27,7 @@ public:
         if (const char* env = std::getenv("BB_COPY_THREADS")) {
             count = static_cast<unsigned>(std::clamp(std::atoi(env), 0, 16));
         }
+        epochs.emplace_back();
         for (unsigned i = 0; i < count; ++i) {
             threads.emplace_back([this, i] { Loop(i); });
         }
@@ -47,26 +48,44 @@ public:
     }
 
     void Async(std::function<void()> task) {
-        pending.fetch_add(1, std::memory_order_acq_rel);
         {
             std::scoped_lock lk{mutex};
-            async_tasks.push_back(std::move(task));
+            const u64 epoch = epoch_base + epochs.size() - 1;
+            ++epochs.back().pending;
+            ++pending;
+            async_tasks.push_back({std::move(task), epoch});
         }
         cv.notify_one();
     }
 
-    void WaitAsync() {
+    void AfterCopies(std::function<void()> callback) {
+        {
+            std::unique_lock lk{mutex};
+            if (epochs.size() > 1 || epochs.back().pending != 0 || draining) {
+                // Runs once every copy issued so far is done, in order with earlier ones.
+                epochs.back().callbacks.push_back(std::move(callback));
+                epochs.emplace_back();
+                return;
+            }
+        }
+        callback();
+    }
+
+    void WaitAll() {
         // The waiting thread helps instead of only spinning.
-        while (pending.load(std::memory_order_acquire) != 0) {
-            std::function<void()> task;
+        while (true) {
+            Task task;
             {
                 std::scoped_lock lk{mutex};
+                if (pending == 0 && epochs.size() == 1 && !draining) {
+                    return;
+                }
                 if (!async_tasks.empty()) {
                     task = std::move(async_tasks.front());
                     async_tasks.pop_front();
                 }
             }
-            if (task) {
+            if (task.run) {
                 RunAsync(task);
             } else {
                 std::this_thread::yield();
@@ -96,20 +115,61 @@ public:
     }
 
 private:
-    void RunAsync(std::function<void()>& task) {
-        const bool was = in_copy_thread;
-        in_copy_thread = true;
-        task();
-        in_copy_thread = was;
-        pending.fetch_sub(1, std::memory_order_acq_rel);
-    }
-
+    using u64 = unsigned long long;
+    struct Task {
+        std::function<void()> run;
+        u64 epoch{};
+    };
+    /// Copies issued between two AfterCopies() calls, and the callbacks waiting for them.
+    struct Epoch {
+        std::size_t pending = 0;
+        std::vector<std::function<void()>> callbacks;
+    };
     struct Job {
         const std::function<void(std::size_t)>* task{};
         std::size_t count{};
         std::atomic<std::size_t> next{0};
         std::atomic<std::size_t> done{0};
     };
+
+    void RunAsync(Task& task) {
+        const bool was = in_copy_thread;
+        in_copy_thread = true;
+        task.run();
+        in_copy_thread = was;
+        Complete(task.epoch);
+    }
+
+    /// Retires a task and runs the callbacks of epochs with nothing left, oldest first. One
+    /// thread drains at a time so the callbacks keep their order.
+    void Complete(u64 epoch) {
+        std::unique_lock lk{mutex};
+        --epochs[epoch - epoch_base].pending;
+        --pending;
+        if (draining) {
+            return;
+        }
+        draining = true;
+        while (true) {
+            std::vector<std::function<void()>> ready;
+            while (epochs.size() > 1 && epochs.front().pending == 0) {
+                for (auto& callback : epochs.front().callbacks) {
+                    ready.push_back(std::move(callback));
+                }
+                epochs.pop_front();
+                ++epoch_base;
+            }
+            if (ready.empty()) {
+                break;
+            }
+            lk.unlock();
+            for (auto& callback : ready) {
+                callback();
+            }
+            lk.lock();
+        }
+        draining = false;
+    }
 
     static void Work(Job& job) {
         const bool was = in_copy_thread;
@@ -123,7 +183,7 @@ private:
 
     void Loop(unsigned index) {
         Common::SetCurrentThreadName(("bb:Copy" + std::to_string(index)).c_str());
-        unsigned long long seen = 0;
+        u64 seen = 0;
         std::unique_lock lk{mutex};
         while (true) {
             cv.wait(lk, [&] {
@@ -133,7 +193,7 @@ private:
                 return;
             }
             if (!async_tasks.empty()) {
-                auto task = std::move(async_tasks.front());
+                Task task = std::move(async_tasks.front());
                 async_tasks.pop_front();
                 lk.unlock();
                 RunAsync(task);
@@ -152,16 +212,25 @@ private:
     std::mutex mutex;
     std::condition_variable cv;
     std::shared_ptr<Job> current;
-    std::deque<std::function<void()>> async_tasks;
-    std::atomic<std::size_t> pending{0};
-    unsigned long long generation = 0;
+    u64 generation = 0;
     bool stop = false;
+    std::deque<Task> async_tasks;
+    std::deque<Epoch> epochs; ///< back() is open for new copies
+    u64 epoch_base = 0;       ///< epoch number of epochs.front()
+    std::size_t pending = 0;
+    bool draining = false;
 };
 
 Pool& GetPool() {
     static Pool pool;
     return pool;
 }
+
+struct Batch {
+    std::vector<Item> items;
+    unsigned long long bytes = 0;
+};
+thread_local Batch batch;
 
 } // namespace
 
@@ -176,14 +245,6 @@ void Async(std::function<void()> task) {
     }
     GetPool().Async(std::move(task));
 }
-
-namespace {
-struct Batch {
-    std::vector<Item> items;
-    unsigned long long bytes = 0;
-};
-thread_local Batch batch;
-} // namespace
 
 void FlushBatch() {
     if (batch.items.empty()) {
@@ -212,9 +273,13 @@ void QueueCopy(const Item& item) {
     }
 }
 
+void AfterCopies(std::function<void()> callback) {
+    FlushBatch();
+    GetPool().AfterCopies(std::move(callback));
+}
+
 void WaitAsync() {
-    // The caller's own batch runs here: handing it over only to wait for it costs a wakeup
-    // per fence (dozens per frame).
+    // The caller's own batch runs here: handing it over only to wait for it costs a wakeup.
     if (!batch.items.empty()) {
         for (const auto& item : batch.items) {
             item.run(item);
@@ -222,7 +287,7 @@ void WaitAsync() {
         batch.items.clear();
         batch.bytes = 0;
     }
-    GetPool().WaitAsync();
+    GetPool().WaitAll();
 }
 
 void ParallelFor(std::size_t count, const std::function<void(std::size_t)>& task) {

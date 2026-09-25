@@ -37,4 +37,9 @@ void FlushBatch();
 /// has finished.
 void WaitAsync();
 
+/// Starts the calling thread's batch and runs `callback` once every task passed to Async() so
+/// far has finished (at once when none is pending), on whichever thread finishes last.
+/// Callbacks run in the order they were registered.
+void AfterCopies(std::function<void()> callback);
+
 } // namespace BbCopy

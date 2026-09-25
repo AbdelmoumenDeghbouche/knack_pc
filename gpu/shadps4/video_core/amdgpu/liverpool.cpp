@@ -5,6 +5,7 @@
 #include <pthread.h>
 #include <sys/resource.h>
 #include <time.h>
+#include "bbport_copy.h"
 #include "bbport_toggles.h"
 #include <cstdio>
 #include <boost/preprocessor/stringize.hpp>
@@ -866,22 +867,31 @@ Liverpool::Task Liverpool::ProcessGraphics(std::span<const u32> dcb, std::span<c
                 break;
             }
             case PM4ItOpcode::EventWriteEop: {
-                // bbport: copies deferred to the recording thread precede writes the guest sees.
-                if (rasterizer) {
-                    rasterizer->WaitHostCopies();
-                }
                 const auto* event_eop = reinterpret_cast<const PM4CmdEventWriteEop*>(header);
                 if (rasterizer) {
                     rasterizer->ProcessDownloadImages();
                 }
-                event_eop->SignalFence(
-                    [](void* address, u64 data, u32 num_bytes) {
-                        auto* memory = Core::Memory::Instance();
-                        if (!memory->TryWriteBacking(address, &data, num_bytes)) {
-                            memcpy(address, &data, num_bytes);
-                        }
-                    },
-                    [] { Platform::IrqC::Instance()->Signal(Platform::InterruptId::GfxEop); });
+                const auto signal = [eop = *event_eop] {
+                    eop.SignalFence(
+                        [](void* address, u64 data, u32 num_bytes) {
+                            auto* memory = Core::Memory::Instance();
+                            if (!memory->TryWriteBacking(address, &data, num_bytes)) {
+                                memcpy(address, &data, num_bytes);
+                            }
+                        },
+                        [] { Platform::IrqC::Instance()->Signal(Platform::InterruptId::GfxEop); });
+                };
+                // bbport: guest memory copies on the copy threads precede the fence the guest
+                // sees. The fence is written once they are done, like a GPU writes it when its
+                // work completes, instead of the GPU thread waiting for them.
+                if (rasterizer && !BbToggle::Disabled(BbToggle::AsyncFences)) {
+                    BbCopy::AfterCopies(signal);
+                } else {
+                    if (rasterizer) {
+                        rasterizer->WaitHostCopies();
+                    }
+                    signal();
+                }
                 break;
             }
             case PM4ItOpcode::DmaData: {

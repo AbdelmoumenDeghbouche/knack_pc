@@ -30,6 +30,7 @@ enum : std::uint32_t {
     HotPages = 32768,
     FaultWindow = 65536,
     ParallelCopies = 131072,
+    AsyncFences = 262144,
 };
 inline bool Disabled(std::uint32_t bit) {
     return (__atomic_load_n(&runtime_disabled_optimizations, __ATOMIC_RELAXED) & bit) != 0;
