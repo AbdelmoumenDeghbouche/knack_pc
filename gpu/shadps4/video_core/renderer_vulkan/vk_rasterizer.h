@@ -170,10 +170,18 @@ private:
         std::array<u64, 4> sharp{};
         u32 flags = ~0u;
         VideoCore::TextureCache::ImageDesc desc;
+        // Memoized FindImage for bindings without mip overrides (TextureBindingMemo).
+        u64 found_generation = ~0ULL;
+        VideoCore::ImageId found_id{};
+        VideoCore::TextureCache::ImageDesc found_desc;
     };
     std::array<ImageDescCacheEntry, 512> image_desc_cache{};
+    ImageDescCacheEntry& CachedImageDescEntry(const AmdGpu::Image& sharp,
+                                              const Shader::ImageResource& res);
     const VideoCore::TextureCache::ImageDesc& CachedImageDesc(const AmdGpu::Image& sharp,
-                                                              const Shader::ImageResource& res);
+                                                              const Shader::ImageResource& res) {
+        return CachedImageDescEntry(sharp, res).desc;
+    }
     boost::container::static_vector<ImageBindingInfo, Shader::NUM_IMAGES> image_bindings;
     bool fault_process_pending{};
     bool attachment_feedback_loop{};

@@ -3,6 +3,8 @@
 
 #pragma once
 
+#include <atomic>
+
 #include <condition_variable>
 #include <mutex>
 #include <thread>
@@ -84,6 +86,19 @@ public:
                  Vulkan::Runtime& runtime, AmdGpu::Liverpool* liverpool, BufferCache& buffer_cache,
                  PageManager& tracker);
     ~TextureCache();
+
+    /// bbport: changes whenever an image is registered or unregistered.
+    [[nodiscard]] u64 RegistryGeneration() const noexcept {
+        return registry_generation.load(std::memory_order_acquire);
+    }
+
+    /// bbport: the access bookkeeping FindImage does for an image found by a memoized lookup.
+    void TouchFound(ImageId image_id) {
+        std::scoped_lock lock{mutex};
+        Image& image = slot_images[image_id];
+        image.tick_accessed_last = scheduler.CurrentTick();
+        TouchImage(image);
+    }
 
     TileManager& GetTileManager() noexcept {
         return tile_manager;
@@ -370,7 +385,7 @@ private:
         int view_slice = -1;
     };
     std::array<FindImageCacheEntry, 1024> find_image_cache{};
-    u64 registry_generation = 0;
+    std::atomic<u64> registry_generation{0};
     std::mutex samplers_mutex;
     std::mutex download_images_mutex;
     struct MetaDataInfo {

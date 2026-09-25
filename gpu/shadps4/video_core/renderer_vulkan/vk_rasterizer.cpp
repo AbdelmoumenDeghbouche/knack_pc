@@ -829,8 +829,8 @@ void Rasterizer::BindBuffers(const Shader::Info& stage, Shader::Backend::Binding
     }
 }
 
-const VideoCore::TextureCache::ImageDesc& Rasterizer::CachedImageDesc(
-    const AmdGpu::Image& sharp, const Shader::ImageResource& res) {
+Rasterizer::ImageDescCacheEntry& Rasterizer::CachedImageDescEntry(const AmdGpu::Image& sharp,
+                                                                   const Shader::ImageResource& res) {
     std::array<u64, 4> key;
     std::memcpy(key.data(), &sharp, sizeof(key));
     const u32 flags = u32(res.is_written) | u32(res.is_depth) << 1 | u32(res.is_array) << 2;
@@ -845,8 +845,9 @@ const VideoCore::TextureCache::ImageDesc& Rasterizer::CachedImageDesc(
         entry.desc = VideoCore::TextureCache::ImageDesc{sharp, res};
         entry.sharp = key;
         entry.flags = flags;
+        entry.found_generation = ~0ULL;
     }
-    return entry.desc;
+    return entry;
 }
 
 void Rasterizer::BindTextures(const Shader::Info& stage, Shader::Backend::Bindings& binding) {
@@ -884,10 +885,30 @@ void Rasterizer::BindTextures(const Shader::Info& stage, Shader::Backend::Bindin
         const Shader::MipStorageFallbackMode mip_fallback_mode = image_desc.mip_fallback_mode;
         const u32 num_bindings = image_desc.NumBindings(stage);
 
+        auto& desc_entry = CachedImageDescEntry(tsharp, image_desc);
         for (auto i = 0; i < num_bindings; i++) {
+            // bbport: a plain binding (no mip override) of the same T# resolves to the same image
+            // while no image was registered or unregistered.
+            if (mip_fallback_mode == Shader::MipStorageFallbackMode::None &&
+                desc_entry.found_generation == texture_cache.RegistryGeneration() &&
+                !BbToggle::Disabled(BbToggle::TextureBindingMemo)) {
+                auto& [image_id, desc] = image_bindings.emplace_back(
+                    std::piecewise_construct, std::tuple{desc_entry.found_id},
+                    std::tuple{desc_entry.found_desc});
+                texture_cache.TouchFound(image_id);
+                auto* image = &texture_cache.GetImage(image_id);
+                if (auto depth_image_id = texture_cache.GetAssociatedDepth(*image)) {
+                    image_id = depth_image_id;
+                    image = &texture_cache.GetImage(image_id);
+                }
+                if (image->binding.is_bound) {
+                    image->binding.force_general |= image_desc.is_written;
+                }
+                image->binding.is_bound = 1u;
+                continue;
+            }
             auto& [image_id, desc] = image_bindings.emplace_back(
-                std::piecewise_construct, std::tuple{},
-                std::tuple{CachedImageDesc(tsharp, image_desc)});
+                std::piecewise_construct, std::tuple{}, std::tuple{desc_entry.desc});
 
             if (mip_fallback_mode == Shader::MipStorageFallbackMode::ConstantIndex) {
                 ASSERT(num_bindings == 1);
@@ -898,7 +919,14 @@ void Rasterizer::BindTextures(const Shader::Info& stage, Shader::Backend::Bindin
                 desc.view_info.range.extent.levels = 1;
             }
 
+            const u64 generation = texture_cache.RegistryGeneration();
             image_id = texture_cache.FindImage(desc);
+            if (mip_fallback_mode == Shader::MipStorageFallbackMode::None &&
+                generation == texture_cache.RegistryGeneration()) {
+                desc_entry.found_generation = generation;
+                desc_entry.found_id = image_id;
+                desc_entry.found_desc = desc;
+            }
             auto* image = &texture_cache.GetImage(image_id);
             if (auto depth_image_id = texture_cache.GetAssociatedDepth(*image)) {
                 // If this image has an associated depth image, it's a stencil attachment.

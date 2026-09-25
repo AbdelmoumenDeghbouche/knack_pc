@@ -521,7 +521,7 @@ ImageId TextureCache::FindImage(ImageDesc& desc, bool exact_fmt) {
                image.info.guest_size == info.guest_size && image.info.size == info.size &&
                image.info.pixel_format == info.pixel_format;
     };
-    if ((cached.generation == registry_generation || still_exact()) &&
+    if ((cached.generation == registry_generation.load(std::memory_order_relaxed) || still_exact()) &&
         cached.address == info.guest_address &&
         cached.size == info.guest_size && cached.extent == info.size &&
         cached.format == info.pixel_format && cached.type == info.type &&
@@ -627,7 +627,7 @@ ImageId TextureCache::FindImage(ImageDesc& desc, bool exact_fmt) {
         .binding = desc.type,
         .levels = info.resources.levels,
         .layers = info.resources.layers,
-        .generation = registry_generation,
+        .generation = registry_generation.load(std::memory_order_relaxed),
         .image_id = image_id,
         .view_mip = view_mip,
         .view_slice = view_slice,
