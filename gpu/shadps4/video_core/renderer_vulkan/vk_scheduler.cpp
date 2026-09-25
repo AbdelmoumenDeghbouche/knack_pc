@@ -217,8 +217,11 @@ void Scheduler::RecorderThread(std::stop_token stoken) {
     Common::SetCurrentThreadName("bb:VkRecorder");
     while (true) {
         // Spin briefly before sleeping: the next chunk usually follows within microseconds,
-        // and a sleeping recorder costs the GPU thread a wake-up syscall per kick.
-        const auto spin_until = std::chrono::steady_clock::now() + std::chrono::microseconds(200);
+        // and a sleeping recorder costs the GPU thread a wake-up syscall per kick. With few
+        // hardware threads (Steam Deck: 8) the spin would take time from guest threads.
+        static const auto spin_time = std::chrono::microseconds(
+            std::thread::hardware_concurrency() >= 12 ? 200 : 20);
+        const auto spin_until = std::chrono::steady_clock::now() + spin_time;
         while (queued_chunks.load(std::memory_order_acquire) == 0 && !stoken.stop_requested() &&
                std::chrono::steady_clock::now() < spin_until) {
             __builtin_ia32_pause();
