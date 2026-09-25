@@ -491,6 +491,15 @@ void VideoOutDriver::PresentThread(std::stop_token token) {
 
     Common::AccurateTimer timer{vblank_period};
 
+    // bbport: frame limit (see EmulatorSettings::GetFrameLimit). A request waits in the queue
+    // until its slot; slots advance by one period (no drift) but never lag behind by more.
+    const u32 frame_limit = EmulatorSettings.GetFrameLimit();
+    const auto frame_period = frame_limit ? std::chrono::nanoseconds(1000000000 / frame_limit)
+                                          : std::chrono::nanoseconds(0);
+    auto next_flip = std::chrono::steady_clock::now();
+    std::printf("VideoOut: vblank %u Hz, frame limit %u FPS\n",
+                EmulatorSettings.GetVblankFrequency(), frame_limit);
+
     const auto receive_request = [this] -> Request {
         std::scoped_lock lk{mutex};
         if (!requests.empty()) {
@@ -512,8 +521,13 @@ void VideoOutDriver::PresentThread(std::stop_token token) {
 
         // Check if it's time to take a request.
         auto& vblank_status = main_port.vblank_status;
-        if (vblank_status.count % (main_port.flip_rate + 1) == 0) {
+        const auto now = std::chrono::steady_clock::now();
+        const bool flip_slot = !frame_limit || now >= next_flip;
+        if (flip_slot && vblank_status.count % (main_port.flip_rate + 1) == 0) {
             const auto request = receive_request();
+            if (request && frame_limit) {
+                next_flip = std::max(next_flip + frame_period, now - frame_period);
+            }
             if (!request) {
                 if (timer.GetTotalWait().count() < 0) { // Dont draw too fast
                     if (!main_port.is_open) {
