@@ -230,6 +230,27 @@ std::pair<const Buffer*, u64> BufferCache::ObtainBufferForImage(VAddr device_add
     }
     const auto staging = staging_pool.Request(size, VideoCore::MemoryType::HostUncached,
                                               instance.StorageMinAlignment());
+    if (!BbToggle::Disabled(BbToggle::DeferredUploads)) {
+        // bbport: texture data is copied on the copy threads (streaming: 100+ MB per frame);
+        // the upload reads the staging only after submission, which waits for the copies.
+        constexpr u64 Chunk = 1_MB;
+        for (u64 offset = 0; offset < staging.size; offset += Chunk) {
+            const BbCopy::Item item{
+                .run = &RunGuestCopy,
+                .context = this,
+                .source = device_addr + offset,
+                .destination = reinterpret_cast<u64>(staging.mapped + offset),
+                .size = std::min(Chunk, staging.size - offset),
+                .extra = reinterpret_cast<u64>(staging.buffer),
+            };
+            if (staging.size < Chunk) {
+                BbCopy::QueueCopy(item);
+            } else {
+                BbCopy::Async([item] { item.run(item); });
+            }
+        }
+        return {staging.buffer, staging.offset};
+    }
     memory->CopySparseMemory(device_addr, staging.mapped, staging.size);
     staging.Flush();
     return {staging.buffer, staging.offset};
