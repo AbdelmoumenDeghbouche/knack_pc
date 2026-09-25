@@ -100,6 +100,16 @@ void BufferCache::InvalidateMemory(VAddr device_addr, u64 size, bool assume_lock
 // every 4 KiB page cost a protection fault (~110k/s in Hunter's Nightmare, a fifth of each
 // render worker's time in the kernel). A fault unprotects the aligned window around it instead;
 // pages marked CPU-modified without being written only cost an upload when bound.
+// Item: context = BufferCache, source = guest address, destination = host pointer, size,
+// extra = the Buffer whose mapping holds the destination (flushed after the copy).
+void BufferCache::RunGuestCopy(const BbCopy::Item& item) {
+    auto* cache = static_cast<BufferCache*>(item.context);
+    auto* dst = reinterpret_cast<u8*>(item.destination);
+    cache->memory->CopySparseMemory(item.source, dst, item.size);
+    auto* buffer = reinterpret_cast<Buffer*>(item.extra);
+    buffer->Flush(dst - buffer->mapped_data.data(), item.size);
+}
+
 void BufferCache::ExtendWriteFault(VAddr device_addr) {
     static const u64 window = [] {
         const char* env = std::getenv("BB_FAULT_WINDOW");
@@ -187,11 +197,13 @@ std::pair<const Buffer*, u64> BufferCache::ObtainBuffer(VAddr device_addr, u32 s
         if (!stream_buffer.mapped_data.empty() &&
             !BbToggle::Disabled(BbToggle::DeferredStreamCopies)) {
             if (const auto offset = stream_buffer.Reserve(size, instance.UniformMinAlignment())) {
-                BbCopy::Async([memory = memory, stream = &stream_buffer, device_addr, size,
-                               offset = *offset] {
-                    memory->CopySparseMemory(device_addr, stream->mapped_data.data() + offset,
-                                             size);
-                    stream->Flush(offset, size);
+                BbCopy::QueueCopy({
+                    .run = &RunGuestCopy,
+                    .context = this,
+                    .source = device_addr,
+                    .destination = reinterpret_cast<u64>(stream_buffer.mapped_data.data() + *offset),
+                    .size = size,
+                    .extra = reinterpret_cast<u64>(static_cast<Buffer*>(&stream_buffer)),
                 });
                 return {&stream_buffer, *offset};
             }
@@ -387,6 +399,22 @@ const Buffer* BufferCache::UploadCopies(const Buffer* arena, std::span<vk::Buffe
     // bbport: the guest memory is copied into staging on the copy threads, started now in
     // groups of about 1 MiB; submission and guest-visible fences wait for them
     // (Scheduler::WaitHostCopies).
+    if (!BbToggle::Disabled(BbToggle::DeferredUploads) && total_size_bytes < 1_MB) {
+        // Small uploads join the calling thread's batch.
+        for (auto& copy : copies) {
+            BbCopy::QueueCopy({
+                .run = &RunGuestCopy,
+                .context = this,
+                .source = copy.dstOffset,
+                .destination = reinterpret_cast<u64>(staging.mapped + copy.srcOffset),
+                .size = copy.size,
+                .extra = reinterpret_cast<u64>(staging.buffer),
+            });
+            copy.srcOffset += staging.offset;
+            copy.dstOffset -= arena->cpu_addr;
+        }
+        return staging.buffer;
+    }
     if (!BbToggle::Disabled(BbToggle::DeferredUploads)) {
         struct HostCopy {
             VAddr source;

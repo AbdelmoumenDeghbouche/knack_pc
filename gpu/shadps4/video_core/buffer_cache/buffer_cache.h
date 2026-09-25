@@ -3,6 +3,8 @@
 
 #pragma once
 
+#include "bbport_copy.h"
+
 #include <deque>
 #include <boost/container/small_vector.hpp>
 
@@ -127,6 +129,9 @@ private:
 
     bool SynchronizeMemory(const Buffer* arena, VAddr device_addr, u32 size, bool is_written,
                            bool is_texel_buffer);
+
+    /// bbport: batched small copies on the copy threads (BbCopy::QueueCopy).
+    static void RunGuestCopy(const BbCopy::Item& item);
 
     const Buffer* UploadCopies(const Buffer* arena, std::span<vk::BufferCopy> copies,
                                size_t total_size_bytes);

@@ -177,7 +177,43 @@ void Async(std::function<void()> task) {
     GetPool().Async(std::move(task));
 }
 
+namespace {
+struct Batch {
+    std::vector<Item> items;
+    unsigned long long bytes = 0;
+};
+thread_local Batch batch;
+} // namespace
+
+void FlushBatch() {
+    if (batch.items.empty()) {
+        return;
+    }
+    auto items = std::make_shared<std::vector<Item>>(std::move(batch.items));
+    batch.items = {};
+    batch.items.reserve(256);
+    batch.bytes = 0;
+    Async([items] {
+        for (const auto& item : *items) {
+            item.run(item);
+        }
+    });
+}
+
+void QueueCopy(const Item& item) {
+    if (!Enabled()) {
+        item.run(item);
+        return;
+    }
+    batch.items.push_back(item);
+    batch.bytes += item.size;
+    if (batch.bytes >= 512 * 1024 || batch.items.size() >= 256) {
+        FlushBatch();
+    }
+}
+
 void WaitAsync() {
+    FlushBatch();
     GetPool().WaitAsync();
 }
 

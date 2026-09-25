@@ -18,7 +18,23 @@ bool Enabled();
 /// order and concurrently.
 void Async(std::function<void()> task);
 
-/// Waits until every task passed to Async() so far has finished.
+/// A small copy for QueueCopy(): `run(item)` does the work on a copy thread.
+struct Item {
+    void (*run)(const Item&);
+    void* context;
+    unsigned long long source, destination, size, extra;
+};
+
+/// Queues a small copy in the calling thread's batch; the batch is started with Async() once it
+/// holds about 512 KiB or 256 items, or by FlushBatch()/WaitAsync(). One wakeup per batch
+/// instead of one per copy (thousands of constant buffer copies per frame).
+void QueueCopy(const Item& item);
+
+/// Starts the calling thread's batch.
+void FlushBatch();
+
+/// Starts the calling thread's batch, then waits until every task passed to Async() so far
+/// has finished.
 void WaitAsync();
 
 } // namespace BbCopy
