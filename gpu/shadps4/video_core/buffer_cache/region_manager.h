@@ -5,6 +5,7 @@
 
 #include <array>
 #include <chrono>
+#include <cstdlib>
 
 #include "bbport_toggles.h"
 #include "common/div_ceil.h"
@@ -202,13 +203,23 @@ private:
     // cost a protection fault in the writing thread plus an mprotect with TLB shootdowns on
     // every upload. After HotFaults faults a page stays writable and counts as always CPU
     // modified, so it is uploaded on every use instead. The set is rebuilt every HotPeriod.
+    // Opt-in (BB_HOT_PAGES=1): in Hunter's Nightmare the set grew to ~14k pages (56 MB), each
+    // re-uploaded on every binding, which cost far more than the faults (33 FPS) and preceded
+    // a GPU ring timeout.
+    static bool HotPagesEnabled() {
+        static const bool enabled = [] {
+            const char* env = std::getenv("BB_HOT_PAGES");
+            return env && env[0] == '1';
+        }();
+        return enabled && !BbToggle::Disabled(BbToggle::HotPages);
+    }
     // A short period re-protects thousands of pages at once and each faults again before it is
     // hot, a fault storm (a 2 s period gave ~20k faults/s and frame spikes).
     static constexpr u8 HotFaults = 2;
     static constexpr auto HotPeriod = std::chrono::seconds(20);
 
     void CountWriteFaults(size_t start_page, size_t end_page) {
-        const bool hot_enabled = !BbToggle::Disabled(BbToggle::HotPages);
+        const bool hot_enabled = HotPagesEnabled();
         for (size_t page = start_page; page < end_page; ++page) {
             if (writeable.Get(page)) {
                 continue; // not protected: no fault
@@ -236,7 +247,7 @@ private:
         if (num_hot == 0) {
             return;
         }
-        if (BbToggle::Disabled(BbToggle::HotPages) ||
+        if (!HotPagesEnabled() ||
             std::chrono::steady_clock::now() - hot_since > HotPeriod) {
             // Re-protect them (on this upload) and start counting again.
             BbStats::hot_pages.fetch_sub(num_hot, std::memory_order_relaxed);
