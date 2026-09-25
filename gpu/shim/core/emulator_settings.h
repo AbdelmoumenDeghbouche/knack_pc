@@ -25,7 +25,9 @@ public:
     u32 GetInternalScreenHeight() { static const auto value = u32(Number("BB_INTERNAL_HEIGHT", 1080)); return value; }
     std::string GetPresentMode() { const char* v = std::getenv("BB_PRESENT_MODE"); return v ? v : "Mailbox"; }
     int GetRcasAttenuation() { static const auto value = int(Number("BB_RCAS_ATTENUATION", 250)); return value; }
-    u32 GetReadbacksMode() { static const auto value = u32(Number("BB_READBACKS", GpuReadbacksMode::Disabled)); return value; }
+    // bbport: Relaxed by default: without readbacks FaceGen reads stale GPU-written vertices
+    // (vertex explosions); in Hunter's Nightmare it costs no measurable frame rate.
+    u32 GetReadbacksMode() { static const auto value = u32(Number("BB_READBACKS", GpuReadbacksMode::Relaxed)); return value; }
     // bbport: 0 follows the display refresh rate (uncapped frame rate presets).
     u32 GetVblankFrequency() {
         static const u32 value = [] {
