@@ -71,3 +71,7 @@ The GPU command thread is back at ~100%: it is the limit again.
 Rejected: "hot pages" (never re-protect pages written repeatedly, upload them on every
 binding) — the set grew to ~14k pages, re-uploads dropped the frame rate to 33 FPS and a GPU
 ring timeout followed. Left opt-in behind BB_HOT_PAGES=1.
+
+Texture description cache 2-way/4096, same-target fast path, LRU touch skip, no per-texture
+meta lookup: other outdoor view, 93.9 FPS; with the texture memos off (mask 1056) 65.6 FPS.
+Close to the 100 Hz display cap (vblank-paced), so further gains need an uncapped test.
