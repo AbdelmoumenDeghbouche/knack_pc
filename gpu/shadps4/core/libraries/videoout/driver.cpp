@@ -4,6 +4,7 @@
 #include <chrono>
 #include <cstdio>
 #include <time.h>
+#include <sys/resource.h>
 #include "common/assert.h"
 #include "bbport_toggles.h"
 #include "common/debug.h"
@@ -267,6 +268,12 @@ void VideoOutDriver::Flip(const Request& req) {
         const u64 pc = BbStats::protect_calls.load(), pp = BbStats::protect_pages.load(),
                   rc = BbStats::protect_revoke_calls.load(), rp = BbStats::protect_revoke_pages.load();
         const u64 minflt = BbStats::gpu_minor_faults.load(), sigf = BbStats::gpu_signal_faults.load();
+        static u64 last_proc_flt, last_copy_ns, last_copy_bytes;
+        const u64 copy_ns = BbStats::t_copy.load(), copy_bytes = BbStats::copy_bytes.load();
+        u64 proc_flt = 0;
+        if (rusage usage{}; getrusage(RUSAGE_SELF, &usage) == 0) {
+            proc_flt = usage.ru_minflt;
+        }
         const u64 t_now[6] = {BbStats::t_resident.load(), BbStats::t_protect.load(),
                               BbStats::t_image_create.load(), BbStats::t_refresh.load(),
                               BbStats::t_staging.load(), BbStats::t_host_wait.load()};
@@ -305,9 +312,10 @@ void VideoOutDriver::Flip(const Request& req) {
                         (t_now[0] - last_t[0]) / 1e6, (t_now[1] - last_t[1]) / 1e6,
                         (t_now[2] - last_t[2]) / 1e6, (t_now[3] - last_t[3]) / 1e6,
                         (t_now[4] - last_t[4]) / 1e6, (t_now[5] - last_t[5]) / 1e6);
-            std::printf("       GPU thread page faults %llu, protection faults %llu; protect calls %llu "
-                        "(%llu pages), of which write-revoking %llu (%llu pages)\n",
+            std::printf("       GPU thread page faults %llu (process %llu), protection faults %llu; "
+                        "protect calls %llu (%llu pages), of which write-revoking %llu (%llu pages)\n",
                         static_cast<unsigned long long>(minflt - last_minflt),
+                        static_cast<unsigned long long>(proc_flt - last_proc_flt),
                         static_cast<unsigned long long>(sigf - last_sigf),
                         static_cast<unsigned long long>(pc - last_pc),
                         static_cast<unsigned long long>(pp - last_pp),
@@ -319,6 +327,14 @@ void VideoOutDriver::Flip(const Request& req) {
         last_rc = rc;
         last_rp = rp;
         last_minflt = minflt;
+        if (frame_ms > 40.0 && last_gpu_ns != 0 && copy_ns > last_copy_ns) {
+            std::printf("       guest copies %.1f MB in %.1f thread-ms (%.2f GB/s per thread)\n",
+                        (copy_bytes - last_copy_bytes) / 1e6, (copy_ns - last_copy_ns) / 1e6,
+                        double(copy_bytes - last_copy_bytes) / double(copy_ns - last_copy_ns));
+        }
+        last_copy_ns = copy_ns;
+        last_copy_bytes = copy_bytes;
+        last_proc_flt = proc_flt;
         last_sigf = sigf;
         std::copy(std::begin(t_now), std::end(t_now), std::begin(last_t));
         last_draws = draws;

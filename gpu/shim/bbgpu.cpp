@@ -98,6 +98,8 @@ u64 MemoryManager::ClampRangeSize(VAddr virtual_addr, u64 size) {
     return runtime_memory_clamp(virtual_addr, size);
 }
 static void CopySparseSerial(VAddr source, u8* dest, u64 size) {
+    BbStats::Timer timer{BbStats::t_copy};
+    BbStats::copy_bytes.fetch_add(size, std::memory_order_relaxed);
     while (size) {
         uintptr_t start = 0, end = 0;
         int mapped = 0;
