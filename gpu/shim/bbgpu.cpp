@@ -100,6 +100,18 @@ u64 MemoryManager::ClampRangeSize(VAddr virtual_addr, u64 size) {
 static void CopySparseSerial(VAddr source, u8* dest, u64 size) {
     BbStats::Timer timer{BbStats::t_copy};
     BbStats::copy_bytes.fetch_add(size, std::memory_order_relaxed);
+    // CPU time of this thread in the copy: far below the wall time means it waited for a core.
+    struct CpuTimer {
+        timespec start{};
+        CpuTimer() { clock_gettime(CLOCK_THREAD_CPUTIME_ID, &start); }
+        ~CpuTimer() {
+            timespec end{};
+            clock_gettime(CLOCK_THREAD_CPUTIME_ID, &end);
+            BbStats::t_copy_cpu.fetch_add(u64(end.tv_sec - start.tv_sec) * 1000000000ull +
+                                              u64(end.tv_nsec) - u64(start.tv_nsec),
+                                          std::memory_order_relaxed);
+        }
+    } cpu_timer;
     while (size) {
         uintptr_t start = 0, end = 0;
         int mapped = 0;
