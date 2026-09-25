@@ -6,6 +6,7 @@
 #include <ctime>
 #include <filesystem>
 #include <format>
+#include <mutex>
 
 #include "video_core/renderer_vulkan/vk_common.h"
 #include "video_core/texture_cache/image_info.h"
@@ -49,7 +50,8 @@ void AddBuffers(Entry& entry) {
     pending_buffers.clear();
 }
 bool pass_open = false;
-u64 start_flip = 0;
+std::mutex display_mutex;
+std::vector<VAddr> display_buffers;
 
 Target ToTarget(const VideoCore::ImageInfo& info) {
     return {info.guest_address, info.pixel_format, info.size.width, info.size.height};
@@ -135,39 +137,49 @@ void FrameCapture::OnFlip(VAddr presented_address) {
     }
 }
 
-void FrameCapture::Poll() {
-    const u32 s = state.load(std::memory_order_acquire);
-    if (s == Idle) {
-        return;
-    }
-    const u64 f = flips.load(std::memory_order_acquire);
-    if (s == Armed) {
-        if (start_flip == 0) {
-            start_flip = f; // wait for the next frame boundary
-            return;
-        }
-        if (f != start_flip) {
-            entries.clear();
-            pending_sampled.clear();
-            pass_open = false;
-            start_flip = f;
-            state.store(Recording, std::memory_order_release);
-        }
-        return;
-    }
-    if (f != start_flip) {
-        Write(last_presented.load(std::memory_order_relaxed));
-        entries.clear();
-        start_flip = 0;
-        state.store(Idle, std::memory_order_release);
+void FrameCapture::Poll() {}
+
+void FrameCapture::AddDisplayBuffer(VAddr address) {
+    std::scoped_lock lk{display_mutex};
+    if (std::ranges::find(display_buffers, address) == display_buffers.end()) {
+        display_buffers.push_back(address);
     }
 }
 
 void FrameCapture::BeginPass(const VideoCore::ImageInfo* const* colors, u32 num_colors,
                              const VideoCore::ImageInfo* depth) {
     std::vector<Target> targets;
-    for (u32 i = 0; i < num_colors; ++i) {
-        targets.push_back(colors[i] ? ToTarget(*colors[i]) : Target{});
+    bool display = false;
+    {
+        std::scoped_lock lk{display_mutex};
+        for (u32 i = 0; i < num_colors; ++i) {
+            targets.push_back(colors[i] ? ToTarget(*colors[i]) : Target{});
+            display |= colors[i] && std::ranges::find(display_buffers, colors[i]->guest_address) !=
+                                        display_buffers.end();
+        }
+    }
+    // Frame boundaries in the command stream: the pass that writes a display buffer.
+    const bool new_pass = !(pass_open && !entries.empty() && !entries.back().compute &&
+                            entries.back().colors == targets);
+    if (display && new_pass) {
+        if (state.load(std::memory_order_relaxed) == Recording) {
+            Write(last_presented.load(std::memory_order_relaxed));
+            entries.clear();
+            pending_sampled.clear();
+            pending_buffers.clear();
+            state.store(Idle, std::memory_order_release);
+            return;
+        }
+        entries.clear();
+        pending_sampled.clear();
+        pending_buffers.clear();
+        pass_open = false;
+        state.store(Recording, std::memory_order_release);
+    }
+    if (state.load(std::memory_order_relaxed) != Recording) {
+        pending_sampled.clear();
+        pending_buffers.clear();
+        return;
     }
     const Target d = depth ? ToTarget(*depth) : Target{};
     if (pass_open && !entries.empty() && !entries.back().compute &&
@@ -179,7 +191,8 @@ void FrameCapture::BeginPass(const VideoCore::ImageInfo* const* colors, u32 num_
 }
 
 void FrameCapture::Draw(u64 vs_hash, u64 ps_hash, u32 num_indices, u32 num_instances) {
-    if (entries.empty() || entries.back().compute) {
+    if (state.load(std::memory_order_relaxed) != Recording || entries.empty() ||
+        entries.back().compute) {
         return;
     }
     auto& e = entries.back();
@@ -192,6 +205,11 @@ void FrameCapture::Draw(u64 vs_hash, u64 ps_hash, u32 num_indices, u32 num_insta
 }
 
 void FrameCapture::Dispatch(u64 cs_hash, u32 x, u32 y, u32 z) {
+    if (state.load(std::memory_order_relaxed) != Recording) {
+        pending_sampled.clear();
+        pending_buffers.clear();
+        return;
+    }
     if (!entries.empty() && entries.back().compute && !entries.back().shaders.empty() &&
         entries.back().shaders[0] == cs_hash) {
         ++entries.back().draws;

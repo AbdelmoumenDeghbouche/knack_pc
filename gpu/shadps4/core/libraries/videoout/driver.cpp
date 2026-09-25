@@ -176,6 +176,7 @@ int VideoOutDriver::RegisterBuffers(VideoOutPort* port, s32 startIndex, void* co
             .address_left = address,
             .address_right = 0,
         };
+        Vulkan::FrameCapture::AddDisplayBuffer(address);
 
         // Reset flip label also when registering buffer
         port->buffer_labels[startIndex + i] = 0;

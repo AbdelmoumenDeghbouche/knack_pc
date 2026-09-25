@@ -24,9 +24,13 @@ public:
     /// VideoOut thread, per flip: frame boundary, presented buffer, trigger file check.
     static void OnFlip(VAddr presented_address);
 
-    /// GPU thread: whether the current frame is being recorded (cheap).
+    /// VideoOut: a display buffer the game registered. A pass drawing into one starts a frame
+    /// in the GPU command stream (the flip itself runs a frame behind).
+    static void AddDisplayBuffer(VAddr address);
+
+    /// GPU thread: whether passes are being looked at (armed or recording; cheap).
     static bool Active() {
-        return state.load(std::memory_order_relaxed) == Recording;
+        return state.load(std::memory_order_relaxed) != Idle;
     }
     /// GPU thread, at every draw/dispatch: starts or ends a recording at frame boundaries.
     static void Poll();
