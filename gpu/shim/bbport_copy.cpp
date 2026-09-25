@@ -213,7 +213,15 @@ void QueueCopy(const Item& item) {
 }
 
 void WaitAsync() {
-    FlushBatch();
+    // The caller's own batch runs here: handing it over only to wait for it costs a wakeup
+    // per fence (dozens per frame).
+    if (!batch.items.empty()) {
+        for (const auto& item : batch.items) {
+            item.run(item);
+        }
+        batch.items.clear();
+        batch.bytes = 0;
+    }
     GetPool().WaitAsync();
 }
 
