@@ -103,7 +103,7 @@ void CameraMotion::OnConstants(const float* data) {
     }
     previous = current;
     std::memcpy(current.view.data(), data + 8, 12 * sizeof(float));
-    std::memcpy(current.inv_view.data(), data + 176, 12 * sizeof(float));
+    std::memcpy(current.inv_view.data(), data + 180, 12 * sizeof(float));
     current.proj = {data[52], data[57], data[62], data[63]};
     current.valid = current.proj[0] != 0.0f && current.proj[1] != 0.0f;
     frame_has_camera = true;

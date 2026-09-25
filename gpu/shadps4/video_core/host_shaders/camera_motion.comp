@@ -30,8 +30,9 @@ void main() {
     const vec2 uv = (vec2(pixel) + 0.5) / size;
     const vec2 ndc = vec2(uv.x * 2.0 - 1.0, 1.0 - uv.y * 2.0);
 
-    // Clip z = zs * z + zo, w = z; depth = zs + zo / z.
-    const float z = proj.w / max(depth - proj.z, 1e-7);
+    // Clip z = zs * z + zo, w = z; depth = zs + zo / z (zo < 0, depth < zs in front).
+    const float denom = depth - proj.z;
+    const float z = denom < -1e-7 ? proj.w / denom : 1e6;
     const vec4 view = vec4(ndc.x * z / proj.x, ndc.y * z / proj.y, z, 1.0);
     const vec3 prev_view =
         vec3(dot(reproject[0], view), dot(reproject[1], view), dot(reproject[2], view));

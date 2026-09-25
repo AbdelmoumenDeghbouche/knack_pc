@@ -30,9 +30,9 @@ Signature: `[0]=3000 (far) [1]=1/3000 [4]=1920 [5]=1080 [6]=1/1920 [7]=1/1080`.
 |---|---|
 | 8–19 | view matrix, 3x4 rows (rotation + translation); the only block that changes with the camera |
 | 36–51 | inverse projection (0.700285 = 1/1.42799, 0.39391 = 1/2.53865) |
-| 49, 57, 62, 63 | projection, D3D depth 0..1: x 1.42799, y 2.53865, z 1.00002 / -0.0500679 (near 0.05, far 3000) |
+| 52, 57, 62, 63 | projection (rows 52–67), D3D depth 0..1: x 1.42799, y 2.53865, z 1.00002 / -0.0500679 (near 0.05, far 3000) |
 | 112–175 | shadow cascade matrices |
-| 176–191 | inverse view (camera to world), 3x4 |
+| 180–191 | inverse view (camera to world), 3x4 (176–179: 2, 8, 15, 0) |
 
 The previous frame's matrices are not there; the port keeps them itself.
 
