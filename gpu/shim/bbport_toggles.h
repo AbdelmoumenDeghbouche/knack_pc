@@ -5,6 +5,7 @@
 #include <csetjmp>
 #include <chrono>
 #include <cstdint>
+#include <cstdlib>
 
 extern "C" std::uint32_t runtime_disabled_optimizations;
 /// Recovery point for speculative guest memory reads on this thread (runtime_memory.c).
@@ -49,10 +50,19 @@ inline std::atomic<std::uint64_t> draws{0}, dispatches{0}, submissions{0};
 inline std::atomic<std::uint64_t> t_resident{0}, t_protect{0}, t_image_create{0}, t_refresh{0},
     t_staging{0}, t_host_wait{0}, t_copy{0}, copy_bytes{0}, t_read_faults{0}, read_faults{0},
     t_write_faults{0}, t_copy_cpu{0}, copy_sys_us{0}, copy_minflt{0};
+/// Diagnostics are collected only with BB_FRAME_STATS=1.
+inline const bool enabled = [] {
+    const char* env = std::getenv("BB_FRAME_STATS");
+    return env && env[0] == '1';
+}();
 struct Timer {
     std::atomic<std::uint64_t>& total;
-    std::chrono::steady_clock::time_point start = std::chrono::steady_clock::now();
+    std::chrono::steady_clock::time_point start =
+        enabled ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
     ~Timer() {
+        if (!enabled) {
+            return;
+        }
         total.fetch_add(std::chrono::duration_cast<std::chrono::nanoseconds>(
                             std::chrono::steady_clock::now() - start)
                             .count(),

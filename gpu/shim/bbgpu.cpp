@@ -101,37 +101,6 @@ u64 MemoryManager::ClampRangeSize(VAddr virtual_addr, u64 size) {
 static void CopySparseSerial(VAddr source, u8* dest, u64 size) {
     BbStats::Timer timer{BbStats::t_copy};
     BbStats::copy_bytes.fetch_add(size, std::memory_order_relaxed);
-    // CPU time of this thread in the copy: far below the wall time means it waited for a core.
-    struct CpuTimer {
-        timespec start{};
-        CpuTimer() { clock_gettime(CLOCK_THREAD_CPUTIME_ID, &start); }
-        ~CpuTimer() {
-            timespec end{};
-            clock_gettime(CLOCK_THREAD_CPUTIME_ID, &end);
-            BbStats::t_copy_cpu.fetch_add(u64(end.tv_sec - start.tv_sec) * 1000000000ull +
-                                              u64(end.tv_nsec) - u64(start.tv_nsec),
-                                          std::memory_order_relaxed);
-        }
-    } cpu_timer;
-    // Kernel time and page faults inside large copies.
-    struct Usage {
-        bool on;
-        rusage start{};
-        explicit Usage(bool on_) : on{on_} {
-            if (on) getrusage(RUSAGE_THREAD, &start);
-        }
-        ~Usage() {
-            if (!on) return;
-            rusage end{};
-            getrusage(RUSAGE_THREAD, &end);
-            BbStats::copy_sys_us.fetch_add(
-                u64(end.ru_stime.tv_sec - start.ru_stime.tv_sec) * 1000000 +
-                    u64(end.ru_stime.tv_usec) - u64(start.ru_stime.tv_usec),
-                std::memory_order_relaxed);
-            BbStats::copy_minflt.fetch_add(end.ru_minflt - start.ru_minflt,
-                                           std::memory_order_relaxed);
-        }
-    } usage{size >= 64 * 1024};
     while (size) {
         uintptr_t start = 0, end = 0;
         int mapped = 0;
