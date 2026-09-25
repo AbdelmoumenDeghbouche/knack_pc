@@ -895,7 +895,7 @@ void Rasterizer::BindTextures(const Shader::Info& stage, Shader::Backend::Bindin
                 auto& [image_id, desc] = image_bindings.emplace_back(
                     std::piecewise_construct, std::tuple{desc_entry.found_id},
                     std::tuple{desc_entry.found_desc});
-                texture_cache.TouchFound(image_id);
+                texture_cache.MarkFound(image_id);
                 auto* image = &texture_cache.GetImage(image_id);
                 if (auto depth_image_id = texture_cache.GetAssociatedDepth(*image)) {
                     image_id = depth_image_id;

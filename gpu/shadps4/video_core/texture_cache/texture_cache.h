@@ -92,12 +92,10 @@ public:
         return registry_generation.load(std::memory_order_acquire);
     }
 
-    /// bbport: the access bookkeeping FindImage does for an image found by a memoized lookup.
-    void TouchFound(ImageId image_id) {
-        std::scoped_lock lock{mutex};
-        Image& image = slot_images[image_id];
-        image.tick_accessed_last = scheduler.CurrentTick();
-        TouchImage(image);
+    /// bbport: FindImage's access tick for an image found by a memoized lookup. The LRU touch
+    /// FindImage also does happens in UpdateImage (FindTexture), which every binding reaches.
+    void MarkFound(ImageId image_id) {
+        slot_images[image_id].tick_accessed_last = scheduler.CurrentTick();
     }
 
     TileManager& GetTileManager() noexcept {

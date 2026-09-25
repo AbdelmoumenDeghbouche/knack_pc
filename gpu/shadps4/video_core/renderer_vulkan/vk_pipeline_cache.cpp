@@ -703,7 +703,14 @@ PipelineCache::Result PipelineCache::GetProgram(HwStage hw_stage, SwStage sw_sta
 
     vk::ShaderModule module{};
 
-    const auto it = std::ranges::find(program->modules, spec, &Program::Module::spec);
+    // bbport: consecutive draws of a program almost always use the same permutation.
+    auto it = program->last_used < program->modules.size() &&
+                      program->modules[program->last_used].spec == spec
+                  ? program->modules.begin() + program->last_used
+                  : std::ranges::find(program->modules, spec, &Program::Module::spec);
+    if (it != program->modules.end()) {
+        program->last_used = std::distance(program->modules.begin(), it);
+    }
     if (it == program->modules.end()) {
         auto new_info = Shader::Info(hw_stage, sw_stage, params);
         module = CompileModule(new_info, runtime_info, params.code, perm_idx, binding);

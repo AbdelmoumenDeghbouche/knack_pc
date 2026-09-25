@@ -47,6 +47,7 @@ struct Program {
 
     Shader::Info info;
     ModuleList modules{};
+    size_t last_used = 0; ///< bbport: permutation of the previous lookup, compared first
 
     Program() = default;
     Program(Shader::HwStage stage, Shader::SwStage l_stage, Shader::ShaderParams params)
