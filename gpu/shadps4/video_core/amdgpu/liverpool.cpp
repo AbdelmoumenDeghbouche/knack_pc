@@ -882,9 +882,14 @@ Liverpool::Task Liverpool::ProcessGraphics(std::span<const u32> dcb, std::span<c
                         [] { Platform::IrqC::Instance()->Signal(Platform::InterruptId::GfxEop); });
                 };
                 // bbport: guest memory copies on the copy threads precede the fence the guest
-                // sees. The fence is written once they are done, like a GPU writes it when its
-                // work completes, instead of the GPU thread waiting for them.
-                if (rasterizer && !BbToggle::Disabled(BbToggle::AsyncFences)) {
+                // sees. BB_ASYNC_FENCES=1 writes it once they are done instead of the GPU thread
+                // waiting for them; measured slower (79 vs 83 FPS): the guest waits on these
+                // fences, and later fences stall it more than the wait costs this thread.
+                static const bool async_fences = [] {
+                    const char* env = std::getenv("BB_ASYNC_FENCES");
+                    return env && env[0] == '1';
+                }();
+                if (rasterizer && async_fences && !BbToggle::Disabled(BbToggle::AsyncFences)) {
                     BbCopy::AfterCopies(signal);
                 } else {
                     if (rasterizer) {
