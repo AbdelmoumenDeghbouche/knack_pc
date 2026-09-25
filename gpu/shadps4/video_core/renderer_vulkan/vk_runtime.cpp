@@ -112,21 +112,45 @@ void Runtime::CopyBuffer(const VideoCore::Buffer* src, const VideoCore::Buffer* 
                          std::span<const vk::BufferCopy> copies) {
     scheduler.EndRendering();
 
+    // bbport: many regions (HLE copy shaders) are tracked as one bounding range per buffer:
+    // conservative for barriers, and two tree lookups instead of two per region.
+    const bool bounded = copies.size() > 4;
+    u64 src_min = ~0ULL, src_max = 0, dst_min = ~0ULL, dst_max = 0;
+    if (bounded) {
+        for (const auto& copy : copies) {
+            src_min = std::min<u64>(src_min, copy.srcOffset);
+            src_max = std::max<u64>(src_max, copy.srcOffset + copy.size);
+            dst_min = std::min<u64>(dst_min, copy.dstOffset);
+            dst_max = std::max<u64>(dst_max, copy.dstOffset + copy.size);
+        }
+    }
+
     bool needs_flush{};
-    for (const auto& copy : copies) {
-        needs_flush |= IsBufferAccessed(src, copy.srcOffset, copy.size);
-        needs_flush |= IsBufferAccessed(dst, copy.dstOffset, copy.size, true);
+    if (bounded) {
+        needs_flush = IsBufferAccessed(src, src_min, src_max - src_min) ||
+                      IsBufferAccessed(dst, dst_min, dst_max - dst_min, true);
+    } else {
+        for (const auto& copy : copies) {
+            needs_flush |= IsBufferAccessed(src, copy.srcOffset, copy.size);
+            needs_flush |= IsBufferAccessed(dst, copy.dstOffset, copy.size, true);
+        }
     }
     if (needs_flush) {
         FlushBarriers();
     }
 
     scheduler.Record([src_handle = src->Handle(), dst_handle = dst->Handle(),
-                      regions = boost::container::small_vector<vk::BufferCopy, 8>(
-                          copies.begin(), copies.end())](vk::CommandBuffer cmdbuf) {
+                      regions = scheduler.RecordData(copies)](vk::CommandBuffer cmdbuf) {
         cmdbuf.copyBuffer(src_handle, dst_handle, regions.size(), regions.data());
     });
 
+    if (bounded) {
+        AccessBuffer(src, src_min, src_max - src_min, vk::PipelineStageFlagBits2::eCopy,
+                     vk::AccessFlagBits2::eTransferRead);
+        AccessBuffer(dst, dst_min, dst_max - dst_min, vk::PipelineStageFlagBits2::eCopy,
+                     vk::AccessFlagBits2::eTransferWrite);
+        return;
+    }
     for (const auto& copy : copies) {
         AccessBuffer(src, copy.srcOffset, copy.size, vk::PipelineStageFlagBits2::eCopy,
                      vk::AccessFlagBits2::eTransferRead);
@@ -190,8 +214,7 @@ void Runtime::UploadImage(VideoCore::Image* dst, const VideoCore::Buffer* src,
     }
 
     scheduler.Record([src_handle = src->Handle(), image = dst->GetImage(),
-                      regions = boost::container::small_vector<vk::BufferImageCopy, 16>(
-                          upload_copies.begin(), upload_copies.end())](vk::CommandBuffer cmdbuf) {
+                      regions = scheduler.RecordData(upload_copies)](vk::CommandBuffer cmdbuf) {
         cmdbuf.copyBufferToImage(src_handle, image, vk::ImageLayout::eTransferDstOptimal,
                                  regions.size(), regions.data());
     });
@@ -222,8 +245,7 @@ void Runtime::DownloadImage(VideoCore::Image* src, const VideoCore::Buffer* dst,
     }
 
     scheduler.Record([image = src->GetImage(), buffer = dst->Handle(),
-                      regions = boost::container::small_vector<vk::BufferImageCopy, 16>(
-                          download_copies.begin(), download_copies.end())](vk::CommandBuffer cmdbuf) {
+                      regions = scheduler.RecordData(download_copies)](vk::CommandBuffer cmdbuf) {
         cmdbuf.copyImageToBuffer(image, vk::ImageLayout::eTransferSrcOptimal, buffer,
                                  regions.size(), regions.data());
     });
@@ -766,7 +788,8 @@ void Runtime::FlushBarriers() {
 
     scheduler.EndRendering();
     scheduler.Record([memory = memory_barrier, has_memory = dep_info.memoryBarrierCount != 0,
-                      images = image_barriers](vk::CommandBuffer cmdbuf) {
+                      images = scheduler.RecordData(std::span<const vk::ImageMemoryBarrier2>(
+                          image_barriers.data(), image_barriers.size()))](vk::CommandBuffer cmdbuf) {
         const vk::DependencyInfo info = {
             .memoryBarrierCount = has_memory ? 1U : 0U,
             .pMemoryBarriers = has_memory ? &memory : nullptr,

@@ -9,6 +9,7 @@
 #include <condition_variable>
 #include <deque>
 #include <memory>
+#include <span>
 #include <utility>
 #include <vector>
 #include <mutex>
@@ -390,6 +391,16 @@ public:
         return true;
     }
 
+    /// Raw storage in the chunk for a command's variable-length data; null when full.
+    void* Allocate(size_t bytes, size_t align) {
+        const size_t offset = (used + align - 1) & ~(align - 1);
+        if (offset + bytes > Capacity) {
+            return nullptr;
+        }
+        used = offset + bytes;
+        return storage + offset;
+    }
+
     void Execute(vk::CommandBuffer cmdbuf) {
         for (CommandBase* command = first; command;) {
             CommandBase* const next = command->next;
@@ -512,6 +523,26 @@ public:
             const bool pushed = record_chunk->Push(std::forward<Func>(func));
             ASSERT(pushed);
         }
+    }
+
+    /// Copies `data` into recording storage that lives until the command that uses it has
+    /// been recorded (the same chunk). With threaded recording off, returns `data` itself.
+    template <typename T>
+    std::span<const T> RecordData(std::span<const T> data) {
+        if (!recorder_thread.joinable() || direct_mode || data.empty() ||
+            BbToggle::Disabled(BbToggle::ThreadedRecording)) {
+            return data;
+        }
+        // Room for the data and the command that follows it, so both stay in one chunk.
+        const size_t bytes = data.size_bytes();
+        ASSERT(bytes + 1024 <= RecordChunk::Capacity);
+        if (RecordChunk::Capacity - record_chunk->Size() < bytes + 1024) {
+            full_chunks.push_back(std::move(record_chunk));
+            record_chunk = AcquireChunk();
+        }
+        auto* dst = static_cast<T*>(record_chunk->Allocate(bytes, alignof(T)));
+        std::memcpy(dst, data.data(), bytes);
+        return {dst, data.size()};
     }
 
     /// Hands recorded commands to the recording thread. Called at points where no caller holds
