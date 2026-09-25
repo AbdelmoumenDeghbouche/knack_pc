@@ -55,8 +55,12 @@ public:
         return worker_count != 0;
     }
 
-    /// Game submit thread: a top-level graphics command buffer, in submission order.
-    void Enqueue(u64 seq, std::span<const u32> commands);
+    struct Submission;
+    /// Game submit thread, outside the queue lock: copies and scans a top-level graphics
+    /// command buffer. Null when disabled.
+    std::shared_ptr<Submission> Build(std::span<const u32> commands);
+    /// Game submit thread, under the queue lock: hands it to the workers in submission order.
+    void Enqueue(u64 seq, std::shared_ptr<Submission> submission);
 
     /// GPU thread: brackets the processing of submission `seq`. The first call hands the
     /// workers the exact register state and checksum they start replaying from.
@@ -69,7 +73,6 @@ public:
     /// GPU thread: counts whether a prepared draw was used; prints every 5 s (BB_FRAME_STATS).
     void Count(bool used);
 
-private:
     struct Submission {
         u64 seq{};
         std::vector<u32> commands;
@@ -79,6 +82,8 @@ private:
         std::atomic<u32> workers_done{0};
         std::atomic<bool> gpu_done{false};
     };
+
+private:
 
     void WorkerLoop(std::stop_token stop, u32 index);
     void Collect();

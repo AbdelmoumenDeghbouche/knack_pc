@@ -1361,13 +1361,17 @@ void Liverpool::SubmitGfx(std::span<const u32> dcb, std::span<const u32> ccb) {
         std::tie(dcb, ccb) = CopyCmdBuffers(dcb, ccb);
     }
 
+    // The copy for the draw preparation workers is made before taking the queue lock, which
+    // the GPU thread needs to pick up work.
+    auto* draw_prep = rasterizer ? &rasterizer->GetDrawPreparation() : nullptr;
+    auto prep_submission = draw_prep ? draw_prep->Build(dcb) : nullptr;
     {
         // Numbering, enqueueing and queueing under one lock keep the three orders identical.
         std::scoped_lock lock{queue.m_access};
         u64 seq = NoSeq;
-        if (rasterizer) {
+        if (draw_prep) {
             seq = gfx_submit_seq++;
-            rasterizer->GetDrawPreparation().Enqueue(seq, dcb);
+            draw_prep->Enqueue(seq, std::move(prep_submission));
         }
         auto task = ProcessGraphics(dcb, ccb, seq);
         queue.submits.emplace(task.handle);

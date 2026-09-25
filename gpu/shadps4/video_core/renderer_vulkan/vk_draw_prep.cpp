@@ -92,17 +92,25 @@ DrawPreparation::~DrawPreparation() {
     workers.clear();
 }
 
-void DrawPreparation::Enqueue(u64 seq, std::span<const u32> commands) {
+std::shared_ptr<DrawPreparation::Submission> DrawPreparation::Build(
+    std::span<const u32> commands) {
     if (!Enabled()) {
-        return;
+        return {};
     }
     auto submission = std::make_shared<Submission>();
-    submission->seq = seq;
     submission->commands.assign(commands.begin(), commands.end());
     ForEachPacket(submission->commands, [&](const AmdGpu::PM4Header* header) {
         submission->num_draws += IsDirectDraw(header->type3.opcode);
     });
     submission->draws = std::make_unique<PreparedDraw[]>(submission->num_draws);
+    return submission;
+}
+
+void DrawPreparation::Enqueue(u64 seq, std::shared_ptr<Submission> submission) {
+    if (!submission) {
+        return;
+    }
+    submission->seq = seq;
     {
         std::scoped_lock lk{mutex};
         submissions.push_back(std::move(submission));
