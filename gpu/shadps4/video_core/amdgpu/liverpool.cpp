@@ -423,8 +423,15 @@ void ScanDcb(std::span<const u32> dcb, int depth) {
 }
 } // namespace
 
-Liverpool::Task Liverpool::ProcessGraphics(std::span<const u32> dcb, std::span<const u32> ccb) {
+Liverpool::Task Liverpool::ProcessGraphics(std::span<const u32> dcb, std::span<const u32> ccb,
+                                           u64 seq) {
     FIBER_ENTER(dcb_task_name);
+    // Top-level buffers enqueued for the draw preparation workers (nested IBs are not).
+    Vulkan::DrawPreparation* draw_prep =
+        seq != NoSeq && rasterizer ? &rasterizer->GetDrawPreparation() : nullptr;
+    if (draw_prep) {
+        draw_prep->BeginSubmission(seq, regs, gfx_reg_checksum);
+    }
     static const bool dcb_stats = EmulatorSettingsImpl::Flag("BB_DCB_STATS", false);
     const int dcb_depth = g_dcb_depth;
     if (dcb_stats) {
@@ -620,8 +627,9 @@ Liverpool::Task Liverpool::ProcessGraphics(std::span<const u32> dcb, std::span<c
                     break;
                 }
                 const auto cmd_address = reinterpret_cast<const void*>(header);
+                const auto* prepared = draw_prep ? draw_prep->NextDraw() : nullptr;
                 rasterizer->ScopeMarker("gfx:{}:DrawIndex2", fmt::make_format_args(cmd_address),
-                                        [&] { rasterizer->Draw(true); });
+                                        [&] { rasterizer->Draw(true, 0, prepared); });
                 break;
             }
             case PM4ItOpcode::DrawIndexOffset2: {
@@ -634,9 +642,10 @@ Liverpool::Task Liverpool::ProcessGraphics(std::span<const u32> dcb, std::span<c
                     break;
                 }
                 const auto cmd_address = reinterpret_cast<const void*>(header);
+                const auto* prepared = draw_prep ? draw_prep->NextDraw() : nullptr;
                 rasterizer->ScopeMarker(
                     "gfx:{}:DrawIndexOffset2", fmt::make_format_args(cmd_address),
-                    [&] { rasterizer->Draw(true, draw_index_off->index_offset); });
+                    [&] { rasterizer->Draw(true, draw_index_off->index_offset, prepared); });
                 break;
             }
             case PM4ItOpcode::DrawIndexAuto: {
@@ -648,8 +657,9 @@ Liverpool::Task Liverpool::ProcessGraphics(std::span<const u32> dcb, std::span<c
                     break;
                 }
                 const auto cmd_address = reinterpret_cast<const void*>(header);
+                const auto* prepared = draw_prep ? draw_prep->NextDraw() : nullptr;
                 rasterizer->ScopeMarker("gfx:{}:DrawIndexAuto", fmt::make_format_args(cmd_address),
-                                        [&] { rasterizer->Draw(false); });
+                                        [&] { rasterizer->Draw(false, 0, prepared); });
                 break;
             }
             case PM4ItOpcode::DrawIndirect: {
@@ -1033,6 +1043,10 @@ Liverpool::Task Liverpool::ProcessGraphics(std::span<const u32> dcb, std::span<c
         ce_task.handle.destroy();
     }
 
+    if (draw_prep) {
+        draw_prep->EndSubmission();
+    }
+
     FIBER_EXIT;
 }
 
@@ -1347,9 +1361,15 @@ void Liverpool::SubmitGfx(std::span<const u32> dcb, std::span<const u32> ccb) {
         std::tie(dcb, ccb) = CopyCmdBuffers(dcb, ccb);
     }
 
-    auto task = ProcessGraphics(dcb, ccb);
     {
+        // Numbering, enqueueing and queueing under one lock keep the three orders identical.
         std::scoped_lock lock{queue.m_access};
+        u64 seq = NoSeq;
+        if (rasterizer) {
+            seq = gfx_submit_seq++;
+            rasterizer->GetDrawPreparation().Enqueue(seq, dcb);
+        }
+        auto task = ProcessGraphics(dcb, ccb, seq);
         queue.submits.emplace(task.handle);
     }
 

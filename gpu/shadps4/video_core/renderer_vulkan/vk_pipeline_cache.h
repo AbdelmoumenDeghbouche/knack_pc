@@ -3,7 +3,9 @@
 
 #pragma once
 
+#include <shared_mutex>
 #include <variant>
+#include <boost/container/static_vector.hpp>
 #include <tsl/robin_map.h>
 #include "shader_recompiler/profile.h"
 #include "shader_recompiler/recompiler.h"
@@ -48,6 +50,9 @@ struct Program {
     Shader::Info info;
     ModuleList modules{};
     size_t last_used = 0; ///< bbport: permutation of the previous lookup, compared first
+    /// bbport: `info` as translated, for draw-preparation workers (they must not read `info`,
+    /// whose user data the GPU thread rewrites every draw). Guarded by programs_mutex.
+    std::unique_ptr<Shader::Info> info_template;
 
     Program() = default;
     Program(Shader::HwStage stage, Shader::SwStage l_stage, Shader::ShaderParams params)
@@ -87,7 +92,24 @@ struct PipelineSelection {
     std::optional<Shader::Gcn::FetchShaderData> fetch_shader{};
     GraphicsPipelineKey graphics_key{};
     DrawIndirectParams draw_indirect_params{};
+    struct PrepWorker* worker{}; ///< set: read-only selection for a draw-preparation worker
 };
+
+/// bbport: a draw-preparation worker's own program state (see vk_draw_prep.h).
+struct PrepWorker {
+    struct Stage {
+        const Program* program;
+        u64 hash;
+        Shader::HwStage hw_stage;
+        VAddr pgm_base;
+        const std::vector<u32>* flat;
+    };
+    tsl::robin_map<const Program*, Shader::Info> infos;
+    boost::container::static_vector<Stage, MaxShaderStages> stages;
+    bool failed = false;
+};
+
+struct PreparedDraw;
 
 class PipelineCache {
 public:
@@ -102,7 +124,16 @@ public:
     bool LoadGraphicsPipeline(Serialization::Archive& ar);
     bool LoadPipelineStage(Serialization::Archive& ar, size_t stage);
 
-    const GraphicsPipeline* GetGraphicsPipeline(const DrawIndirectParams params = {});
+    const GraphicsPipeline* GetGraphicsPipeline(const DrawIndirectParams params = {},
+                                                const PreparedDraw* prepared = nullptr);
+
+    /// bbport: worker side of draw preparation: selects the pipeline key for `sel.regs` without
+    /// creating anything. False when a program or permutation does not exist yet.
+    bool PrepareGraphicsPipeline(PipelineSelection& sel);
+
+    /// bbport: GPU-thread side: the pipeline for a prepared draw after checking that registers
+    /// and flattened user data match; null to take the regular path.
+    const GraphicsPipeline* TryPreparedPipeline(const PreparedDraw& prepared);
 
     const ComputePipeline* GetComputePipeline();
 
@@ -150,6 +181,9 @@ private:
     Shader::Profile profile{};
     Shader::Pools pools;
     tsl::robin_map<size_t, std::unique_ptr<Program>> program_cache;
+    /// bbport: exclusive for program/permutation insertions, shared for worker lookups.
+    std::shared_mutex programs_mutex;
+    u64 prepared_hits = 0, prepared_misses = 0;
     tsl::robin_map<ComputePipelineKey, std::unique_ptr<ComputePipeline>> compute_pipelines;
     tsl::robin_map<GraphicsPipelineKey, std::unique_ptr<GraphicsPipeline>> graphics_pipelines;
     PipelineSelection sel{}; ///< GPU thread selection state

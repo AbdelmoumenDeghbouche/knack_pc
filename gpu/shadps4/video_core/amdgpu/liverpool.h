@@ -66,6 +66,9 @@ struct Liverpool {
     CbDbExtent last_db_extent{};
     /// bbport: running checksum of graphics-register packets (see ApplyGraphicsRegisterPacket).
     u64 gfx_reg_checksum{};
+    /// Top-level graphics submissions, numbered for the draw preparation workers.
+    static constexpr u64 NoSeq = ~0ull;
+    u64 gfx_submit_seq{};
     static u64 HashRegisterPacket(u64 checksum, const u32* words, u32 count);
     static void ApplyGraphicsRegisterPacket(Regs& regs, const PM4Header* header, u64& checksum);
 
@@ -191,7 +194,7 @@ private:
 
     using CmdBuffer = std::pair<std::span<const u32>, std::span<const u32>>;
     CmdBuffer CopyCmdBuffers(std::span<const u32> dcb, std::span<const u32> ccb);
-    Task ProcessGraphics(std::span<const u32> dcb, std::span<const u32> ccb);
+    Task ProcessGraphics(std::span<const u32> dcb, std::span<const u32> ccb, u64 seq = NoSeq);
     Task ProcessCeUpdate(std::span<const u32> ccb);
     template <bool is_indirect = false>
     Task ProcessCompute(std::span<const u32> acb, u32 vqid);

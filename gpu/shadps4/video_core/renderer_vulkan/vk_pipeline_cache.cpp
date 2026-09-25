@@ -3,6 +3,7 @@
 
 #include <atomic>
 #include <chrono>
+#include <cstring>
 #include <ranges>
 
 #include "common/hash.h"
@@ -17,6 +18,7 @@
 #include "video_core/amdgpu/liverpool.h"
 #include "video_core/cache_storage.h"
 #include "video_core/renderer_vulkan/liverpool_to_vk.h"
+#include "video_core/renderer_vulkan/vk_draw_prep.h"
 #include "video_core/renderer_vulkan/vk_instance.h"
 #include "video_core/renderer_vulkan/vk_pipeline_serialization.h"
 #include "video_core/renderer_vulkan/vk_scheduler.h"
@@ -349,7 +351,54 @@ struct CompileTimer {
 };
 } // namespace
 
-const GraphicsPipeline* PipelineCache::GetGraphicsPipeline(const DrawIndirectParams params) {
+bool PipelineCache::PrepareGraphicsPipeline(PipelineSelection& worker_sel) {
+    // Tessellation stages read constant buffers from memory at selection time: not prepared.
+    if (worker_sel.regs->stage_enable.hs_en) {
+        return false;
+    }
+    return RefreshGraphicsKey(worker_sel) && !worker_sel.worker->failed;
+}
+
+const GraphicsPipeline* PipelineCache::TryPreparedPipeline(const PreparedDraw& prepared) {
+    if (prepared.state.load(std::memory_order_acquire) != PreparedDraw::Ready ||
+        prepared.reg_checksum != liverpool->gfx_reg_checksum) {
+        return nullptr;
+    }
+    // Same registers; the stage programs and their flattened user data (which also covers
+    // everything read from guest memory for the specialization) must match as well. This is
+    // the per-stage work GetProgram does on the regular path.
+    const auto& regs = liverpool->regs;
+    for (u32 i = 0; i < prepared.num_stages; ++i) {
+        const auto& stage = prepared.stages[i];
+        const auto* pgm = regs.ProgramForStage(static_cast<u32>(stage.hw_stage));
+        if (!pgm || !pgm->Address<u32*>()) {
+            return nullptr;
+        }
+        const auto params = AmdGpu::GetParams(*pgm);
+        if (params.hash != stage.hash) {
+            return nullptr;
+        }
+        auto& info = const_cast<Program*>(stage.program)->info;
+        info.pgm_base = params.Base();
+        info.user_data = params.user_data;
+        info.RefreshFlatBuf();
+        if (info.pgm_base != stage.pgm_base || info.flattened_ud_buf.size() != stage.flat_size ||
+            std::memcmp(info.flattened_ud_buf.data(), stage.flat,
+                        stage.flat_size * sizeof(u32)) != 0) {
+            return nullptr;
+        }
+    }
+    const auto it = graphics_pipelines.find(prepared.key);
+    return it != graphics_pipelines.end() ? it->second.get() : nullptr;
+}
+
+const GraphicsPipeline* PipelineCache::GetGraphicsPipeline(const DrawIndirectParams params,
+                                                           const PreparedDraw* prepared) {
+    if (prepared) {
+        if (const auto* pipeline = TryPreparedPipeline(*prepared)) {
+            return pipeline;
+        }
+    }
     sel.draw_indirect_params = params;
     if (!RefreshGraphicsKey(sel)) {
         return nullptr;
@@ -679,22 +728,62 @@ PipelineCache::Result PipelineCache::GetProgram(PipelineSelection& sel, HwStage 
                                                 const Shader::ShaderParams& params,
                                                 Shader::Backend::Bindings& binding) {
     auto runtime_info = BuildRuntimeInfo(sel, hw_stage, sw_stage);
-    auto [it_pgm, new_program] = program_cache.try_emplace(params.hash);
-    if (new_program) {
-        it_pgm.value() = std::make_unique<Program>(hw_stage, sw_stage, params);
-        auto& program = it_pgm.value();
+    if (sel.worker) {
+        // bbport: draw-preparation worker: look up only, with the worker's own Info copy.
+        auto& worker = *sel.worker;
+        std::shared_lock lk{programs_mutex};
+        const auto found_program = program_cache.find(params.hash);
+        if (found_program == program_cache.end() || !found_program->second->info_template) {
+            worker.failed = true;
+            return {};
+        }
+        const Program* program = found_program->second.get();
+        auto [it_info, new_info] = worker.infos.try_emplace(program, *program->info_template);
+        auto& info = it_info.value();
+        info.pgm_base = params.Base();
+        info.user_data = params.user_data;
+        info.RefreshFlatBuf();
+        auto spec = Shader::StageSpecialization(info, runtime_info, profile, binding);
+        const auto it = std::ranges::find(program->modules, spec, &Program::Module::spec);
+        if (it == program->modules.end()) {
+            worker.failed = true;
+            return {};
+        }
+        info.AddBindings(binding);
+        const size_t perm_idx = std::distance(program->modules.begin(), it);
+        worker.stages.push_back(
+            {program, params.hash, hw_stage, info.pgm_base, &info.flattened_ud_buf});
+        return std::make_tuple(&info, it->module, it->spec.fetch_shader_data,
+                               HashCombine(params.hash, perm_idx));
+    }
+
+    auto it_pgm = program_cache.find(params.hash); // this thread is the only writer
+    if (it_pgm == program_cache.end()) {
+        auto new_program = std::make_unique<Program>(hw_stage, sw_stage, params);
         auto start = binding;
-        const auto module = CompileModule(program->info, runtime_info, params.code, 0, binding);
-        auto spec = Shader::StageSpecialization(program->info, runtime_info, profile, start);
+        const auto module =
+            CompileModule(new_program->info, runtime_info, params.code, 0, binding);
+        auto spec = Shader::StageSpecialization(new_program->info, runtime_info, profile, start);
         const auto perm_hash = HashCombine(params.hash, 0);
 
-        RegisterShaderMeta(program->info, spec.fetch_shader_data, spec, perm_hash, 0);
-        program->AddPermut(module, std::move(spec));
+        RegisterShaderMeta(new_program->info, spec.fetch_shader_data, spec, perm_hash, 0);
+        new_program->AddPermut(module, std::move(spec));
+        new_program->info_template = std::make_unique<Shader::Info>(new_program->info);
+        Program* program = new_program.get();
+        {
+            std::unique_lock lk{programs_mutex};
+            program_cache.emplace(params.hash, std::move(new_program));
+        }
         return std::make_tuple(&program->info, module, program->modules[0].spec.fetch_shader_data,
                                perm_hash);
     }
 
     auto& program = it_pgm.value();
+    if (!program->info_template) {
+        // Programs loaded by the pipeline cache warm-up get their template on first use.
+        std::unique_lock lk{programs_mutex};
+        program->info_template = std::make_unique<Shader::Info>(program->info);
+    }
     auto& info = program->info;
     info.pgm_base = params.Base(); // Needs to be actualized for inline cbuffer address fixup
     info.user_data = params.user_data;
@@ -719,6 +808,7 @@ PipelineCache::Result PipelineCache::GetProgram(PipelineSelection& sel, HwStage 
         module = CompileModule(new_info, runtime_info, params.code, perm_idx, binding);
 
         RegisterShaderMeta(info, spec.fetch_shader_data, spec, perm_hash, perm_idx);
+        std::unique_lock lk{programs_mutex};
         program->AddPermut(module, std::move(spec));
     } else {
         info.AddBindings(binding);

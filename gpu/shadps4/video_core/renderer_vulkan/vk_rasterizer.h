@@ -7,6 +7,7 @@
 #include "common/shared_first_mutex.h"
 #include "video_core/buffer_cache/buffer_cache.h"
 #include "video_core/page_manager.h"
+#include "video_core/renderer_vulkan/vk_draw_prep.h"
 #include "video_core/renderer_vulkan/vk_pipeline_cache.h"
 #include "video_core/renderer_vulkan/vk_scheduler.h"
 #include "video_core/texture_cache/texture_cache.h"
@@ -42,7 +43,12 @@ public:
         return texture_cache;
     }
 
-    void Draw(bool is_indexed, u32 index_offset = 0);
+    void Draw(bool is_indexed, u32 index_offset = 0, const PreparedDraw* prepared = nullptr);
+
+    /// bbport: draw preparation workers (vk_draw_prep.h), fed and consumed by Liverpool.
+    DrawPreparation& GetDrawPreparation() {
+        return *draw_prep;
+    }
     void DrawIndirect(bool is_indexed, VAddr arg_address, u32 offset, u32 size, u32 max_count,
                       VAddr count_address, u16 vertex_sgpr_offset, u16 instance_sgpr_offset);
 
@@ -142,6 +148,7 @@ private:
     boost::icl::interval_set<VAddr> mapped_ranges;
     Common::SharedFirstMutex mapped_ranges_mutex;
     PipelineCache pipeline_cache;
+    std::unique_ptr<DrawPreparation> draw_prep;
     const bool host_markers_enabled;
     const bool guest_markers_enabled;
 

@@ -42,6 +42,8 @@ Rasterizer::Rasterizer(const Instance& instance_, Scheduler& scheduler_, Runtime
       pipeline_cache{instance, scheduler, liverpool, buffer_cache.GetSparsePageShift()},
       host_markers_enabled{EmulatorSettings.IsVkHostMarkersEnabled()},
       guest_markers_enabled{EmulatorSettings.IsVkGuestMarkersEnabled()} {
+    // Before the rasterizer is bound: Liverpool enqueues buffers only once it sees it.
+    draw_prep = std::make_unique<DrawPreparation>(pipeline_cache);
     if (!EmulatorSettings.IsNullGPU()) {
         liverpool->BindRasterizer(this);
     }
@@ -226,7 +228,7 @@ void Rasterizer::EliminateFastClear() {
     ScopeMarkerEnd();
 }
 
-void Rasterizer::Draw(bool is_indexed, u32 index_offset) {
+void Rasterizer::Draw(bool is_indexed, u32 index_offset, const PreparedDraw* prepared) {
     RENDERER_TRACE;
 
     scheduler.PopPendingOperations();
@@ -236,7 +238,12 @@ void Rasterizer::Draw(bool is_indexed, u32 index_offset) {
     }
 
     const auto& regs = liverpool->regs;
-    const GraphicsPipeline* pipeline = pipeline_cache.GetGraphicsPipeline();
+    const GraphicsPipeline* pipeline = pipeline_cache.GetGraphicsPipeline({}, prepared);
+    if (prepared) {
+        draw_prep->Count(pipeline != nullptr &&
+                         prepared->state.load(std::memory_order_acquire) == PreparedDraw::Ready &&
+                         prepared->reg_checksum == liverpool->gfx_reg_checksum);
+    }
     if (!pipeline) {
         return;
     }

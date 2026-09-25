@@ -19,6 +19,7 @@ enum : std::uint32_t {
     AccessMemo = 512,
     TextureBindingMemo = 1024,
     CoarseReadTracking = 2048,
+    DrawPreparation = 8192,
 };
 inline bool Disabled(std::uint32_t bit) {
     return (__atomic_load_n(&runtime_disabled_optimizations, __ATOMIC_RELAXED) & bit) != 0;
