@@ -1,4 +1,5 @@
 // bbport: glue between the C loader and the vendored shadPS4 video core.
+#include "bbport_toggles.h"
 #include <algorithm>
 #include <atomic>
 #include <condition_variable>
@@ -112,6 +113,7 @@ bool MemoryManager::TryWriteBacking(void* address, const void* data, u64 size) {
     return runtime_memory_write_backing(reinterpret_cast<uintptr_t>(address), data, size) != 0;
 }
 void AddressSpace::Protect(VAddr virtual_addr, u64 size, MemoryPermission perms) {
+    BbStats::Timer timer{BbStats::t_protect};
     runtime_memory_gpu_protect(virtual_addr, size, True(perms & MemoryPermission::Read),
                                True(perms & MemoryPermission::Write));
 }

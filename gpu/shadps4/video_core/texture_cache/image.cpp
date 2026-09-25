@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright 2024 shadPS4 Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+#include "bbport_toggles.h"
 #include <ranges>
 #include "common/assert.h"
 #include "video_core/renderer_vulkan/liverpool_to_vk.h"
@@ -124,6 +125,7 @@ void UniqueImage::Create(const vk::ImageCreateInfo& image_ci) {
 Image::Image(const Vulkan::Instance& instance, Vulkan::Runtime& runtime_,
              Common::SlotVector<ImageView>& slot_image_views_, const ImageInfo& info_)
     : runtime{&runtime_}, slot_image_views{&slot_image_views_}, info{info_} {
+    BbStats::Timer timer{BbStats::t_image_create};
     if (info.pixel_format == vk::Format::eUndefined) {
         return;
     }

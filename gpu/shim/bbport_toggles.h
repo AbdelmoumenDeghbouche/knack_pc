@@ -2,6 +2,7 @@
 // see runtime_memory.c), to find which one changes rendering without restarting.
 #pragma once
 #include <atomic>
+#include <chrono>
 #include <cstdint>
 
 extern "C" std::uint32_t runtime_disabled_optimizations;
@@ -40,6 +41,19 @@ inline std::atomic<std::uint64_t> image_upload_bytes{0};
 inline std::atomic<std::uint64_t> buffer_upload_bytes{0};
 inline std::atomic<int> gpu_thread_clock{-1}; ///< clockid_t of the GPU command thread
 inline std::atomic<std::uint64_t> draws{0}, dispatches{0}, submissions{0};
+/// Wall time spent in operations suspected of stalls (ns, all threads).
+inline std::atomic<std::uint64_t> t_resident{0}, t_protect{0}, t_image_create{0}, t_refresh{0},
+    t_staging{0};
+struct Timer {
+    std::atomic<std::uint64_t>& total;
+    std::chrono::steady_clock::time_point start = std::chrono::steady_clock::now();
+    ~Timer() {
+        total.fetch_add(std::chrono::duration_cast<std::chrono::nanoseconds>(
+                            std::chrono::steady_clock::now() - start)
+                            .count(),
+                        std::memory_order_relaxed);
+    }
+};
 /// GPU thread rusage, refreshed after each graphics submission.
 inline std::atomic<std::uint64_t> gpu_sys_us{0}, gpu_user_us{0}, gpu_invol_switches{0},
     gpu_vol_switches{0};

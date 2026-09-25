@@ -263,6 +263,10 @@ void VideoOutDriver::Flip(const Request& req) {
         last = now;
         // Stall diagnostics: what happened during a long frame.
         static u64 last_gpu_ns, last_images, last_image_bytes, last_buffer_bytes;
+        static u64 last_t[5];
+        const u64 t_now[5] = {BbStats::t_resident.load(), BbStats::t_protect.load(),
+                              BbStats::t_image_create.load(), BbStats::t_refresh.load(),
+                              BbStats::t_staging.load()};
         static u64 last_draws, last_dispatches, last_subs, last_sys, last_user, last_invol, last_vol;
         const u64 draws = BbStats::draws.load(), dispatches = BbStats::dispatches.load(),
                   subs = BbStats::submissions.load(), sys_us = BbStats::gpu_sys_us.load(),
@@ -292,6 +296,14 @@ void VideoOutDriver::Flip(const Request& req) {
                         (sys_us - last_sys) / 1e3, static_cast<unsigned long long>(invol - last_invol),
                         static_cast<unsigned long long>(vol - last_vol));
         }
+        if (frame_ms > 40.0 && last_gpu_ns != 0) {
+            std::printf("       ms in: resident %.1f, protect %.1f, image create %.1f, "
+                        "image refresh %.1f, staging %.1f\n",
+                        (t_now[0] - last_t[0]) / 1e6, (t_now[1] - last_t[1]) / 1e6,
+                        (t_now[2] - last_t[2]) / 1e6, (t_now[3] - last_t[3]) / 1e6,
+                        (t_now[4] - last_t[4]) / 1e6);
+        }
+        std::copy(std::begin(t_now), std::end(t_now), std::begin(last_t));
         last_draws = draws;
         last_dispatches = dispatches;
         last_subs = subs;
