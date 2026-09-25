@@ -263,7 +263,9 @@ void VideoOutDriver::Flip(const Request& req) {
         last = now;
         // Stall diagnostics: what happened during a long frame.
         static u64 last_gpu_ns, last_images, last_image_bytes, last_buffer_bytes;
-        static u64 last_t[5], last_minflt, last_sigf;
+        static u64 last_t[5], last_minflt, last_sigf, last_pc, last_pp, last_rc, last_rp;
+        const u64 pc = BbStats::protect_calls.load(), pp = BbStats::protect_pages.load(),
+                  rc = BbStats::protect_revoke_calls.load(), rp = BbStats::protect_revoke_pages.load();
         const u64 minflt = BbStats::gpu_minor_faults.load(), sigf = BbStats::gpu_signal_faults.load();
         const u64 t_now[5] = {BbStats::t_resident.load(), BbStats::t_protect.load(),
                               BbStats::t_image_create.load(), BbStats::t_refresh.load(),
@@ -303,10 +305,19 @@ void VideoOutDriver::Flip(const Request& req) {
                         (t_now[0] - last_t[0]) / 1e6, (t_now[1] - last_t[1]) / 1e6,
                         (t_now[2] - last_t[2]) / 1e6, (t_now[3] - last_t[3]) / 1e6,
                         (t_now[4] - last_t[4]) / 1e6);
-            std::printf("       GPU thread page faults %llu, protection faults %llu\n",
+            std::printf("       GPU thread page faults %llu, protection faults %llu; protect calls %llu "
+                        "(%llu pages), of which write-revoking %llu (%llu pages)\n",
                         static_cast<unsigned long long>(minflt - last_minflt),
-                        static_cast<unsigned long long>(sigf - last_sigf));
+                        static_cast<unsigned long long>(sigf - last_sigf),
+                        static_cast<unsigned long long>(pc - last_pc),
+                        static_cast<unsigned long long>(pp - last_pp),
+                        static_cast<unsigned long long>(rc - last_rc),
+                        static_cast<unsigned long long>(rp - last_rp));
         }
+        last_pc = pc;
+        last_pp = pp;
+        last_rc = rc;
+        last_rp = rp;
         last_minflt = minflt;
         last_sigf = sigf;
         std::copy(std::begin(t_now), std::end(t_now), std::begin(last_t));

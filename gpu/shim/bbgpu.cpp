@@ -126,6 +126,13 @@ bool MemoryManager::TryWriteBacking(void* address, const void* data, u64 size) {
 }
 void AddressSpace::Protect(VAddr virtual_addr, u64 size, MemoryPermission perms) {
     BbStats::Timer timer{BbStats::t_protect};
+    const u64 pages = (size + 4095) / 4096;
+    BbStats::protect_calls.fetch_add(1, std::memory_order_relaxed);
+    BbStats::protect_pages.fetch_add(pages, std::memory_order_relaxed);
+    if (!True(perms & MemoryPermission::Write)) {
+        BbStats::protect_revoke_calls.fetch_add(1, std::memory_order_relaxed);
+        BbStats::protect_revoke_pages.fetch_add(pages, std::memory_order_relaxed);
+    }
     runtime_memory_gpu_protect(virtual_addr, size, True(perms & MemoryPermission::Read),
                                True(perms & MemoryPermission::Write));
 }
