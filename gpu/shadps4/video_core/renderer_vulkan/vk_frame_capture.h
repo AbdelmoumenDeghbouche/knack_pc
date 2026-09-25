@@ -1,0 +1,48 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
+// bbport: frame analyzer. Creating the file named by BB_CAPTURE_TRIGGER records the next full
+// frame: every render pass (targets, depth, draw count, shaders, sampled textures) and compute
+// dispatch, in order, plus the buffer that was presented. Input for placing a temporal
+// upscaler (scene color, depth, motion vectors, UI) in Bloodborne's frame.
+
+#pragma once
+
+#include <atomic>
+#include <cstdio>
+#include <string>
+#include <vector>
+
+#include "common/types.h"
+
+namespace VideoCore {
+struct ImageInfo;
+}
+
+namespace Vulkan {
+
+class FrameCapture {
+public:
+    /// VideoOut thread, per flip: frame boundary, presented buffer, trigger file check.
+    static void OnFlip(VAddr presented_address);
+
+    /// GPU thread: whether the current frame is being recorded (cheap).
+    static bool Active() {
+        return state.load(std::memory_order_relaxed) == Recording;
+    }
+    /// GPU thread, at every draw/dispatch: starts or ends a recording at frame boundaries.
+    static void Poll();
+
+    static void BeginPass(const VideoCore::ImageInfo* const* colors, u32 num_colors,
+                          const VideoCore::ImageInfo* depth);
+    static void Draw(u64 vs_hash, u64 ps_hash, u32 num_indices, u32 num_instances);
+    static void Dispatch(u64 cs_hash, u32 x, u32 y, u32 z);
+    static void Sampled(const VideoCore::ImageInfo& info, bool storage);
+    static void Note(const char* text);
+
+private:
+    enum : u32 { Idle, Armed, Recording };
+    static inline std::atomic<u32> state{Idle};
+    static inline std::atomic<u64> flips{0};
+    static inline std::atomic<VAddr> last_presented{0};
+};
+
+} // namespace Vulkan

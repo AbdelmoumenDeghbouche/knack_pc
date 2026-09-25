@@ -7,6 +7,7 @@
 #include <sys/resource.h>
 #include "common/assert.h"
 #include "bbport_toggles.h"
+#include "video_core/renderer_vulkan/vk_frame_capture.h"
 #include "common/debug.h"
 #include "common/thread.h"
 #include "core/debug_state.h"
@@ -250,6 +251,8 @@ void VideoOutDriver::Flip(const Request& req) {
 
     // Present the frame.
     presenter->Present(req.frame);
+    Vulkan::FrameCapture::OnFlip(req.index >= 0 ? req.port->buffer_slots[req.index].address_left
+                                                : 0);
 
     // bbport: BB_FRAME_STATS=1 prints flip rate and frame time spread every 5 seconds.
     static const bool frame_stats = EmulatorSettingsImpl::Flag("BB_FRAME_STATS", false);

@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #include "bbport_toggles.h"
+#include "video_core/renderer_vulkan/vk_frame_capture.h"
 #include "common/debug.h"
 #include "core/debug_state.h"
 #include "core/emulator_settings.h"
@@ -247,6 +248,7 @@ void Rasterizer::EliminateFastClear() {
 
 void Rasterizer::Draw(bool is_indexed, u32 index_offset, const PreparedDraw* prepared) {
     RENDERER_TRACE;
+    FrameCapture::Poll();
     BbStats::draws.fetch_add(1, std::memory_order_relaxed);
 
     scheduler.PopPendingOperations();
@@ -302,6 +304,10 @@ void Rasterizer::Draw(bool is_indexed, u32 index_offset, const PreparedDraw* pre
             cmdbuf.draw(num_indices, num_instances, first_vertex, first_instance);
         }
     });
+    if (FrameCapture::Active()) {
+        const auto* ps = pipeline->GetStages()[u32(Shader::SwStage::Fragment)];
+        FrameCapture::Draw(vs_info.pgm_hash, ps ? ps->pgm_hash : 0, num_indices, num_instances);
+    }
     DebugState.IncDrawCall();
 
     ResetBindings(false);
@@ -389,6 +395,7 @@ void Rasterizer::DrawIndirect(bool is_indexed, VAddr arg_address, u32 offset, u3
 void Rasterizer::DispatchDirect() {
     RENDERER_TRACE;
     BbStats::dispatches.fetch_add(1, std::memory_order_relaxed);
+    FrameCapture::Poll();
 
     scheduler.PopPendingOperations();
 
@@ -416,6 +423,9 @@ void Rasterizer::DispatchDirect() {
 
     const vk::Pipeline handle = pipeline->Handle();
     const u32 dim_x = cs_program.dim_x, dim_y = cs_program.dim_y, dim_z = cs_program.dim_z;
+    if (FrameCapture::Active()) {
+        FrameCapture::Dispatch(cs.pgm_hash, dim_x, dim_y, dim_z);
+    }
     scheduler.Record([=](vk::CommandBuffer cmdbuf) {
         cmdbuf.bindPipeline(vk::PipelineBindPoint::eCompute, handle);
         cmdbuf.dispatch(dim_x, dim_y, dim_z);
@@ -1099,6 +1109,9 @@ void Rasterizer::BindTextures(const Shader::Info& stage, Shader::Backend::Bindin
             }
             image.usage.storage |= is_storage;
             image.usage.texture |= !is_storage;
+            if (FrameCapture::Active()) {
+                FrameCapture::Sampled(image.info, is_storage);
+            }
 
             image_infos.emplace_back(VK_NULL_HANDLE, *image_view.image_view,
                                      image.backing->state.layout);
@@ -1272,6 +1285,17 @@ RenderState Rasterizer::BeginRendering(const GraphicsPipeline* pipeline) {
         state.num_layers = 1;
     }
 
+    if (FrameCapture::Active()) {
+        std::array<const VideoCore::ImageInfo*, AmdGpu::NUM_COLOR_BUFFERS> colors{};
+        for (u32 cb = 0; cb < state.num_color_attachments; ++cb) {
+            if (cb_descs[cb].first) {
+                colors[cb] = &texture_cache.GetImage(cb_descs[cb].first).info;
+            }
+        }
+        const auto* depth =
+            db_desc.first ? &texture_cache.GetImage(db_desc.first).info : nullptr;
+        FrameCapture::BeginPass(colors.data(), state.num_color_attachments, depth);
+    }
     return state;
 }
 

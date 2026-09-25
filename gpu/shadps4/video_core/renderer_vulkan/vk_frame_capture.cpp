@@ -1,0 +1,201 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
+#include "video_core/renderer_vulkan/vk_frame_capture.h"
+
+#include <algorithm>
+#include <cstdlib>
+#include <ctime>
+#include <filesystem>
+#include <format>
+
+#include "video_core/renderer_vulkan/vk_common.h"
+#include "video_core/texture_cache/image_info.h"
+
+namespace Vulkan {
+
+namespace {
+
+struct Target {
+    VAddr address{};
+    vk::Format format{};
+    u32 width{}, height{};
+    bool operator==(const Target&) const = default;
+};
+
+struct Entry {
+    bool compute{};
+    std::vector<Target> colors;
+    Target depth;
+    u32 draws{};
+    u64 indices{};
+    std::vector<u64> shaders; ///< vs/ps pairs (graphics) or cs (compute), first few
+    std::vector<std::pair<Target, bool>> sampled; ///< textures (false) and storage images (true)
+    std::string note;
+};
+
+// GPU thread only.
+std::vector<Entry> entries;
+std::vector<std::pair<Target, bool>> pending_sampled;
+bool pass_open = false;
+u64 start_flip = 0;
+
+Target ToTarget(const VideoCore::ImageInfo& info) {
+    return {info.guest_address, info.pixel_format, info.size.width, info.size.height};
+}
+
+std::string Describe(const Target& t) {
+    if (!t.address) {
+        return "-";
+    }
+    return std::format("{:#x} {} {}x{}", t.address, vk::to_string(t.format), t.width, t.height);
+}
+
+void AddSampled(Entry& entry) {
+    for (const auto& s : pending_sampled) {
+        if (entry.sampled.size() < 32 &&
+            std::ranges::find(entry.sampled, s) == entry.sampled.end()) {
+            entry.sampled.push_back(s);
+        }
+    }
+    pending_sampled.clear();
+}
+
+void AddShader(Entry& entry, u64 hash) {
+    if (entry.shaders.size() < 8 && std::ranges::find(entry.shaders, hash) == entry.shaders.end()) {
+        entry.shaders.push_back(hash);
+    }
+}
+
+void Write(VAddr presented) {
+    const char* dir = std::getenv("BB_CAPTURE_DIR");
+    const std::string path =
+        std::format("{}/frame_{}.txt", dir ? dir : ".", static_cast<long long>(std::time(nullptr)));
+    FILE* f = std::fopen(path.c_str(), "w");
+    if (!f) {
+        std::printf("Frame capture: cannot write %s\n", path.c_str());
+        return;
+    }
+    std::fprintf(f, "presented buffer %#llx\n", static_cast<unsigned long long>(presented));
+    u32 index = 0;
+    for (const auto& e : entries) {
+        if (e.compute) {
+            std::fprintf(f, "\n#%u COMPUTE dispatches %u, cs", index++, e.draws);
+        } else {
+            std::fprintf(f, "\n#%u PASS draws %u (indices %llu), vs/ps", index++, e.draws,
+                         static_cast<unsigned long long>(e.indices));
+        }
+        for (const u64 h : e.shaders) {
+            std::fprintf(f, " %016llx", static_cast<unsigned long long>(h));
+        }
+        std::fprintf(f, "\n");
+        for (size_t i = 0; i < e.colors.size(); ++i) {
+            std::fprintf(f, "  color%zu %s\n", i, Describe(e.colors[i]).c_str());
+        }
+        if (!e.compute) {
+            std::fprintf(f, "  depth  %s\n", Describe(e.depth).c_str());
+        }
+        for (const auto& [t, storage] : e.sampled) {
+            std::fprintf(f, "  %s %s\n", storage ? "writes " : "samples", Describe(t).c_str());
+        }
+        if (!e.note.empty()) {
+            std::fprintf(f, "  note: %s\n", e.note.c_str());
+        }
+    }
+    std::fclose(f);
+    std::printf("Frame capture: %zu passes written to %s\n", entries.size(), path.c_str());
+}
+
+} // namespace
+
+void FrameCapture::OnFlip(VAddr presented_address) {
+    last_presented.store(presented_address, std::memory_order_relaxed);
+    flips.fetch_add(1, std::memory_order_release);
+    static const char* trigger = std::getenv("BB_CAPTURE_TRIGGER");
+    if (trigger && state.load(std::memory_order_relaxed) == Idle &&
+        std::filesystem::exists(trigger)) {
+        std::error_code ec;
+        std::filesystem::remove(trigger, ec);
+        state.store(Armed, std::memory_order_release);
+        std::printf("Frame capture: armed\n");
+    }
+}
+
+void FrameCapture::Poll() {
+    const u32 s = state.load(std::memory_order_acquire);
+    if (s == Idle) {
+        return;
+    }
+    const u64 f = flips.load(std::memory_order_acquire);
+    if (s == Armed) {
+        if (start_flip == 0) {
+            start_flip = f; // wait for the next frame boundary
+            return;
+        }
+        if (f != start_flip) {
+            entries.clear();
+            pending_sampled.clear();
+            pass_open = false;
+            start_flip = f;
+            state.store(Recording, std::memory_order_release);
+        }
+        return;
+    }
+    if (f != start_flip) {
+        Write(last_presented.load(std::memory_order_relaxed));
+        entries.clear();
+        start_flip = 0;
+        state.store(Idle, std::memory_order_release);
+    }
+}
+
+void FrameCapture::BeginPass(const VideoCore::ImageInfo* const* colors, u32 num_colors,
+                             const VideoCore::ImageInfo* depth) {
+    std::vector<Target> targets;
+    for (u32 i = 0; i < num_colors; ++i) {
+        targets.push_back(colors[i] ? ToTarget(*colors[i]) : Target{});
+    }
+    const Target d = depth ? ToTarget(*depth) : Target{};
+    if (pass_open && !entries.empty() && !entries.back().compute &&
+        entries.back().colors == targets && entries.back().depth == d) {
+        return;
+    }
+    entries.push_back({.compute = false, .colors = std::move(targets), .depth = d});
+    pass_open = true;
+}
+
+void FrameCapture::Draw(u64 vs_hash, u64 ps_hash, u32 num_indices, u32 num_instances) {
+    if (entries.empty() || entries.back().compute) {
+        return;
+    }
+    auto& e = entries.back();
+    ++e.draws;
+    e.indices += u64(num_indices) * std::max(num_instances, 1u);
+    AddShader(e, vs_hash);
+    AddShader(e, ps_hash);
+    AddSampled(e);
+}
+
+void FrameCapture::Dispatch(u64 cs_hash, u32 x, u32 y, u32 z) {
+    if (!entries.empty() && entries.back().compute && !entries.back().shaders.empty() &&
+        entries.back().shaders[0] == cs_hash) {
+        ++entries.back().draws;
+    } else {
+        entries.push_back({.compute = true, .draws = 1, .shaders = {cs_hash}});
+        entries.back().note = std::format("groups {}x{}x{}", x, y, z);
+    }
+    AddSampled(entries.back());
+    pass_open = false;
+}
+
+void FrameCapture::Sampled(const VideoCore::ImageInfo& info, bool storage) {
+    if (pending_sampled.size() < 64) {
+        pending_sampled.emplace_back(ToTarget(info), storage);
+    }
+}
+
+void FrameCapture::Note(const char* text) {
+    if (!entries.empty()) {
+        entries.back().note += text;
+    }
+}
+
+} // namespace Vulkan
