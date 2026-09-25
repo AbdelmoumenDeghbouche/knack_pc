@@ -274,7 +274,9 @@ void QueueCopy(const Item& item) {
     }();
     batch.items.push_back(item);
     batch.bytes += item.size;
-    if (batch.bytes >= 64 * 1024 || batch.items.size() >= batch_items) {
+    const bool small = !BbToggle::Disabled(BbToggle::SmallCopyBatches);
+    if (batch.bytes >= (small ? 64 * 1024 : 512 * 1024) ||
+        batch.items.size() >= (small ? batch_items : 256)) {
         FlushBatch();
     }
 }

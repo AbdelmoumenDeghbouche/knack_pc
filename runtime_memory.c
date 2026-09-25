@@ -504,7 +504,8 @@ void *runtime_low_map(size_t size, int prot) {
  * 32768 hot pages (opt-in with BB_HOT_PAGES=1),
  * 65536 unprotect the 256 KiB window around a guest write fault (BB_FAULT_WINDOW KiB),
  * 131072 large guest memory copies split across copy threads (BB_COPY_THREADS),
- * 262144 with BB_ASYNC_FENCES=1: wait for guest copies at fences again. */
+ * 262144 with BB_ASYNC_FENCES=1: wait for guest copies at fences again,
+ * 524288 large copy batches (256 items / 512 KiB) instead of small ones. */
 uint32_t runtime_disabled_optimizations;
 /* Speculative readers of guest memory (GPU draw-preparation workers) register a recovery
  * point: a fault on that thread jumps back to it instead of terminating (probe.c). */
