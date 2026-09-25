@@ -407,8 +407,11 @@ struct SignalImpl : public PageManager::Impl {
             BbStats::gpu_signal_faults.fetch_add(1, std::memory_order_relaxed);
         }
         if (Common::IsWriteError(context)) {
+            BbStats::Timer timer{BbStats::t_write_faults};
             return rasterizer->OnWriteFault(addr, is_gpu_thread);
         } else {
+            BbStats::read_faults.fetch_add(1, std::memory_order_relaxed);
+            BbStats::Timer timer{BbStats::t_read_faults};
             return rasterizer->ReadMemory(addr, 8, is_gpu_thread);
         }
         return false;

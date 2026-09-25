@@ -268,7 +268,17 @@ void VideoOutDriver::Flip(const Request& req) {
         const u64 pc = BbStats::protect_calls.load(), pp = BbStats::protect_pages.load(),
                   rc = BbStats::protect_revoke_calls.load(), rp = BbStats::protect_revoke_pages.load();
         const u64 minflt = BbStats::gpu_minor_faults.load(), sigf = BbStats::gpu_signal_faults.load();
-        static u64 last_proc_flt, last_copy_ns, last_copy_bytes;
+        static u64 last_proc_flt, last_copy_ns, last_copy_bytes, last_rf, last_trf, last_twf;
+        const u64 rf = BbStats::read_faults.load(), trf = BbStats::t_read_faults.load(),
+                  twf = BbStats::t_write_faults.load();
+        if (frame_ms > 40.0 && last_gpu_ns != 0) {
+            std::printf("       fault handlers: %llu read faults %.1f ms, write faults %.1f ms\n",
+                        static_cast<unsigned long long>(rf - last_rf), (trf - last_trf) / 1e6,
+                        (twf - last_twf) / 1e6);
+        }
+        last_rf = rf;
+        last_trf = trf;
+        last_twf = twf;
         const u64 copy_ns = BbStats::t_copy.load(), copy_bytes = BbStats::copy_bytes.load();
         u64 proc_flt = 0;
         if (rusage usage{}; getrusage(RUSAGE_SELF, &usage) == 0) {
