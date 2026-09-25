@@ -1335,13 +1335,10 @@ void Rasterizer::UpdateDynamicState(const GraphicsPipeline* pipeline, const bool
     UpdateColorBlendingState(pipeline);
 
     auto& dynamic_state = scheduler.GetDynamicState();
-    if (dynamic_state.AnyDirty()) {
-        scheduler.Record([state = dynamic_state, &instance = instance](vk::CommandBuffer cmdbuf) mutable {
-            state.Commit(instance, cmdbuf);
-        });
-        // Clears the dirty flags the recorded copy commits; deferred ones stay set.
-        dynamic_state.Commit(instance, vk::CommandBuffer{});
-    }
+    dynamic_state.CommitWith(instance.IsDepthBoundsSupported(),
+                             instance.IsDynamicColorWriteMaskSupported(),
+                             instance.IsAttachmentFeedbackLoopLayoutSupported(),
+                             [&](auto&& command) { scheduler.Record(std::move(command)); });
 }
 
 void Rasterizer::UpdateViewportScissorState() const {

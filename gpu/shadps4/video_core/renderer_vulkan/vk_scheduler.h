@@ -177,6 +177,173 @@ struct DynamicState {
     /// flags that committing clears).
     void Commit(const Instance& instance, const vk::CommandBuffer& cmdbuf);
 
+    /// bbport: passes each dirty state change to `emit` as a small command closure holding only
+    /// its own values (recording a copy of the whole state per draw was a hot spot), and clears
+    /// the flags it emitted. Flags whose test is disabled stay dirty, as in Commit.
+    template <typename Emit>
+    void CommitWith(bool depth_bounds_supported, bool color_write_mask_supported,
+                    bool feedback_loop_supported, Emit&& emit) {
+        using Face = vk::StencilFaceFlagBits;
+        if (dirty_state.viewports) {
+            dirty_state.viewports = false;
+            emit([v = viewports](vk::CommandBuffer c) { c.setViewportWithCount(v); });
+        }
+        if (dirty_state.scissors) {
+            dirty_state.scissors = false;
+            emit([v = scissors](vk::CommandBuffer c) { c.setScissorWithCount(v); });
+        }
+        if (dirty_state.depth_test_enabled) {
+            dirty_state.depth_test_enabled = false;
+            emit([v = depth_test_enabled](vk::CommandBuffer c) { c.setDepthTestEnable(v); });
+        }
+        if (dirty_state.depth_write_enabled) {
+            // Must be set in a command buffer even if depth test is disabled.
+            dirty_state.depth_write_enabled = false;
+            emit([v = depth_write_enabled](vk::CommandBuffer c) { c.setDepthWriteEnable(v); });
+        }
+        if (depth_test_enabled && dirty_state.depth_compare_op) {
+            dirty_state.depth_compare_op = false;
+            emit([v = depth_compare_op](vk::CommandBuffer c) { c.setDepthCompareOp(v); });
+        }
+        if (dirty_state.depth_bounds_test_enabled) {
+            dirty_state.depth_bounds_test_enabled = false;
+            if (depth_bounds_supported) {
+                emit([v = depth_bounds_test_enabled](vk::CommandBuffer c) {
+                    c.setDepthBoundsTestEnable(v);
+                });
+            }
+        }
+        if (depth_bounds_test_enabled && dirty_state.depth_bounds) {
+            dirty_state.depth_bounds = false;
+            if (depth_bounds_supported) {
+                emit([lo = depth_bounds_min, hi = depth_bounds_max](vk::CommandBuffer c) {
+                    c.setDepthBounds(lo, hi);
+                });
+            }
+        }
+        if (dirty_state.depth_bias_enabled) {
+            dirty_state.depth_bias_enabled = false;
+            emit([v = depth_bias_enabled](vk::CommandBuffer c) { c.setDepthBiasEnable(v); });
+        }
+        if (depth_bias_enabled && dirty_state.depth_bias) {
+            dirty_state.depth_bias = false;
+            emit([k = depth_bias_constant, clamp = depth_bias_clamp,
+                  slope = depth_bias_slope](vk::CommandBuffer c) { c.setDepthBias(k, clamp, slope); });
+        }
+        if (dirty_state.stencil_test_enabled) {
+            dirty_state.stencil_test_enabled = false;
+            emit([v = stencil_test_enabled](vk::CommandBuffer c) { c.setStencilTestEnable(v); });
+        }
+        if (stencil_test_enabled) {
+            const auto ops = [&](Face face, const StencilOps& o) {
+                emit([face, o](vk::CommandBuffer c) {
+                    c.setStencilOp(face, o.fail_op, o.pass_op, o.depth_fail_op, o.compare_op);
+                });
+            };
+            if (dirty_state.stencil_front_ops && dirty_state.stencil_back_ops &&
+                stencil_front_ops == stencil_back_ops) {
+                ops(Face::eFrontAndBack, stencil_front_ops);
+            } else {
+                if (dirty_state.stencil_front_ops) {
+                    ops(Face::eFront, stencil_front_ops);
+                }
+                if (dirty_state.stencil_back_ops) {
+                    ops(Face::eBack, stencil_back_ops);
+                }
+            }
+            dirty_state.stencil_front_ops = dirty_state.stencil_back_ops = false;
+
+            const auto reference = [&](Face face, u32 v) {
+                emit([face, v](vk::CommandBuffer c) { c.setStencilReference(face, v); });
+            };
+            if (dirty_state.stencil_front_reference && dirty_state.stencil_back_reference &&
+                stencil_front_reference == stencil_back_reference) {
+                reference(Face::eFrontAndBack, stencil_front_reference);
+            } else {
+                if (dirty_state.stencil_front_reference) {
+                    reference(Face::eFront, stencil_front_reference);
+                }
+                if (dirty_state.stencil_back_reference) {
+                    reference(Face::eBack, stencil_back_reference);
+                }
+            }
+            dirty_state.stencil_front_reference = dirty_state.stencil_back_reference = false;
+
+            const auto write_mask = [&](Face face, u32 v) {
+                emit([face, v](vk::CommandBuffer c) { c.setStencilWriteMask(face, v); });
+            };
+            if (dirty_state.stencil_front_write_mask && dirty_state.stencil_back_write_mask &&
+                stencil_front_write_mask == stencil_back_write_mask) {
+                write_mask(Face::eFrontAndBack, stencil_front_write_mask);
+            } else {
+                if (dirty_state.stencil_front_write_mask) {
+                    write_mask(Face::eFront, stencil_front_write_mask);
+                }
+                if (dirty_state.stencil_back_write_mask) {
+                    write_mask(Face::eBack, stencil_back_write_mask);
+                }
+            }
+            dirty_state.stencil_front_write_mask = dirty_state.stencil_back_write_mask = false;
+
+            const auto compare_mask = [&](Face face, u32 v) {
+                emit([face, v](vk::CommandBuffer c) { c.setStencilCompareMask(face, v); });
+            };
+            if (dirty_state.stencil_front_compare_mask && dirty_state.stencil_back_compare_mask &&
+                stencil_front_compare_mask == stencil_back_compare_mask) {
+                compare_mask(Face::eFrontAndBack, stencil_front_compare_mask);
+            } else {
+                if (dirty_state.stencil_front_compare_mask) {
+                    compare_mask(Face::eFront, stencil_front_compare_mask);
+                }
+                if (dirty_state.stencil_back_compare_mask) {
+                    compare_mask(Face::eBack, stencil_back_compare_mask);
+                }
+            }
+            dirty_state.stencil_front_compare_mask = dirty_state.stencil_back_compare_mask = false;
+        }
+        if (dirty_state.primitive_restart_enable) {
+            dirty_state.primitive_restart_enable = false;
+            emit([v = primitive_restart_enable](vk::CommandBuffer c) {
+                c.setPrimitiveRestartEnable(v);
+            });
+        }
+        if (dirty_state.rasterizer_discard_enable) {
+            dirty_state.rasterizer_discard_enable = false;
+            emit([v = rasterizer_discard_enable](vk::CommandBuffer c) {
+                c.setRasterizerDiscardEnable(v);
+            });
+        }
+        if (dirty_state.cull_mode) {
+            dirty_state.cull_mode = false;
+            emit([v = cull_mode](vk::CommandBuffer c) { c.setCullMode(v); });
+        }
+        if (dirty_state.front_face) {
+            dirty_state.front_face = false;
+            emit([v = front_face](vk::CommandBuffer c) { c.setFrontFace(v); });
+        }
+        if (dirty_state.blend_constants) {
+            dirty_state.blend_constants = false;
+            emit([v = blend_constants](vk::CommandBuffer c) { c.setBlendConstants(v.data()); });
+        }
+        if (dirty_state.color_write_masks) {
+            dirty_state.color_write_masks = false;
+            if (color_write_mask_supported) {
+                emit([v = color_write_masks](vk::CommandBuffer c) { c.setColorWriteMaskEXT(0, v); });
+            }
+        }
+        if (dirty_state.line_width) {
+            dirty_state.line_width = false;
+            emit([v = line_width](vk::CommandBuffer c) { c.setLineWidth(v); });
+        }
+        if (dirty_state.feedback_loop_enabled && feedback_loop_supported) {
+            dirty_state.feedback_loop_enabled = false;
+            emit([v = feedback_loop_enabled](vk::CommandBuffer c) {
+                c.setAttachmentFeedbackLoopEnableEXT(v ? vk::ImageAspectFlagBits::eColor
+                                                       : vk::ImageAspectFlagBits::eNone);
+            });
+        }
+    }
+
     /// bbport: true when Commit() would record anything. Flags that Commit() defers (their
     /// test is disabled) do not count.
     [[nodiscard]] bool AnyDirty() const noexcept {
