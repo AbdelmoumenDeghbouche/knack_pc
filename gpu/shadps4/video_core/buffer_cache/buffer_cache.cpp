@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #include <algorithm>
+#include <bit>
+#include <cstdlib>
 #include <magic_enum/magic_enum.hpp>
 #include "bbport_toggles.h"
 #include "common/alignment.h"
@@ -91,6 +93,22 @@ void BufferCache::InvalidateMemory(VAddr device_addr, u64 size, bool assume_lock
     memory_tracker->InvalidateRegion(device_addr, size, [this, device_addr, size, assume_locks] {
         ReadMemory(device_addr, size, true, assume_locks);
     });
+}
+
+// bbport: the game fills its per-frame buffers (constants, skinning output) sequentially and
+// every 4 KiB page cost a protection fault (~110k/s in Hunter's Nightmare, a fifth of each
+// render worker's time in the kernel). A fault unprotects the aligned window around it instead;
+// pages marked CPU-modified without being written only cost an upload when bound.
+void BufferCache::ExtendWriteFault(VAddr device_addr) {
+    static const u64 window = [] {
+        const char* env = std::getenv("BB_FAULT_WINDOW");
+        const u64 kib = env ? std::strtoull(env, nullptr, 10) : 64;
+        return std::bit_ceil(std::clamp<u64>(kib, 4, 1024)) * 1024;
+    }();
+    if (window <= TRACKER_BYTES_PER_PAGE || BbToggle::Disabled(BbToggle::FaultWindow)) {
+        return;
+    }
+    memory_tracker->ExtendWriteFault(Common::AlignDown(device_addr, window), window);
 }
 
 void BufferCache::ReadMemory(VAddr device_addr, u64 size, bool is_write, bool assume_locks) {

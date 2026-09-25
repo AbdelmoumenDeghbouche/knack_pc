@@ -23,6 +23,7 @@ enum : std::uint32_t {
     DrawPreparation = 8192,
     DeferredStreamCopies = 16384,
     HotPages = 32768,
+    FaultWindow = 65536,
 };
 inline bool Disabled(std::uint32_t bit) {
     return (__atomic_load_n(&runtime_disabled_optimizations, __ATOMIC_RELAXED) & bit) != 0;

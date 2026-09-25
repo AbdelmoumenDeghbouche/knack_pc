@@ -403,7 +403,7 @@ struct SignalImpl : public PageManager::Impl {
         const auto is_gpu_thread =
             std::this_thread::get_id() == rasterizer->GetGpuCommandProcessorThread();
         if (Common::IsWriteError(context)) {
-            return rasterizer->InvalidateMemory(addr, 8, is_gpu_thread);
+            return rasterizer->OnWriteFault(addr, is_gpu_thread);
         } else {
             return rasterizer->ReadMemory(addr, 8, is_gpu_thread);
         }

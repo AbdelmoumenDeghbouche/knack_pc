@@ -1346,6 +1346,14 @@ bool Rasterizer::InvalidateMemory(VAddr addr, u64 size, bool assume_locks) {
     return true;
 }
 
+bool Rasterizer::OnWriteFault(VAddr addr, bool assume_locks) {
+    if (!InvalidateMemory(addr, 8, assume_locks)) {
+        return false;
+    }
+    buffer_cache.ExtendWriteFault(addr);
+    return true;
+}
+
 bool Rasterizer::ReadMemory(VAddr addr, u64 size, bool assume_locks) {
     if (!IsMapped(addr, size)) {
         // Not GPU mapped memory, can skip invalidation logic entirely.

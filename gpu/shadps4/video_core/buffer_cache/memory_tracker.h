@@ -53,6 +53,15 @@ public:
                             });
     }
 
+    /// bbport: see RegionManager::ExtendWriteFault.
+    void ExtendWriteFault(VAddr window_addr, u64 size) {
+        IteratePages<false>(window_addr, size,
+                            [](RegionManager* manager, u64 offset, size_t size) {
+                                std::scoped_lock lk{manager->lock};
+                                manager->ExtendWriteFault(manager->GetCpuAddr() + offset, size);
+                            });
+    }
+
     /// Unmark region as modified from the host GPU
     void UnmarkRegionAsGpuModified(VAddr dirty_cpu_addr, u64 query_size) noexcept {
         IteratePages<false>(dirty_cpu_addr, query_size,

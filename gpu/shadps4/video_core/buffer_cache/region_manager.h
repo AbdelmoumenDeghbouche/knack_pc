@@ -108,6 +108,24 @@ public:
         }
     }
 
+    /// bbport: after a guest write fault, also unprotects the other pages of the window that
+    /// are protected for CPU writes and hold no GPU-modified data (see MarkFaultWindow).
+    void ExtendWriteFault(VAddr window_addr, u64 size) {
+        const size_t offset = window_addr - cpu_addr;
+        const size_t start_page = SanitizeAddress(offset) / TRACKER_BYTES_PER_PAGE;
+        const size_t end_page =
+            Common::DivCeil(SanitizeAddress(offset + size), TRACKER_BYTES_PER_PAGE);
+        if (start_page >= NUM_PAGES_PER_REGION || end_page <= start_page) {
+            return;
+        }
+        RegionBits add(~(gpu | writeable), start_page, end_page);
+        if (add.None()) {
+            return;
+        }
+        cpu |= add;
+        UpdateProtection<false, false>();
+    }
+
     /**
      * Loop over each page in the given range, turn off those bits and notify the tracker if
      * needed. Call the given function on each turned off range.

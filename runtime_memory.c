@@ -501,7 +501,8 @@ void *runtime_low_map(size_t size, int prot) {
  * 1024 texture binding memo, 2048 page-granular read tracking for barriers,
  * 8192 prepared draws from the draw-preparation workers,
  * 16384 small read-only buffer copies on the recording thread,
- * 32768 hot pages left writable (no re-protection of pages the guest keeps writing). */
+ * 32768 hot pages (opt-in with BB_HOT_PAGES=1),
+ * 65536 unprotect the 64 KiB window around a guest write fault (BB_FAULT_WINDOW KiB). */
 uint32_t runtime_disabled_optimizations;
 static void *toggle_watcher(void *path) {
     for (uint32_t last=UINT32_MAX;;) {

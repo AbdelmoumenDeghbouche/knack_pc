@@ -76,6 +76,9 @@ public:
     /// Invalidates any buffer in the logical page range.
     void InvalidateMemory(VAddr device_addr, u64 size, bool assume_locks = false);
 
+    /// bbport: a guest write fault at `device_addr` was handled; unprotect its neighbourhood.
+    void ExtendWriteFault(VAddr device_addr);
+
     /// Flushes any GPU modified buffer in the logical page range back to CPU memory.
     void ReadMemory(VAddr device_addr, u64 size, bool is_write = false, bool assume_locks = false);
 
