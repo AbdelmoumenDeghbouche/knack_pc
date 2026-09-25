@@ -110,6 +110,16 @@ void BufferCache::RunGuestCopy(const BbCopy::Item& item) {
     buffer->Flush(dst - buffer->mapped_data.data(), item.size);
 }
 
+// Small guest copies run on the recording thread (it spins for work: no wakeup, and it is
+// idle most of the time); PoolSmallCopies (toggle 524288) batches them for the copy threads.
+void BufferCache::SmallGuestCopy(const BbCopy::Item& item) {
+    if (scheduler.IsRecordingDeferred() && !BbToggle::Disabled(BbToggle::PoolSmallCopies)) {
+        scheduler.RecordHostCopy([item] { item.run(item); });
+        return;
+    }
+    BbCopy::QueueCopy(item);
+}
+
 void BufferCache::ExtendWriteFault(VAddr device_addr) {
     static const u64 window = [] {
         const char* env = std::getenv("BB_FAULT_WINDOW");
@@ -197,7 +207,7 @@ std::pair<const Buffer*, u64> BufferCache::ObtainBuffer(VAddr device_addr, u32 s
         if (!stream_buffer.mapped_data.empty() &&
             !BbToggle::Disabled(BbToggle::DeferredStreamCopies)) {
             if (const auto offset = stream_buffer.Reserve(size, instance.UniformMinAlignment())) {
-                BbCopy::QueueCopy({
+                SmallGuestCopy({
                     .run = &RunGuestCopy,
                     .context = this,
                     .source = device_addr,
@@ -244,7 +254,7 @@ std::pair<const Buffer*, u64> BufferCache::ObtainBufferForImage(VAddr device_add
                 .extra = reinterpret_cast<u64>(staging.buffer),
             };
             if (staging.size < Chunk) {
-                BbCopy::QueueCopy(item);
+                SmallGuestCopy(item);
             } else {
                 BbCopy::Async([item] { item.run(item); });
             }
@@ -423,7 +433,7 @@ const Buffer* BufferCache::UploadCopies(const Buffer* arena, std::span<vk::Buffe
     if (!BbToggle::Disabled(BbToggle::DeferredUploads) && total_size_bytes < 1_MB) {
         // Small uploads join the calling thread's batch.
         for (auto& copy : copies) {
-            BbCopy::QueueCopy({
+            SmallGuestCopy({
                 .run = &RunGuestCopy,
                 .context = this,
                 .source = copy.dstOffset,

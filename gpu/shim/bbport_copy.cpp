@@ -266,17 +266,10 @@ void QueueCopy(const Item& item) {
         item.run(item);
         return;
     }
-    // Small batches go out early so they are done before the next fence waits for them; the
-    // leftover at a fence runs on the waiting thread (BB_COPY_BATCH items, default 32).
-    static const std::size_t batch_items = [] {
-        const char* env = std::getenv("BB_COPY_BATCH");
-        return static_cast<std::size_t>(env ? std::clamp(std::atoi(env), 1, 4096) : 32);
-    }();
+    // Smaller batches (32 items / 64 KiB, done before the next fence) measured slower.
     batch.items.push_back(item);
     batch.bytes += item.size;
-    const bool small = !BbToggle::Disabled(BbToggle::SmallCopyBatches);
-    if (batch.bytes >= (small ? 64 * 1024 : 512 * 1024) ||
-        batch.items.size() >= (small ? batch_items : 256)) {
+    if (batch.bytes >= 512 * 1024 || batch.items.size() >= 256) {
         FlushBatch();
     }
 }

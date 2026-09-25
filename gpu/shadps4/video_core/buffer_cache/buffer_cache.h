@@ -132,6 +132,7 @@ private:
 
     /// bbport: batched small copies on the copy threads (BbCopy::QueueCopy).
     static void RunGuestCopy(const BbCopy::Item& item);
+    void SmallGuestCopy(const BbCopy::Item& item);
 
     const Buffer* UploadCopies(const Buffer* arena, std::span<vk::BufferCopy> copies,
                                size_t total_size_bytes);

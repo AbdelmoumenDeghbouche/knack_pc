@@ -776,10 +776,22 @@ public:
     /// Waits until every recorded command is in the command buffer.
     void SyncRecording();
 
-    /// bbport: guest memory copies running on the copy threads (BbCopy::Async) must be done
-    /// before the guest learns the GPU is past them (it may then rewrite the memory, e.g. UI
-    /// vertices: flickering) and before the submission that reads them. Waits for all.
+    /// bbport: guest memory copies on the recording thread (small ones, RecordHostCopy) or the
+    /// copy threads (BbCopy::Async) must be done before the guest learns the GPU is past them
+    /// (it may then rewrite the memory, e.g. UI vertices: flickering) and before the
+    /// submission that reads them. Waits for all.
     void WaitHostCopies();
+
+    /// Runs `copy` on the recording thread in order with the commands (the thread spins for
+    /// work anyway, so small copies cost no wakeup); WaitHostCopies() covers it.
+    template <typename Func>
+    void RecordHostCopy(Func&& copy) {
+        Record([copy = std::forward<Func>(copy), this,
+                seq = ++host_copies_issued](vk::CommandBuffer) {
+            copy();
+            host_copies_done.store(seq, std::memory_order_release);
+        });
+    }
 
     /// CommandBuffer() calls that waited for a recording thread (BB_FRAME_STATS).
     static inline std::atomic<u64> direct_recordings{0};
@@ -866,6 +878,8 @@ private:
     std::atomic<size_t> queued_chunks{0}; ///< recorder_queue.size() for lock-free polling
     bool recorder_sleeping = false; ///< waiting on recorder_cv (guarded by recorder_mutex)
     bool direct_mode = false; ///< the command buffer is recorded on the caller's thread
+    u64 host_copies_issued = 0;
+    std::atomic<u64> host_copies_done{0};
     std::jthread recorder_thread;
     tracy::VkCtxScope* profiler_scope{};
 };

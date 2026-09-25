@@ -172,11 +172,12 @@ std::unique_ptr<RecordChunk> Scheduler::AcquireChunk() {
 }
 
 void Scheduler::WaitHostCopies() {
-    if (!BbStats::enabled) {
-        BbCopy::WaitAsync();
-        return;
+    if (host_copies_done.load(std::memory_order_acquire) < host_copies_issued) {
+        KickRecording(true);
+        while (host_copies_done.load(std::memory_order_acquire) < host_copies_issued) {
+            std::this_thread::yield();
+        }
     }
-    BbStats::Timer timer{BbStats::t_host_wait};
     BbCopy::WaitAsync();
 }
 
