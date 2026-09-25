@@ -163,6 +163,20 @@ std::pair<const Buffer*, u64> BufferCache::ObtainBuffer(VAddr device_addr, u32 s
                                                         bool is_written, bool is_texel_buffer) {
     // For read-only buffers use device local stream buffer to reduce renderpass breaks.
     if (!is_written && size <= STREAM_THRESHOLD && !IsRegionGpuModified(device_addr, size)) {
+        // bbport: with threaded recording the recording thread copies the guest data, right
+        // before the commands that read it (all of them run before submission).
+        if (scheduler.IsRecordingDeferred() && !stream_buffer.mapped_data.empty() &&
+            !BbToggle::Disabled(BbToggle::DeferredStreamCopies)) {
+            if (const auto offset = stream_buffer.Reserve(size, instance.UniformMinAlignment())) {
+                scheduler.Record([memory = memory, stream = &stream_buffer, device_addr, size,
+                                  offset = *offset](vk::CommandBuffer) {
+                    memory->CopySparseMemory(device_addr, stream->mapped_data.data() + offset,
+                                             size);
+                    stream->Flush(offset, size);
+                });
+                return {&stream_buffer, *offset};
+            }
+        }
         const auto [data, offset] = stream_buffer.Map(size, instance.UniformMinAlignment());
         memory->CopySparseMemory(device_addr, data, size);
         stream_buffer.Commit();

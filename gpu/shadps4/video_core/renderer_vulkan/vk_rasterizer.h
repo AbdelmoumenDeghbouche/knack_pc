@@ -170,7 +170,10 @@ private:
     Pipeline::DescriptorWrites set_writes;
     Shader::PushData push_data;
 
-    using ImageBindingInfo = std::pair<VideoCore::ImageId, VideoCore::TextureCache::ImageDesc>;
+    // bbport: bindings point at their description instead of copying it (a hot spot): into
+    // image_desc_cache for memoized lookups (pinned for the current BindTextures call), else
+    // into image_desc_storage.
+    using ImageBindingInfo = std::pair<VideoCore::ImageId, const VideoCore::TextureCache::ImageDesc*>;
     // bbport: texture descriptions depend only on the T# and three resource flags; building
     // them (mip layout sizes) for every binding of every draw was a hot spot.
     struct ImageDescCacheEntry {
@@ -181,8 +184,14 @@ private:
         u64 found_generation = ~0ULL;
         VideoCore::ImageId found_id{};
         VideoCore::TextureCache::ImageDesc found_desc;
+        u64 pinned = 0; ///< bind_epoch of the BindTextures call referencing found_desc
     };
     std::array<ImageDescCacheEntry, 512> image_desc_cache{};
+    /// Entries replacing pinned cache slots during one BindTextures call.
+    boost::container::static_vector<ImageDescCacheEntry, Shader::NUM_IMAGES> image_desc_overflow;
+    boost::container::static_vector<VideoCore::TextureCache::ImageDesc, Shader::NUM_IMAGES * 2>
+        image_desc_storage;
+    u64 bind_epoch = 0;
     // bbport: render/depth target lookups memoized by their raw register bytes while image
     // registrations are unchanged (the descriptions depend only on those registers).
     struct TargetMemo {
