@@ -155,6 +155,7 @@ public:
         std::vector<State> subresource_states;
         boost::container::small_vector<ImageViewInfo, 4> image_view_infos;
         boost::container::small_vector<ImageViewId, 4> image_view_ids;
+        u32 last_view = 0; ///< bbport: index of the view FindView returned last
         u32 num_samples;
     };
     std::deque<BackingImage> backing_images;
