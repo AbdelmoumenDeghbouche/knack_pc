@@ -3,6 +3,7 @@
 
 #include <chrono>
 #include <pthread.h>
+#include <sys/resource.h>
 #include <time.h>
 #include "bbport_toggles.h"
 #include <cstdio>
@@ -1063,6 +1064,17 @@ Liverpool::Task Liverpool::ProcessGraphics(std::span<const u32> dcb, std::span<c
 
     if (draw_prep) {
         draw_prep->EndSubmission();
+    }
+    if (seq != NoSeq) {
+        BbStats::submissions.fetch_add(1, std::memory_order_relaxed);
+        if (rusage usage{}; getrusage(RUSAGE_THREAD, &usage) == 0) {
+            BbStats::gpu_user_us.store(u64(usage.ru_utime.tv_sec) * 1000000 + usage.ru_utime.tv_usec,
+                                       std::memory_order_relaxed);
+            BbStats::gpu_sys_us.store(u64(usage.ru_stime.tv_sec) * 1000000 + usage.ru_stime.tv_usec,
+                                      std::memory_order_relaxed);
+            BbStats::gpu_invol_switches.store(usage.ru_nivcsw, std::memory_order_relaxed);
+            BbStats::gpu_vol_switches.store(usage.ru_nvcsw, std::memory_order_relaxed);
+        }
     }
 
     FIBER_EXIT;

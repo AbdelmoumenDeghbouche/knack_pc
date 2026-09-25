@@ -247,6 +247,7 @@ void Rasterizer::EliminateFastClear() {
 
 void Rasterizer::Draw(bool is_indexed, u32 index_offset, const PreparedDraw* prepared) {
     RENDERER_TRACE;
+    BbStats::draws.fetch_add(1, std::memory_order_relaxed);
 
     scheduler.PopPendingOperations();
 
@@ -387,6 +388,7 @@ void Rasterizer::DrawIndirect(bool is_indexed, VAddr arg_address, u32 offset, u3
 
 void Rasterizer::DispatchDirect() {
     RENDERER_TRACE;
+    BbStats::dispatches.fetch_add(1, std::memory_order_relaxed);
 
     scheduler.PopPendingOperations();
 

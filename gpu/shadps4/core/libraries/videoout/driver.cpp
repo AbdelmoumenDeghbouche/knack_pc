@@ -263,6 +263,11 @@ void VideoOutDriver::Flip(const Request& req) {
         last = now;
         // Stall diagnostics: what happened during a long frame.
         static u64 last_gpu_ns, last_images, last_image_bytes, last_buffer_bytes;
+        static u64 last_draws, last_dispatches, last_subs, last_sys, last_user, last_invol, last_vol;
+        const u64 draws = BbStats::draws.load(), dispatches = BbStats::dispatches.load(),
+                  subs = BbStats::submissions.load(), sys_us = BbStats::gpu_sys_us.load(),
+                  user_us = BbStats::gpu_user_us.load(), invol = BbStats::gpu_invol_switches.load(),
+                  vol = BbStats::gpu_vol_switches.load();
         u64 gpu_ns = 0;
         if (const int clock = BbStats::gpu_thread_clock.load(); clock != -1) {
             timespec ts{};
@@ -279,7 +284,21 @@ void VideoOutDriver::Flip(const Request& req) {
                         static_cast<unsigned long long>(images - last_images),
                         (image_bytes - last_image_bytes) / 1e6,
                         (buffer_bytes - last_buffer_bytes) / 1e6);
+            std::printf("       %llu draws, %llu dispatches, %llu submissions; GPU thread user %.1f ms, "
+                        "kernel %.1f ms, %llu preempted, %llu waits\n",
+                        static_cast<unsigned long long>(draws - last_draws),
+                        static_cast<unsigned long long>(dispatches - last_dispatches),
+                        static_cast<unsigned long long>(subs - last_subs), (user_us - last_user) / 1e3,
+                        (sys_us - last_sys) / 1e3, static_cast<unsigned long long>(invol - last_invol),
+                        static_cast<unsigned long long>(vol - last_vol));
         }
+        last_draws = draws;
+        last_dispatches = dispatches;
+        last_subs = subs;
+        last_sys = sys_us;
+        last_user = user_us;
+        last_invol = invol;
+        last_vol = vol;
         last_gpu_ns = gpu_ns;
         last_images = images;
         last_image_bytes = image_bytes;
