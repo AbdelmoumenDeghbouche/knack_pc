@@ -504,6 +504,9 @@ void *runtime_low_map(size_t size, int prot) {
  * 32768 hot pages (opt-in with BB_HOT_PAGES=1),
  * 65536 unprotect the 64 KiB window around a guest write fault (BB_FAULT_WINDOW KiB). */
 uint32_t runtime_disabled_optimizations;
+/* Speculative readers of guest memory (GPU draw-preparation workers) register a recovery
+ * point: a fault on that thread jumps back to it instead of terminating (probe.c). */
+__thread sigjmp_buf *runtime_fault_recover;
 static void *toggle_watcher(void *path) {
     for (uint32_t last=UINT32_MAX;;) {
         FILE *f=fopen(path,"r");

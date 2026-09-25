@@ -2,10 +2,13 @@
 // see runtime_memory.c), to find which one changes rendering without restarting.
 #pragma once
 #include <atomic>
+#include <csetjmp>
 #include <chrono>
 #include <cstdint>
 
 extern "C" std::uint32_t runtime_disabled_optimizations;
+/// Recovery point for speculative guest memory reads on this thread (runtime_memory.c).
+extern "C" __thread sigjmp_buf* runtime_fault_recover;
 
 namespace BbToggle {
 enum : std::uint32_t {

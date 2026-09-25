@@ -2,6 +2,11 @@
 #define BB_RUNTIME_H
 #include <stdint.h>
 #include <stddef.h>
+#ifndef _WIN32
+#include <setjmp.h>
+/* Recovery point for speculative guest memory reads on this thread (probe.c fault handler). */
+extern __thread sigjmp_buf *runtime_fault_recover;
+#endif
 #define ABI __attribute__((sysv_abi))
 typedef void (ABI *GuestCallback)(void);
 void runtime_start(uint64_t capabilities);

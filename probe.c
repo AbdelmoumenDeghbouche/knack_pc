@@ -103,6 +103,16 @@ static ABI void guest_exit(void) { puts("Runtime: process finalizer callback rea
 static void fault(int sig, siginfo_t *info, void *context) {
     /* GPU page tracking (write-protected guest pages) is resolved first. */
     if (gpu_enabled && sig == SIGSEGV && bbgpu_handle_fault(context, info->si_addr)) return;
+    /* A speculative guest memory read (runtime_memory.c) failed: resume its recovery point. */
+    if ((sig == SIGSEGV || sig == SIGBUS) && runtime_fault_recover) {
+        sigjmp_buf *recover = runtime_fault_recover;
+        runtime_fault_recover = NULL;
+        sigset_t unblock;
+        sigemptyset(&unblock);
+        sigaddset(&unblock, sig);
+        pthread_sigmask(SIG_UNBLOCK, &unblock, NULL);
+        siglongjmp(*recover, 1);
+    }
     /* The process is terminating: dladdr/snprintf are acceptable here. */
     ucontext_t *uc = context;
     uintptr_t rip = (uintptr_t)uc->uc_mcontext.gregs[REG_RIP];
