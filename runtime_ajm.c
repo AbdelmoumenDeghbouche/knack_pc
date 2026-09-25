@@ -74,6 +74,12 @@ static Context *contexts[MAX_CONTEXTS+1];
 static Batch batches[MAX_BATCHES];
 static size_t jobs_run, frames_decoded, batches_run;
 
+/* BB_AUDIO_TRACE=1: instance configurations and jobs that return a non-zero result. */
+static int trace_left=-1;
+static int ajm_trace(void) {
+    if (trace_left<0) { const char *e=getenv("BB_AUDIO_TRACE"); trace_left=e && e[0]=='1' ? 400 : 0; }
+    return trace_left>0 && trace_left--;
+}
 static uint32_t ident(uint32_t word) { return word & 0x3f; }
 static uint32_t payload(uint32_t word) { return (word>>6) & 0xfffff; }
 static uint32_t header(uint32_t id, uint32_t value) { return (id & 0x3f) | ((value & 0xfffff)<<6); }
@@ -142,6 +148,10 @@ static void at9_reset(Instance *in) {
     in->initialized = Atrac9InitDecoder(in->handle,in->config)==0;
     if (in->initialized) Atrac9GetCodecInfo(in->handle,&in->info);
     in->frames=0; in->superframe_remain=(uint32_t)in->info.superframeSize;
+    if (ajm_trace())
+        printf("Audio trace: ATRAC9 init %s: %d ch, %d Hz, frame %d samples, %d frames/superframe, superframe %d bytes, format %d, flags %#x\n",
+               in->initialized ? "ok" : "FAILED",in->info.channels,in->info.samplingRate,in->info.frameSamples,
+               in->info.framesInSuperframe,in->info.superframeSize,in->format,in->codec_flags);
 }
 static void gapless_reset(Instance *in) {
     in->gapless.total_samples=in->gapless_init.total_samples;
@@ -327,6 +337,10 @@ static void run_job(Context *ctx, uint32_t id, Job *job) {
         if (!RUN_MULTIPLE_FRAMES(f)) break;
     }
     free(joined);
+    if (flags_result && ajm_trace())
+        printf("Audio trace: Ajm job instance %u flags %#llx -> result %#x internal %d; input %llu/%llu used, output %llu/%llu written, frames %u\n",
+               id,(unsigned long long)f,flags_result,internal,(unsigned long long)(in_start-in_size),(unsigned long long)in_start,
+               (unsigned long long)(out_start-output_room(&out)),(unsigned long long)out_start,frames);
     if (result) { result->result=(int32_t)flags_result; result->internal_result=internal; }
     /* Output sideband order: stream, format, gapless, multi-frame, codec info. */
     if (side && SIDEBAND_STREAM(f) && side+16<=side_end) {
@@ -394,6 +408,7 @@ static ABI int32_t ajm_instance_create(uint32_t id, uint32_t codec, uint64_t fla
     if (!out || codec>=24) return ERR_INVALID_PARAMETER;
     if (!(flags & 7)) return ERR_WRONG_REVISION;
     if (codec!=1) { fprintf(stderr,"STOP: Ajm codec %u (0=MP3, 2=AAC) is not implemented\n",codec); exit(21); }
+    if (ajm_trace()) printf("Audio trace: Ajm instance create codec %u flags %#llx\n",codec,(unsigned long long)flags);
     pthread_mutex_lock(&lock);
     Context *c=context(id);
     int32_t r=!c ? ERR_INVALID_CONTEXT : !c->registered[codec] ? ERR_NOT_REGISTERED : ERR_OUT_OF_RESOURCES;
