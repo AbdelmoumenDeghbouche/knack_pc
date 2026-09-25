@@ -18,6 +18,7 @@ layout(push_constant) uniform Constants {
     vec4 proj;         // current: x scale, y scale, z scale, z offset
     vec4 prev_proj;    // previous: x scale, y scale, z scale, z offset
     vec2 size;         // pixels
+    uint mode;         // debug: 0 motion, 1 raw depth, 2 view z / 50
 };
 
 void main() {
@@ -41,6 +42,11 @@ void main() {
     const bool sky = depth >= 0.99999;
 
 #ifdef DEBUG_OVERLAY
+    if (mode != 0) {
+        const float v = mode == 1 ? depth : z / 50.0;
+        imageStore(color_img, pixel, vec4(fract(v * 4.0), v, v < 0.0 ? 1.0 : 0.0, 1.0));
+        return;
+    }
     // Red/green: horizontal/vertical motion (grey = none), 64 pixels to full scale.
     const vec3 mv_color = sky ? vec3(0.0, 0.0, 0.3) : vec3(0.5) + vec3(motion / 128.0, 0.0);
     const vec4 original = imageLoad(color_img, pixel);

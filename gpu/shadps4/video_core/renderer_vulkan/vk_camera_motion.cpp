@@ -5,6 +5,8 @@
 #include <cstdlib>
 #include <cstring>
 
+#include "bbport_toggles.h"
+
 #include "video_core/host_shaders/camera_motion_debug_comp.h"
 #include "video_core/renderer_vulkan/vk_instance.h"
 #include "video_core/renderer_vulkan/vk_runtime.h"
@@ -21,6 +23,7 @@ struct PushConstants {
     std::array<float, 4> proj;
     std::array<float, 4> prev_proj;
     std::array<float, 2> size;
+    u32 mode;
 };
 
 /// a * b for 3x4 affine matrices (rows [R | t]).
@@ -163,7 +166,24 @@ void CameraMotion::Overlay(VideoCore::ImageId frame) {
         .proj = current.proj,
         .prev_proj = previous.proj,
         .size = {float(color.info.size.width), float(color.info.size.height)},
+        .mode = BbToggle::Disabled(1u << 20) ? 1u : BbToggle::Disabled(1u << 21) ? 2u : 0u,
     };
+    static u32 frames = 0;
+    if (++frames % 200 == 0) {
+        const auto& m = push.reproject;
+        std::printf("Camera motion: proj %g %g %g %g prev %g %g %g %g\n"
+                    "  view  %8.4f %8.4f %8.4f %9.3f | %8.4f %8.4f %8.4f %9.3f | %8.4f %8.4f %8.4f %9.3f\n"
+                    "  reproj %8.4f %8.4f %8.4f %9.4f | %8.4f %8.4f %8.4f %9.4f | %8.4f %8.4f %8.4f %9.4f\n"
+                    "  depth %s %ux%u, frame %ux%u\n",
+                    push.proj[0], push.proj[1], push.proj[2], push.proj[3], push.prev_proj[0],
+                    push.prev_proj[1], push.prev_proj[2], push.prev_proj[3], current.view[0],
+                    current.view[1], current.view[2], current.view[3], current.view[4],
+                    current.view[5], current.view[6], current.view[7], current.view[8],
+                    current.view[9], current.view[10], current.view[11], m[0], m[1], m[2], m[3],
+                    m[4], m[5], m[6], m[7], m[8], m[9], m[10], m[11],
+                    vk::to_string(depth_format).c_str(), depth.info.size.width,
+                    depth.info.size.height, color.info.size.width, color.info.size.height);
+    }
     const vk::DescriptorImageInfo depth_info{.imageView = depth_view,
                                              .imageLayout = vk::ImageLayout::eGeneral};
     const vk::DescriptorImageInfo color_info{.imageView = color_view,
