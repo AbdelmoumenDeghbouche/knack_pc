@@ -30,6 +30,8 @@ struct VideoOutPort;
 
 namespace AmdGpu {
 
+union PM4Header;
+
 struct Liverpool {
     static constexpr u32 GfxQueueId = 0u;
     static constexpr u32 NumGfxRings = 1u;     // actually 2, but HP is reserved by system software
@@ -62,6 +64,10 @@ struct Liverpool {
     Regs regs{};
     std::array<CbDbExtent, NUM_COLOR_BUFFERS> last_cb_extent{};
     CbDbExtent last_db_extent{};
+    /// bbport: running checksum of graphics-register packets (see ApplyGraphicsRegisterPacket).
+    u64 gfx_reg_checksum{};
+    static u64 HashRegisterPacket(u64 checksum, const u32* words, u32 count);
+    static void ApplyGraphicsRegisterPacket(Regs& regs, const PM4Header* header, u64& checksum);
 
 public:
     explicit Liverpool();

@@ -220,6 +220,105 @@ Liverpool::Task Liverpool::ProcessCeUpdate(std::span<const u32> ccb) {
     FIBER_EXIT;
 }
 
+// bbport: graphics-register effects of a type-3 packet. The GPU thread and the draw-preparation
+// workers both go through this function, and both fold every register-writing packet into a
+// running checksum: equal checksums at a draw mean equal register files.
+u64 Liverpool::HashRegisterPacket(u64 checksum, const u32* words, u32 count) {
+    for (u32 i = 0; i < count; ++i) {
+        checksum = (checksum ^ words[i]) * 0x9E3779B97F4A7C15ull;
+        checksum ^= checksum >> 29;
+    }
+    return checksum;
+}
+
+void Liverpool::ApplyGraphicsRegisterPacket(Regs& regs, const PM4Header* header, u64& checksum) {
+    const u32 count = header->type3.NumWords();
+    const auto* payload = reinterpret_cast<const u32*>(header + 2);
+    switch (header->type3.opcode) {
+    case PM4ItOpcode::ClearState:
+        regs.SetDefaults();
+        break;
+    case PM4ItOpcode::SetConfigReg: {
+        const auto* set_data = reinterpret_cast<const PM4CmdSetData*>(header);
+        std::memcpy(&regs.reg_array[Regs::ConfigRegWordOffset + set_data->reg_offset], payload,
+                    (count - 1) * sizeof(u32));
+        break;
+    }
+    case PM4ItOpcode::SetContextReg: {
+        const auto* set_data = reinterpret_cast<const PM4CmdSetData*>(header);
+        std::memcpy(&regs.reg_array[Regs::ContextRegWordOffset + set_data->reg_offset], payload,
+                    (count - 1) * sizeof(u32));
+        break;
+    }
+    case PM4ItOpcode::SetShReg: {
+        const auto* set_data = reinterpret_cast<const PM4CmdSetData*>(header);
+        // The compute program range goes to the queue's cs_state, not to regs.
+        if (!(set_data->reg_offset >= 0x200 &&
+              set_data->reg_offset <= (0x200 + sizeof(ComputeProgram) / 4))) {
+            std::memcpy(&regs.reg_array[Regs::ShRegWordOffset + set_data->reg_offset], payload,
+                        (count - 1) * sizeof(u32));
+        }
+        break;
+    }
+    case PM4ItOpcode::SetUconfigReg: {
+        const auto* set_data = reinterpret_cast<const PM4CmdSetData*>(header);
+        std::memcpy(&regs.reg_array[Regs::UconfigRegWordOffset + set_data->reg_offset], payload,
+                    (count - 1) * sizeof(u32));
+        break;
+    }
+    case PM4ItOpcode::IndexType:
+        regs.index_buffer_type.raw = reinterpret_cast<const PM4CmdDrawIndexType*>(header)->raw;
+        break;
+    case PM4ItOpcode::DrawIndex2: {
+        const auto* draw_index = reinterpret_cast<const PM4CmdDrawIndex2*>(header);
+        regs.max_index_size = draw_index->max_size;
+        regs.index_base_address.base_addr_lo = draw_index->index_base_lo;
+        regs.index_base_address.base_addr_hi = draw_index->index_base_hi;
+        regs.num_indices = draw_index->index_count;
+        regs.draw_initiator = draw_index->draw_initiator;
+        break;
+    }
+    case PM4ItOpcode::DrawIndexOffset2: {
+        const auto* draw_index_off = reinterpret_cast<const PM4CmdDrawIndexOffset2*>(header);
+        regs.max_index_size = draw_index_off->max_size;
+        regs.num_indices = draw_index_off->index_count;
+        regs.draw_initiator = draw_index_off->draw_initiator;
+        break;
+    }
+    case PM4ItOpcode::DrawIndexAuto: {
+        const auto* draw_index = reinterpret_cast<const PM4CmdDrawIndexAuto*>(header);
+        regs.num_indices = draw_index->index_count;
+        regs.draw_initiator = draw_index->draw_initiator;
+        break;
+    }
+    case PM4ItOpcode::NumInstances:
+        regs.num_instances.num_instances =
+            reinterpret_cast<const PM4CmdDrawNumInstances*>(header)->num_instances;
+        break;
+    case PM4ItOpcode::IndexBase: {
+        const auto* index_base = reinterpret_cast<const PM4CmdDrawIndexBase*>(header);
+        regs.index_base_address.base_addr_lo = index_base->addr_lo;
+        regs.index_base_address.base_addr_hi = index_base->addr_hi;
+        break;
+    }
+    case PM4ItOpcode::IndexBufferSize:
+        regs.num_indices = reinterpret_cast<const PM4CmdDrawIndexBufferSize*>(header)->num_indices;
+        break;
+    case PM4ItOpcode::EventWrite: {
+        const auto* event = reinterpret_cast<const PM4CmdEventWrite*>(header);
+        if (event->event_type.Value() != EventType::SoVgtStreamoutFlush) {
+            return;
+        }
+        // TODO: handle proper synchronization, for now signal that update is done immediately
+        regs.cp_strmout_cntl.offset_update_done = 1;
+        break;
+    }
+    default:
+        return;
+    }
+    checksum = HashRegisterPacket(checksum, reinterpret_cast<const u32*>(header), count + 1);
+}
+
 // bbport: BB_DCB_STATS=1 — structure of graphics command buffers (read-only scan, printed every
 // 5 s): how many buffers, draws per buffer, state set before the first draw. Input for
 // processing command buffers on several threads.
@@ -366,6 +465,7 @@ Liverpool::Task Liverpool::ProcessGraphics(std::span<const u32> dcb, std::span<c
         case 3:
             const u32 count = header->type3.NumWords();
             const PM4ItOpcode opcode = header->type3.opcode;
+            ApplyGraphicsRegisterPacket(regs, header, gfx_reg_checksum);
             switch (opcode) {
             case PM4ItOpcode::Nop: {
                 const auto* nop = reinterpret_cast<const PM4CmdNop*>(header);
@@ -414,23 +514,14 @@ Liverpool::Task Liverpool::ProcessGraphics(std::span<const u32> dcb, std::span<c
             case PM4ItOpcode::ContextControl: {
                 break;
             }
-            case PM4ItOpcode::ClearState: {
-                regs.SetDefaults();
-                break;
-            }
+            case PM4ItOpcode::ClearState:
             case PM4ItOpcode::SetConfigReg: {
-                const auto* set_data = reinterpret_cast<const PM4CmdSetData*>(header);
-                const auto reg_addr = Regs::ConfigRegWordOffset + set_data->reg_offset;
-                const auto* payload = reinterpret_cast<const u32*>(header + 2);
-                std::memcpy(&regs.reg_array[reg_addr], payload, (count - 1) * sizeof(u32));
-                break;
+                break; // registers: ApplyGraphicsRegisterPacket
             }
             case PM4ItOpcode::SetContextReg: {
                 const auto* set_data = reinterpret_cast<const PM4CmdSetData*>(header);
                 const auto reg_addr = Regs::ContextRegWordOffset + set_data->reg_offset;
                 const auto* payload = reinterpret_cast<const u32*>(header + 2);
-
-                std::memcpy(&regs.reg_array[reg_addr], payload, (count - 1) * sizeof(u32));
 
                 // In the case of HW, render target memory has alignment as color block operates on
                 // tiles. There is no information of actual resource extents stored in CB context
@@ -508,34 +599,20 @@ Liverpool::Task Liverpool::ProcessGraphics(std::span<const u32> dcb, std::span<c
                     auto* addr = reinterpret_cast<u32*>(&mapped_queues[GfxQueueId].cs_state) +
                                  (set_data->reg_offset - 0x200);
                     std::memcpy(addr, header + 2, set_size);
-                } else {
-                    std::memcpy(&regs.reg_array[Regs::ShRegWordOffset + set_data->reg_offset],
-                                header + 2, set_size);
-                }
+                } // other SH registers: ApplyGraphicsRegisterPacket
                 break;
             }
             case PM4ItOpcode::SetUconfigReg: {
-                const auto* set_data = reinterpret_cast<const PM4CmdSetData*>(header);
-                std::memcpy(&regs.reg_array[Regs::UconfigRegWordOffset + set_data->reg_offset],
-                            header + 2, (count - 1) * sizeof(u32));
-                break;
+                break; // registers: ApplyGraphicsRegisterPacket
             }
             case PM4ItOpcode::SetPredication: {
                 LOG_WARNING(Render, "Unimplemented IT_SET_PREDICATION");
                 break;
             }
             case PM4ItOpcode::IndexType: {
-                const auto* index_type = reinterpret_cast<const PM4CmdDrawIndexType*>(header);
-                regs.index_buffer_type.raw = index_type->raw;
-                break;
+                break; // registers: ApplyGraphicsRegisterPacket
             }
             case PM4ItOpcode::DrawIndex2: {
-                const auto* draw_index = reinterpret_cast<const PM4CmdDrawIndex2*>(header);
-                regs.max_index_size = draw_index->max_size;
-                regs.index_base_address.base_addr_lo = draw_index->index_base_lo;
-                regs.index_base_address.base_addr_hi = draw_index->index_base_hi;
-                regs.num_indices = draw_index->index_count;
-                regs.draw_initiator = draw_index->draw_initiator;
                 if (DebugState.DumpingCurrentReg()) {
                     DebugState.PushRegsDump(base_addr, reinterpret_cast<uintptr_t>(header), regs);
                 }
@@ -550,9 +627,6 @@ Liverpool::Task Liverpool::ProcessGraphics(std::span<const u32> dcb, std::span<c
             case PM4ItOpcode::DrawIndexOffset2: {
                 const auto* draw_index_off =
                     reinterpret_cast<const PM4CmdDrawIndexOffset2*>(header);
-                regs.max_index_size = draw_index_off->max_size;
-                regs.num_indices = draw_index_off->index_count;
-                regs.draw_initiator = draw_index_off->draw_initiator;
                 if (DebugState.DumpingCurrentReg()) {
                     DebugState.PushRegsDump(base_addr, reinterpret_cast<uintptr_t>(header), regs);
                 }
@@ -567,8 +641,6 @@ Liverpool::Task Liverpool::ProcessGraphics(std::span<const u32> dcb, std::span<c
             }
             case PM4ItOpcode::DrawIndexAuto: {
                 const auto* draw_index = reinterpret_cast<const PM4CmdDrawIndexAuto*>(header);
-                regs.num_indices = draw_index->index_count;
-                regs.draw_initiator = draw_index->draw_initiator;
                 if (DebugState.DumpingCurrentReg()) {
                     DebugState.PushRegsDump(base_addr, reinterpret_cast<uintptr_t>(header), regs);
                 }
@@ -720,21 +792,10 @@ Liverpool::Task Liverpool::ProcessGraphics(std::span<const u32> dcb, std::span<c
                     [&] { rasterizer->DispatchIndirect(indirect_args_addr, offset, size); });
                 break;
             }
-            case PM4ItOpcode::NumInstances: {
-                const auto* num_instances = reinterpret_cast<const PM4CmdDrawNumInstances*>(header);
-                regs.num_instances.num_instances = num_instances->num_instances;
-                break;
-            }
-            case PM4ItOpcode::IndexBase: {
-                const auto* index_base = reinterpret_cast<const PM4CmdDrawIndexBase*>(header);
-                regs.index_base_address.base_addr_lo = index_base->addr_lo;
-                regs.index_base_address.base_addr_hi = index_base->addr_hi;
-                break;
-            }
+            case PM4ItOpcode::NumInstances:
+            case PM4ItOpcode::IndexBase:
             case PM4ItOpcode::IndexBufferSize: {
-                const auto* index_size = reinterpret_cast<const PM4CmdDrawIndexBufferSize*>(header);
-                regs.num_indices = index_size->num_indices;
-                break;
+                break; // registers: ApplyGraphicsRegisterPacket
             }
             case PM4ItOpcode::SetBase: {
                 const auto* set_base = reinterpret_cast<const PM4CmdSetBase*>(header);
@@ -748,9 +809,7 @@ Liverpool::Task Liverpool::ProcessGraphics(std::span<const u32> dcb, std::span<c
                           magic_enum::enum_name(event->event_type.Value()),
                           magic_enum::enum_name(event->event_index.Value()));
                 if (event->event_type.Value() == EventType::SoVgtStreamoutFlush) {
-                    // TODO: handle proper synchronization, for now signal that update is done
-                    // immediately
-                    regs.cp_strmout_cntl.offset_update_done = 1;
+                    // registers: ApplyGraphicsRegisterPacket
                 } else if (event->event_index.Value() == EventIndex::ZpassDone) {
                     if (event->event_type.Value() == EventType::PixelPipeStatDump) {
                         static constexpr u64 OcclusionCounterValidMask = 0x8000000000000000ULL;
@@ -1124,6 +1183,11 @@ Liverpool::Task Liverpool::ProcessCompute(std::span<const u32> acb, u32 vqid) {
             } else {
                 std::memcpy(&regs.reg_array[Regs::ShRegWordOffset + set_data->reg_offset],
                             header + 2, set_size);
+                // bbport: interleaves with the graphics stream at an unpredictable point, so
+                // draw-preparation workers cannot reproduce it: make their checksums differ.
+                gfx_reg_checksum = HashRegisterPacket(gfx_reg_checksum ^ 0xA5C0A5C0A5C0ull,
+                                                      reinterpret_cast<const u32*>(header),
+                                                      header->type3.NumWords() + 1);
             }
             break;
         }
