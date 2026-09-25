@@ -3,6 +3,9 @@
 
 #pragma once
 
+#include <array>
+#include <chrono>
+
 #include "bbport_toggles.h"
 #include "common/div_ceil.h"
 #include "common/logging/log.h"
@@ -89,6 +92,9 @@ public:
         }
 
         RegionBits& bits = GetRegionBits<type>();
+        if constexpr (type == Type::CPU && enable) {
+            CountWriteFaults(start_page, end_page);
+        }
         if constexpr (enable) {
             bits.SetRange(start_page, end_page);
         } else {
@@ -133,6 +139,7 @@ public:
         if constexpr (clear) {
             bits.UnsetRange(start_page, end_page);
             if constexpr (type == Type::CPU) {
+                KeepHotPagesModified(start_page, end_page);
                 UpdateProtection<true, false>();
             } else if (EmulatorSettings.GetReadbacksMode() != GpuReadbacksMode::Disabled) {
                 UpdateProtection<false, true>();
@@ -190,6 +197,58 @@ private:
         }
         tracker->UpdatePageWatchersForRegion<track, is_read>(cpu_addr, mask);
     }
+
+    // bbport: pages the guest writes again and again (per-frame constants, skinning output)
+    // cost a protection fault in the writing thread plus an mprotect with TLB shootdowns on
+    // every upload. After HotFaults faults a page stays writable and counts as always CPU
+    // modified, so it is uploaded on every use instead. The set is rebuilt every HotPeriod.
+    static constexpr u8 HotFaults = 4;
+    static constexpr auto HotPeriod = std::chrono::seconds(2);
+
+    void CountWriteFaults(size_t start_page, size_t end_page) {
+        if (BbToggle::Disabled(BbToggle::HotPages)) {
+            return;
+        }
+        for (size_t page = start_page; page < end_page; ++page) {
+            if (writeable.Get(page)) {
+                continue; // not protected: no fault
+            }
+            BbStats::tracker_faults.fetch_add(1, std::memory_order_relaxed);
+            if (write_faults[page] < HotFaults) {
+                ++write_faults[page];
+                continue;
+            }
+            if (!hot.Get(page)) {
+                if (num_hot == 0) {
+                    hot_since = std::chrono::steady_clock::now();
+                }
+                hot.Set(page);
+                ++num_hot;
+                BbStats::hot_pages.fetch_add(1, std::memory_order_relaxed);
+            }
+        }
+    }
+
+    void KeepHotPagesModified(size_t start_page, size_t end_page) {
+        if (num_hot == 0) {
+            return;
+        }
+        if (BbToggle::Disabled(BbToggle::HotPages) ||
+            std::chrono::steady_clock::now() - hot_since > HotPeriod) {
+            // Re-protect them (on this upload) and start counting again.
+            BbStats::hot_pages.fetch_sub(num_hot, std::memory_order_relaxed);
+            hot.Clear();
+            write_faults.fill(0);
+            num_hot = 0;
+            return;
+        }
+        cpu |= RegionBits(hot, start_page, end_page);
+    }
+
+    std::array<u8, NUM_PAGES_PER_REGION> write_faults{};
+    RegionBits hot{};
+    u32 num_hot = 0;
+    std::chrono::steady_clock::time_point hot_since{};
 
     PageManager* tracker;
     VAddr cpu_addr = 0;

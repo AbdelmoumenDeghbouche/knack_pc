@@ -4,6 +4,7 @@
 #include <chrono>
 #include <cstdio>
 #include "common/assert.h"
+#include "bbport_toggles.h"
 #include "common/debug.h"
 #include "common/thread.h"
 #include "core/debug_state.h"
@@ -264,10 +265,13 @@ void VideoOutDriver::Flip(const Request& req) {
             const u32 compiles = Vulkan::g_bb_compiles.exchange(0);
             const u64 compile_ns = Vulkan::g_bb_compile_ns.exchange(0);
             const u64 direct = Vulkan::Scheduler::direct_recordings.exchange(0);
+            const u64 faults = BbStats::tracker_faults.exchange(0);
             std::printf("Frame stats: %.1f FPS, worst frame %.1f ms (vblank %u Hz); "
-                        "%u shader/pipeline compiles, %.1f ms; %llu recorder syncs\n",
+                        "%u shader/pipeline compiles, %.1f ms; %llu recorder syncs; "
+                        "%.0f write faults/s, %lld hot pages\n",
                         frames / window, worst_ms, EmulatorSettings.GetVblankFrequency(), compiles,
-                        compile_ns / 1e6, static_cast<unsigned long long>(direct));
+                        compile_ns / 1e6, static_cast<unsigned long long>(direct),
+                        faults / window, static_cast<long long>(BbStats::hot_pages.load()));
             window_start = now;
             frames = 0;
             worst_ms = 0;
