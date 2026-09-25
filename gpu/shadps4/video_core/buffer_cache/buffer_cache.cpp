@@ -182,18 +182,16 @@ std::pair<const Buffer*, u64> BufferCache::ObtainBuffer(VAddr device_addr, u32 s
                                                         bool is_written, bool is_texel_buffer) {
     // For read-only buffers use device local stream buffer to reduce renderpass breaks.
     if (!is_written && size <= STREAM_THRESHOLD && !IsRegionGpuModified(device_addr, size)) {
-        // bbport: with threaded recording the recording thread copies the guest data, right
-        // before the commands that read it (all of them run before submission).
-        if (scheduler.IsRecordingDeferred() && !stream_buffer.mapped_data.empty() &&
+        // bbport: the guest data is copied on a copy thread, started now; submission and
+        // guest-visible fences wait for it (Scheduler::WaitHostCopies).
+        if (!stream_buffer.mapped_data.empty() &&
             !BbToggle::Disabled(BbToggle::DeferredStreamCopies)) {
             if (const auto offset = stream_buffer.Reserve(size, instance.UniformMinAlignment())) {
-                scheduler.Record([memory = memory, stream = &stream_buffer, device_addr, size,
-                                  offset = *offset, sched = &scheduler,
-                                  seq = scheduler.IssueHostCopy()](vk::CommandBuffer) {
+                BbCopy::Async([memory = memory, stream = &stream_buffer, device_addr, size,
+                               offset = *offset] {
                     memory->CopySparseMemory(device_addr, stream->mapped_data.data() + offset,
                                              size);
                     stream->Flush(offset, size);
-                    sched->CompleteHostCopy(seq);
                 });
                 return {&stream_buffer, *offset};
             }
@@ -386,38 +384,40 @@ const Buffer* BufferCache::UploadCopies(const Buffer* arena, std::span<vk::Buffe
     }
     BbStats::buffer_upload_bytes.fetch_add(total_size_bytes, std::memory_order_relaxed);
     const auto staging = staging_pool.Request(total_size_bytes, MemoryType::HostUncached);
-    // bbport: with threaded recording the guest memory is copied into staging by the recording
-    // thread, right before the copy command that reads it (both run before submission).
-    if (scheduler.IsRecordingDeferred() && !BbToggle::Disabled(BbToggle::DeferredUploads)) {
+    // bbport: the guest memory is copied into staging on the copy threads, started now in
+    // groups of about 1 MiB; submission and guest-visible fences wait for them
+    // (Scheduler::WaitHostCopies).
+    if (!BbToggle::Disabled(BbToggle::DeferredUploads)) {
         struct HostCopy {
             VAddr source;
             u8* destination;
             u64 size;
         };
-        boost::container::small_vector<HostCopy, 16> host_copies;
+        using Group = boost::container::small_vector<HostCopy, 8>;
+        auto group = std::make_shared<Group>();
+        u64 group_bytes = 0;
+        const auto launch = [&] {
+            BbCopy::Async([group, memory = memory, staging] {
+                for (const auto& copy : *group) {
+                    memory->CopySparseMemory(copy.source, copy.destination, copy.size);
+                }
+                staging.Flush();
+            });
+        };
         for (auto& copy : copies) {
-            host_copies.push_back({copy.dstOffset, staging.mapped + copy.srcOffset, copy.size});
+            group->push_back({copy.dstOffset, staging.mapped + copy.srcOffset, copy.size});
+            group_bytes += copy.size;
             copy.srcOffset += staging.offset;
             copy.dstOffset -= arena->cpu_addr;
-        }
-        scheduler.ReserveRecordData(host_copies.size() * sizeof(HostCopy) + 64);
-        const auto list = scheduler.RecordData(std::span<const HostCopy>{host_copies});
-        scheduler.Record([list, memory = memory, staging, sched = &scheduler, total_size_bytes,
-                          seq = scheduler.IssueHostCopy()](vk::CommandBuffer) {
-            // Many copies of a streaming upload go to the copy threads; small lists stay here.
-            const auto copy = [&](std::size_t i) {
-                memory->CopySparseMemory(list[i].source, list[i].destination, list[i].size);
-            };
-            if (total_size_bytes >= 2_MB && list.size() > 1) {
-                BbCopy::ParallelFor(list.size(), copy);
-            } else {
-                for (std::size_t i = 0; i < list.size(); ++i) {
-                    copy(i);
-                }
+            if (group_bytes >= 1_MB) {
+                launch();
+                group = std::make_shared<Group>();
+                group_bytes = 0;
             }
-            staging.Flush();
-            sched->CompleteHostCopy(seq);
-        });
+        }
+        if (!group->empty()) {
+            launch();
+        }
         return staging.buffer;
     }
     const auto copy = [&](std::size_t i) {

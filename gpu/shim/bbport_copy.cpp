@@ -5,6 +5,7 @@
 #include <atomic>
 #include <condition_variable>
 #include <cstdlib>
+#include <deque>
 #include <memory>
 #include <string>
 #include <mutex>
@@ -45,6 +46,34 @@ public:
         return !threads.empty();
     }
 
+    void Async(std::function<void()> task) {
+        pending.fetch_add(1, std::memory_order_acq_rel);
+        {
+            std::scoped_lock lk{mutex};
+            async_tasks.push_back(std::move(task));
+        }
+        cv.notify_one();
+    }
+
+    void WaitAsync() {
+        // The waiting thread helps instead of only spinning.
+        while (pending.load(std::memory_order_acquire) != 0) {
+            std::function<void()> task;
+            {
+                std::scoped_lock lk{mutex};
+                if (!async_tasks.empty()) {
+                    task = std::move(async_tasks.front());
+                    async_tasks.pop_front();
+                }
+            }
+            if (task) {
+                RunAsync(task);
+            } else {
+                std::this_thread::yield();
+            }
+        }
+    }
+
     void Run(std::size_t count, const std::function<void(std::size_t)>& task) {
         auto job = std::make_shared<Job>();
         job->task = &task;
@@ -67,6 +96,14 @@ public:
     }
 
 private:
+    void RunAsync(std::function<void()>& task) {
+        const bool was = in_copy_thread;
+        in_copy_thread = true;
+        task();
+        in_copy_thread = was;
+        pending.fetch_sub(1, std::memory_order_acq_rel);
+    }
+
     struct Job {
         const std::function<void(std::size_t)>* task{};
         std::size_t count{};
@@ -89,9 +126,19 @@ private:
         unsigned long long seen = 0;
         std::unique_lock lk{mutex};
         while (true) {
-            cv.wait(lk, [&] { return stop || (generation != seen && current); });
+            cv.wait(lk, [&] {
+                return stop || !async_tasks.empty() || (generation != seen && current);
+            });
             if (stop) {
                 return;
+            }
+            if (!async_tasks.empty()) {
+                auto task = std::move(async_tasks.front());
+                async_tasks.pop_front();
+                lk.unlock();
+                RunAsync(task);
+                lk.lock();
+                continue;
             }
             seen = generation;
             const auto job = current;
@@ -105,6 +152,8 @@ private:
     std::mutex mutex;
     std::condition_variable cv;
     std::shared_ptr<Job> current;
+    std::deque<std::function<void()>> async_tasks;
+    std::atomic<std::size_t> pending{0};
     unsigned long long generation = 0;
     bool stop = false;
 };
@@ -118,6 +167,18 @@ Pool& GetPool() {
 
 bool Enabled() {
     return GetPool().Enabled() && !BbToggle::Disabled(BbToggle::ParallelCopies);
+}
+
+void Async(std::function<void()> task) {
+    if (!Enabled()) {
+        task();
+        return;
+    }
+    GetPool().Async(std::move(task));
+}
+
+void WaitAsync() {
+    GetPool().WaitAsync();
 }
 
 void ParallelFor(std::size_t count, const std::function<void(std::size_t)>& task) {

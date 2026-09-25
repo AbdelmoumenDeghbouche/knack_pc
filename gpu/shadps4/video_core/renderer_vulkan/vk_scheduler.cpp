@@ -9,6 +9,7 @@
 #include <dlfcn.h>
 #include <functional>
 
+#include "bbport_copy.h"
 #include "bbport_toggles.h"
 #include "common/assert.h"
 #include "common/debug.h"
@@ -171,14 +172,8 @@ std::unique_ptr<RecordChunk> Scheduler::AcquireChunk() {
 }
 
 void Scheduler::WaitHostCopies() {
-    if (host_copies_done.load(std::memory_order_acquire) >= host_copies_issued) {
-        return;
-    }
     BbStats::Timer timer{BbStats::t_host_wait};
-    KickRecording(true);
-    while (host_copies_done.load(std::memory_order_acquire) < host_copies_issued) {
-        std::this_thread::yield();
-    }
+    BbCopy::WaitAsync();
 }
 
 void Scheduler::KickRecording(bool force) {
@@ -357,6 +352,8 @@ void Scheduler::SubmitExecution(SubmitInfo& info) {
 
     EndRendering();
     SyncRecording();
+    // Guest memory copies into staging read by this submission (copy threads).
+    WaitHostCopies();
     Check(current_cmdbuf.end());
 
     const vk::Semaphore timeline = work_semaphore.Handle();
