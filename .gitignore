@@ -1,0 +1,4 @@
+out/
+__pycache__/
+user/
+*.mp4
