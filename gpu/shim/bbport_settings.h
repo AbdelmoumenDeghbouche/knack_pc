@@ -1,0 +1,42 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
+// bbport: user settings changed at run time from the in-game menu (bbport_overlay.h) and kept
+// in bbport.ini (BB_CONFIG overrides the path). Environment variables override the file at
+// start. Readers load the atomics every frame; writers are the menu and Load().
+
+#pragma once
+
+#include <atomic>
+
+namespace BbSettings {
+
+enum Upscaler : int { UpscalerOff = 0, UpscalerFsr3 = 1, UpscalerCount };
+enum Preset : int { NativeAA = 0, Quality, Balanced, Performance, UltraPerformance, PresetCount };
+enum DebugView : int { DebugNone = 0, DebugReactive = 1, DebugViewCount };
+
+struct Values {
+    std::atomic<int> upscaler{UpscalerFsr3};
+    std::atomic<int> preset{NativeAA};
+    std::atomic<bool> sharpen{true};
+    std::atomic<float> sharpness{0.3f};
+    std::atomic<bool> jitter{true};
+    std::atomic<bool> reactive{false};
+    std::atomic<float> reactive_scale{1.0f};
+    std::atomic<float> reactive_threshold{0.2f};
+    std::atomic<float> reactive_max{0.9f};
+    std::atomic<int> debug_view{DebugNone};
+    std::atomic<bool> show_fps{false};
+};
+
+Values& Get();
+
+/// Reads the file, then the environment overrides. Called once at start.
+void Load();
+/// Writes the file (menu changes).
+void Save();
+
+/// Render resolution divisor of a preset (1.0 native, 1.5 quality, ...).
+float PresetScale(int preset);
+const char* PresetName(int preset);
+const char* UpscalerName(int upscaler);
+
+} // namespace BbSettings

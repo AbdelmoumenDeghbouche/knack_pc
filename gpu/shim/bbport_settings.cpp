@@ -1,0 +1,128 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
+#include "bbport_settings.h"
+
+#include <algorithm>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+#include <string>
+
+namespace BbSettings {
+
+namespace {
+
+const char* Path() {
+    const char* env = std::getenv("BB_CONFIG");
+    return env && env[0] ? env : "bbport.ini";
+}
+
+float Clamp(float v, float lo, float hi) {
+    return std::clamp(v, lo, hi);
+}
+
+void Set(Values& v, const std::string& key, const std::string& value) {
+    const float f = float(std::atof(value.c_str()));
+    const int i = std::atoi(value.c_str());
+    if (key == "upscaler") {
+        for (int u = 0; u < UpscalerCount; ++u) {
+            if (value == UpscalerName(u)) {
+                v.upscaler = u;
+            }
+        }
+    } else if (key == "preset") {
+        v.preset = std::clamp(i, 0, PresetCount - 1);
+    } else if (key == "sharpen") {
+        v.sharpen = i != 0;
+    } else if (key == "sharpness") {
+        v.sharpness = Clamp(f, 0.0f, 1.0f);
+    } else if (key == "jitter") {
+        v.jitter = i != 0;
+    } else if (key == "reactive") {
+        v.reactive = i != 0;
+    } else if (key == "reactive_scale") {
+        v.reactive_scale = Clamp(f, 0.0f, 16.0f);
+    } else if (key == "reactive_threshold") {
+        v.reactive_threshold = Clamp(f, 0.0f, 1.0f);
+    } else if (key == "reactive_max") {
+        v.reactive_max = Clamp(f, 0.0f, 1.0f);
+    } else if (key == "show_fps") {
+        v.show_fps = i != 0;
+    }
+}
+
+} // namespace
+
+Values& Get() {
+    static Values values;
+    return values;
+}
+
+void Load() {
+    auto& v = Get();
+    if (FILE* file = std::fopen(Path(), "r")) {
+        char line[256];
+        while (std::fgets(line, sizeof(line), file)) {
+            std::string text{line};
+            text.erase(text.find_last_not_of(" \t\r\n") + 1);
+            const auto eq = text.find('=');
+            if (text.empty() || text[0] == '#' || eq == std::string::npos) {
+                continue;
+            }
+            Set(v, text.substr(0, eq), text.substr(eq + 1));
+        }
+        std::fclose(file);
+        std::printf("Settings: %s\n", Path());
+    }
+    // Environment overrides (scripts, A/B tests).
+    if (const char* env = std::getenv("BB_UPSCALER")) {
+        v.upscaler = std::strcmp(env, "fsr3") == 0 ? UpscalerFsr3 : UpscalerOff;
+    }
+    const std::pair<const char*, const char*> env_keys[] = {
+        {"BB_FSR_SHARPNESS", "sharpness"},        {"BB_JITTER", "jitter"},
+        {"BB_REACTIVE", "reactive"},              {"BB_REACTIVE_SCALE", "reactive_scale"},
+        {"BB_REACTIVE_THRESHOLD", "reactive_threshold"}, {"BB_REACTIVE_MAX", "reactive_max"},
+        {"BB_UPSCALE_PRESET", "preset"},
+    };
+    for (const auto& [env, key] : env_keys) {
+        if (const char* value = std::getenv(env)) {
+            Set(v, key, value);
+        }
+    }
+}
+
+void Save() {
+    const auto& v = Get();
+    FILE* file = std::fopen(Path(), "w");
+    if (!file) {
+        std::printf("Settings: cannot write %s\n", Path());
+        return;
+    }
+    std::fprintf(file,
+                 "# bbport settings (in-game menu: Insert / L3+R3)\n"
+                 "upscaler=%s\npreset=%d\nsharpen=%d\nsharpness=%.2f\njitter=%d\n"
+                 "reactive=%d\nreactive_scale=%.2f\nreactive_threshold=%.2f\nreactive_max=%.2f\n"
+                 "show_fps=%d\n",
+                 UpscalerName(v.upscaler), v.preset.load(), int(v.sharpen.load()),
+                 v.sharpness.load(), int(v.jitter.load()), int(v.reactive.load()),
+                 v.reactive_scale.load(), v.reactive_threshold.load(), v.reactive_max.load(),
+                 int(v.show_fps.load()));
+    std::fclose(file);
+}
+
+float PresetScale(int preset) {
+    static constexpr float scales[PresetCount] = {1.0f, 1.5f, 1.7f, 2.0f, 3.0f};
+    return scales[std::clamp(preset, 0, PresetCount - 1)];
+}
+
+const char* PresetName(int preset) {
+    static constexpr const char* names[PresetCount] = {"Native AA", "Quality", "Balanced",
+                                                       "Performance", "Ultra Performance"};
+    return names[std::clamp(preset, 0, PresetCount - 1)];
+}
+
+const char* UpscalerName(int upscaler) {
+    static constexpr const char* names[UpscalerCount] = {"off", "fsr3"};
+    return names[std::clamp(upscaler, 0, UpscalerCount - 1)];
+}
+
+} // namespace BbSettings

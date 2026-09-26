@@ -223,6 +223,17 @@ void Rasterizer::PrepareRenderState(const GraphicsPipeline* pipeline) {
             color.info.size.width == depth.info.size.width &&
             color.info.size.height == depth.info.size.height) {
             upscaler->OnSceneColor(cb_descs[0].first);
+            // Blended geometry without depth writes (not full-screen passes): transparents and
+            // effects start. Blended layers writing depth (decals, wet/blood ground) are
+            // surfaces and stay in the history.
+            if (regs.blend_control[0].enable && !regs.color_buffers[0].info.blend_bypass &&
+                !regs.depth_control.depth_write_enable &&
+                (regs.num_indices > 6 || regs.num_instances.NumInstances() > 1)) {
+                upscaler->OnBlendedSceneDraw();
+            } else if (regs.num_indices <= 6 && regs.num_instances.NumInstances() <= 1) {
+                // A full-screen pass over the scene (the fog composite): the transparents are in.
+                upscaler->OnSceneComposite();
+            }
         }
     }
 }
@@ -341,6 +352,15 @@ void Rasterizer::Draw(bool is_indexed, u32 index_offset, const PreparedDraw* pre
     if (FrameCapture::Active()) {
         const auto* ps = pipeline->GetStages()[u32(Shader::SwStage::Fragment)];
         FrameCapture::Draw(vs_info.pgm_hash, ps ? ps->pgm_hash : 0, num_indices, num_instances);
+        if (const auto& bc = regs.blend_control[0]; bc.enable && regs.color_buffers[0]) {
+            char note[128];
+            std::snprintf(note, sizeof(note), "\n  blend ps %08x idx %u: src %u dst %u func %u z %u%u",
+                          u32(ps ? ps->pgm_hash : 0), num_indices, u32(bc.color_src_factor),
+                          u32(bc.color_dst_factor), u32(bc.color_func),
+                          u32(regs.depth_control.depth_enable),
+                          u32(regs.depth_control.depth_write_enable));
+            FrameCapture::Note(note);
+        }
     }
     DebugState.IncDrawCall();
 

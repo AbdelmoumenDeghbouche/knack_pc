@@ -51,7 +51,9 @@ CameraMotion::CameraMotion(const Instance& instance_, Scheduler& scheduler_,
     const char* env = std::getenv("BB_DEBUG_MOTION");
     debug_overlay = env && env[0] == '1';
     const char* upscaler = std::getenv("BB_UPSCALER");
-    for_upscaler = upscaler && upscaler[0] != '\0' && std::strcmp(upscaler, "off") != 0;
+    // The upscaler can be switched on from the menu at any time: the camera is always tracked
+    // unless BB_UPSCALER=none.
+    for_upscaler = !(upscaler && std::strcmp(upscaler, "none") == 0);
     const auto device = instance.GetDevice();
     if (for_upscaler) {
         const std::array<vk::DescriptorSetLayoutBinding, 2> motion_bindings = {{

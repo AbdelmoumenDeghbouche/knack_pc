@@ -1,4 +1,6 @@
 // bbport: glue between the C loader and the vendored shadPS4 video core.
+#include "bbport_overlay.h"
+#include "bbport_settings.h"
 #include "bbport_copy.h"
 #include <sys/resource.h>
 #include "bbport_toggles.h"
@@ -182,6 +184,7 @@ u32 BbDisplayRefreshHz() {
 }
 
 extern "C" int bbgpu_init(const BbGpuConfig* config) {
+    BbSettings::Load();
     g_sdk_version = config->sdk_version;
     if (config->user_dir) setenv("BB_GPU_USER_DIR", config->user_dir, 0);
     Core::Emulator::FillElfInfo(*config);
@@ -292,6 +295,10 @@ u32 ConsumeGameOnlyScreenshotRequests() { return 0; }
 u32 ConsumeWithOverlaysScreenshotRequests() { return 0; }
 ScreenshotRequests ConsumeScreenshotRequests() { return {}; }
 } // namespace VideoCore
+
+extern "C" int bbgpu_overlay_captures_input(void) {
+    return BbOverlay::CapturesInput() ? 1 : 0;
+}
 
 extern "C" int bbgpu_text_input_begin(const char* initial, const char* prompt) {
     if (!g_window) return 0;

@@ -7,6 +7,7 @@
  *   Enter Options, Tab touchpad, IJKL d-pad (I up, K down, J left, L right). */
 #define _GNU_SOURCE
 #include "runtime.h"
+#include "gpu/bbgpu.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -82,6 +83,7 @@ static void sample(PadData *d) {
     d->connected=1; d->connected_count=connected_count ? connected_count : 1;
     d->timestamp=now_us();
     SDL_Gamepad *g=current_gamepad();
+    if (bbgpu_overlay_captures_input()) return; /* settings menu open: neutral input */
     if (g) {
         static const struct { SDL_GamepadButton sdl; uint32_t ps; } map[]={
             {SDL_GAMEPAD_BUTTON_SOUTH,BTN_CROSS}, {SDL_GAMEPAD_BUTTON_EAST,BTN_CIRCLE},

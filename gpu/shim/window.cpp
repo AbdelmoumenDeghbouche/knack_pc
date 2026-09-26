@@ -5,6 +5,7 @@
 #include "common/assert.h"
 #include "common/logging/log.h"
 #include "sdl_window.h"
+#include "bbport_overlay.h"
 
 namespace Frontend {
 
@@ -98,6 +99,9 @@ bool WindowSDL::PollEvents() {
                 SDL_StopTextInput(window);
             }
             UpdateTextTitle();
+            continue;
+        }
+        if (BbOverlay::HandleEvent(event)) {
             continue;
         }
         switch (event.type) {
