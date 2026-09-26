@@ -88,6 +88,8 @@ void Load() {
             Set(v, key, value);
         }
     }
+    v.startup_preset = v.preset;
+    v.startup_upscaler = v.upscaler;
 }
 
 void Save() {

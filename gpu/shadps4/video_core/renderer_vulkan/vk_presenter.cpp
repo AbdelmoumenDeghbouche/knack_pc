@@ -13,6 +13,7 @@
 #include "video_core/renderdoc.h"
 #include "video_core/renderer_vulkan/vk_platform.h"
 #include "bbport_overlay.h"
+#include "video_core/renderer_vulkan/vk_temporal_upscaler.h"
 #include "video_core/renderer_vulkan/vk_presenter.h"
 #include "video_core/renderer_vulkan/vk_rasterizer.h"
 #include "video_core/texture_cache/image.h"
@@ -314,9 +315,15 @@ static vk::Format GetFrameViewFormat(const Libraries::VideoOut::PixelFormat form
 
 Frame* Presenter::PrepareFrame(const Libraries::VideoOut::BufferAttributeGroup& attribute,
                                VAddr cpu_address) {
-    auto desc = VideoCore::TextureCache::ImageDesc{attribute, cpu_address};
-    const auto image_id = texture_cache.FindImage(desc);
-    texture_cache.UpdateImage(image_id);
+    // bbport: scaled upscaler presets: the output-size display buffer drawn by the port.
+    TemporalUpscaler::Display display{};
+    const bool upscaled = rasterizer->GetUpscaler().DisplayOverride(cpu_address, display);
+    VideoCore::ImageId image_id{};
+    if (!upscaled) {
+        auto desc = VideoCore::TextureCache::ImageDesc{attribute, cpu_address};
+        image_id = texture_cache.FindImage(desc);
+        texture_cache.UpdateImage(image_id);
+    }
 
     Frame* frame = GetRenderFrame();
 
@@ -351,17 +358,41 @@ Frame* Presenter::PrepareFrame(const Libraries::VideoOut::BufferAttributeGroup& 
     // Exclude alpha from output frame to avoid blending with UI.
     view_info.mapping.a = vk::ComponentSwizzle::eOne;
 
-    auto& image = texture_cache.GetImage(image_id);
-    auto image_view = *image.FindView(view_info).image_view;
-    const vk::Extent2D image_size = {image.info.size.width, image.info.size.height};
+    vk::ImageView image_view{};
+    vk::Extent2D image_size{};
+    if (upscaled) {
+        const auto device = instance.GetDevice();
+        image_view = Check(device.createImageView({
+            .image = display.image,
+            .viewType = vk::ImageViewType::e2D,
+            .format = view_info.format,
+            .components = {vk::ComponentSwizzle::eIdentity, vk::ComponentSwizzle::eIdentity,
+                           vk::ComponentSwizzle::eIdentity, vk::ComponentSwizzle::eOne},
+            .subresourceRange = {vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1},
+        }));
+        draw_scheduler.DeferOperation([device, image_view] { device.destroyImageView(image_view); });
+        image_size = vk::Extent2D{display.width, display.height};
+        const vk::ImageMemoryBarrier2 to_read{
+            .srcStageMask = vk::PipelineStageFlagBits2::eColorAttachmentOutput,
+            .srcAccessMask = vk::AccessFlagBits2::eColorAttachmentWrite,
+            .dstStageMask = vk::PipelineStageFlagBits2::eAllCommands,
+            .dstAccessMask = vk::AccessFlagBits2::eShaderRead,
+            .oldLayout = vk::ImageLayout::eGeneral,
+            .newLayout = vk::ImageLayout::eShaderReadOnlyOptimal,
+            .image = display.image,
+            .subresourceRange = {vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1},
+        };
+        cmdbuf.pipelineBarrier2({.imageMemoryBarrierCount = 1, .pImageMemoryBarriers = &to_read});
+    } else {
+        auto& image = texture_cache.GetImage(image_id);
+        image_view = *image.FindView(view_info).image_view;
+        image_size = vk::Extent2D{image.info.size.width, image.info.size.height};
+        runtime.Transit(&image, vk::ImageLayout::eShaderReadOnlyOptimal,
+                        vk::PipelineStageFlagBits2::eFragmentShader,
+                        vk::AccessFlagBits2::eShaderRead);
+        runtime.FlushBarriers();
+    }
     expected_ratio = static_cast<float>(image_size.width) / static_cast<float>(image_size.height);
-
-    // bbport: upscaler integration point: the guest VideoOut image enters host passes here.
-    // Continue with host-side passes that draw the displayed (scaled) frame.
-
-    runtime.Transit(&image, vk::ImageLayout::eShaderReadOnlyOptimal,
-                    vk::PipelineStageFlagBits2::eFragmentShader, vk::AccessFlagBits2::eShaderRead);
-    runtime.FlushBarriers();
 
     image_view = fsr_pass.Render(cmdbuf, image_view, image_size, {frame->width, frame->height},
                                  fsr_settings, frame->is_hdr);

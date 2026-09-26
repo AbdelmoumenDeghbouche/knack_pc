@@ -28,6 +28,8 @@ asm(".section .rodata\n"
 extern "C" const unsigned char bb_font_ttf[];
 extern "C" const unsigned char bb_font_ttf_end[];
 
+extern "C" void runtime_restart(void); // bb-probe (probe.c)
+
 namespace BbOverlay {
 
 namespace {
@@ -178,25 +180,33 @@ void Menu() {
                   BbSettings::PresetScale(preset));
     if (ImGui::BeginCombo("Пресет", preset_label)) {
         for (int i = 0; i < BbSettings::PresetCount; ++i) {
-            // Render-resolution scaling is not in yet: only native resolution works.
-            const bool available = i == BbSettings::NativeAA;
             char label[64];
-            std::snprintf(label, sizeof(label), "%s (x%.1f)", BbSettings::PresetName(i),
-                          BbSettings::PresetScale(i));
-            ImGui::BeginDisabled(!available);
+            const float scale = BbSettings::PresetScale(i);
+            std::snprintf(label, sizeof(label), "%s (x%.1f, рендер %dx%d)",
+                          BbSettings::PresetName(i), scale, int(std::lround(1920 / scale / 2) * 2),
+                          int(std::lround(1080 / scale / 2) * 2));
             if (ImGui::Selectable(label, i == preset)) {
                 Store(s.preset, i, true);
-            }
-            ImGui::EndDisabled();
-            if (!available) {
-                ImGui::SameLine();
-                ImGui::TextDisabled("— в работе");
             }
         }
         ImGui::EndCombo();
     }
     Hint("Native AA: игра рендерится в родном разрешении, FSR работает как сглаживание. "
-         "Остальные пресеты снижают разрешение рендера и восстанавливают его апскейлером.");
+         "Остальные пресеты снижают разрешение рендера игры, FSR восстанавливает 1920x1080, "
+         "интерфейс рисуется в полном разрешении.");
+    if (s.preset != s.startup_preset ||
+        (s.startup_preset != BbSettings::NativeAA && s.upscaler != s.startup_upscaler)) {
+        // The render resolution is a code patch applied at start and the game allocates its
+        // targets once: a restart, done here in one click.
+        ImGui::TextColored(ImVec4(1.0f, 0.75f, 0.3f, 1.0f),
+                           "Разрешение рендера задаётся при запуске игры");
+        if (ImGui::Button("Применить и перезапустить игру")) {
+            BbSettings::Save();
+            runtime_restart();
+        }
+        Hint("Игра перезапустится с титульного экрана. Bloodborne сохраняется "
+             "автоматически, но лучше не нажимать во время загрузки или сохранения.");
+    }
     Checkbox("Резкость (RCAS)", s.sharpen);
     ImGui::BeginDisabled(!s.sharpen);
     Slider("Сила резкости", s.sharpness, 0.0f, 1.0f);

@@ -25,6 +25,11 @@ struct Values {
     std::atomic<float> reactive_max{0.9f};
     std::atomic<int> debug_view{DebugNone};
     std::atomic<bool> show_fps{false};
+
+    /// Preset and upscaler the game was started with: the render resolution patch is applied
+    /// at start (patches.py), a changed preset needs a restart.
+    int startup_preset = NativeAA;
+    int startup_upscaler = UpscalerFsr3;
 };
 
 Values& Get();

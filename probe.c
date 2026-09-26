@@ -235,6 +235,20 @@ static void apply_patches(const char *path, Segment *segments, uint64_t ns, cons
     fclose(f);
     printf("Patches: %" PRIu64 " writes, %" PRIu64 " bytes applied\n",count,bytes);
 }
+/* Restarts the game through run.sh (the settings menu: a new render resolution is a patch
+ * applied at start). Descriptors are closed first so the old GPU device and its memory are
+ * released before the new process opens its own. */
+void runtime_restart(void) {
+    fflush(NULL);
+    puts("Runtime: restarting through run.sh");
+#ifndef _WIN32
+    syscall(SYS_close_range, 3u, ~0u, 0u);
+    execlp("bash", "bash", "run.sh", (char *)NULL);
+    perror("runtime_restart: exec");
+    _exit(1);
+#endif
+}
+
 int main(int argc, char **argv) {
     setvbuf(stdout, NULL, _IONBF, 0);
 #ifndef _WIN32

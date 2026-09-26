@@ -12,6 +12,48 @@ from pathlib import Path
 EBOOT_BASE=0x400000
 # BB_FPS presets: patch names from patches/Bloodborne.xml (app version 01.09).
 FPS_PRESETS={'30':[],'60':['60 FPS++'],'90':['90 FPS++'],'uncap':['Uncap FPS++']}
+# Upscaler presets (bbport.ini "preset", the in-game menu): output / render size ratio. The game
+# then renders at 1920x1080 / ratio and the port's temporal upscaler restores the output size.
+OUTPUT_SIZE=(1920,1080)
+PRESET_SCALES=[1.0,1.5,1.7,2.0,3.0]
+# The community resolution patch this is derived from: its "mov eax/ecx, imm32" render width
+# (0x500) and height (0x2D0) immediates are replaced; its other lines (UI coordinate space,
+# aspect) are kept.
+RESOLUTION_TEMPLATE='Resolution Patch 1280x720 (16:9)'
+
+
+def read_settings(path):
+    settings={}
+    if path.exists():
+        for line in path.read_text().splitlines():
+            key,sep,value=line.partition('=')
+            if sep and not line.startswith('#'): settings[key.strip()]=value.strip()
+    return settings
+
+
+def render_size(settings,override=''):
+    """Render resolution for the upscaler preset, or None for native."""
+    if override:
+        w,h=(int(v) for v in override.lower().split('x'))
+        return (w,h)
+    if settings.get('upscaler','fsr3')=='off': return None
+    preset=int(settings.get('preset','0') or 0)
+    scale=PRESET_SCALES[max(0,min(preset,len(PRESET_SCALES)-1))]
+    if scale==1.0: return None
+    # Even sizes (the game has half-resolution buffers).
+    return tuple(max(2,round(v/scale/2)*2) for v in OUTPUT_SIZE)
+
+
+def resolution_writes(xml,size,app_version,segments):
+    writes=compile_patches(xml,[RESOLUTION_TEMPLATE],app_version,segments)
+    out=[]
+    for offset,data in writes:
+        if len(data)==4 and data[0] in (0xB8,0xB9):
+            imm=int.from_bytes(data[1:4],'little')
+            if imm==0x500: data=bytes([data[0]])+size[0].to_bytes(3,'little')
+            elif imm==0x2D0: data=bytes([data[0]])+size[1].to_bytes(3,'little')
+        out.append((offset,data))
+    return out
 
 
 def eboot_segments(elf):
@@ -61,10 +103,16 @@ def main():
     p.add_argument('--extra',default='',help='additional patch names, separated by ";"')
     p.add_argument('--app-version',default='01.09')
     p.add_argument('--out',type=Path,default=Path(__file__).parent/'out')
+    p.add_argument('--settings',type=Path,default=Path(__file__).parent/'bbport.ini')
+    p.add_argument('--render-res',default='',help='render resolution WxH (overrides the preset)')
     a=p.parse_args()
     names=FPS_PRESETS[a.fps]+[n.strip() for n in a.extra.split(';') if n.strip()]
     segments=eboot_segments((a.out/'eboot.elf').read_bytes())
     writes=compile_patches(a.xml,names,a.app_version,segments)
+    size=render_size(read_settings(a.settings),a.render_res)
+    if size:
+        writes+=resolution_writes(a.xml,size,a.app_version,segments)
+        print(f'Patches: render resolution {size[0]}x{size[1]} (upscaled to {OUTPUT_SIZE[0]}x{OUTPUT_SIZE[1]})')
     blob=struct.pack('<8sQ',b'BBPATCH1',len(writes))
     for offset,data in writes: blob+=struct.pack('<QQ',offset,len(data))+data
     (a.out/'patches.bin').write_bytes(blob)

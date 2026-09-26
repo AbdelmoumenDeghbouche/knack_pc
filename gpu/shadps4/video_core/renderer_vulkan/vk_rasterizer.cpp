@@ -214,6 +214,9 @@ void Rasterizer::PrepareRenderState(const GraphicsPipeline* pipeline) {
     if (gbuffer_draw) {
         camera_motion->OnGBufferPass(db_desc.first);
     }
+    if (upscaler->Enabled() && cb_descs[0].first) {
+        upscaler->OnColorTarget(cb_descs[0].first);
+    }
     // bbport: scene color: a full-size RGBA16F target drawn with the scene depth.
     if (upscaler->Enabled() && db_desc.first && db_desc.first == camera_motion->Depth() &&
         cb_descs[0].first && std::popcount(key.mrt_mask) <= 2) {
@@ -305,6 +308,10 @@ void Rasterizer::Draw(bool is_indexed, u32 index_offset, const PreparedDraw* pre
     if (!pipeline) {
         return;
     }
+    if (upscaler->Enabled()) {
+        // Scaled presets: the first UI draw starts the upscale.
+        upscaler->OnDraw(pipeline->GetStage(Shader::SwStage::Vertex).pgm_hash);
+    }
 
     PrepareRenderState(pipeline);
     if (!BindResources(pipeline)) {
@@ -321,6 +328,11 @@ void Rasterizer::Draw(bool is_indexed, u32 index_offset, const PreparedDraw* pre
         runtime.FlushBarriers();
     }
 
+    // bbport: screen-space (clip disabled) draws into the upscaler's output-size images.
+    push_data.xscale *= target_scale[0];
+    push_data.xoffset *= target_scale[0];
+    push_data.yscale *= target_scale[1];
+    push_data.yoffset *= target_scale[1];
     pipeline->BindResources(set_writes, push_data);
     // bbport: jitter geometry drawn with the scene depth, not full-screen passes (a shifted
     // full-screen quad leaves an edge column unwritten).
@@ -414,6 +426,11 @@ void Rasterizer::DrawIndirect(bool is_indexed, VAddr arg_address, u32 offset, u3
         runtime.FlushBarriers();
     }
 
+    // bbport: screen-space (clip disabled) draws into the upscaler's output-size images.
+    push_data.xscale *= target_scale[0];
+    push_data.xoffset *= target_scale[0];
+    push_data.yscale *= target_scale[1];
+    push_data.yoffset *= target_scale[1];
     pipeline->BindResources(set_writes, push_data);
     draw_jitter = {};
     if (upscaler->Enabled() && db_desc.first && db_desc.first == camera_motion->Depth()) {
@@ -1189,8 +1206,13 @@ void Rasterizer::BindTextures(const Shader::Info& stage, Shader::Backend::Bindin
                 FrameCapture::Sampled(image.info, is_storage);
             }
 
-            image_infos.emplace_back(VK_NULL_HANDLE, *image_view.image_view,
-                                     image.backing->state.layout);
+            vk::ImageView view = *image_view.image_view;
+            vk::ImageLayout layout = image.backing->state.layout;
+            if (upscaler->Enabled()) {
+                // bbport: the display pass reads the upscaled frame (scaled presets).
+                upscaler->RedirectSampled(image_id, image_view.info, view, layout);
+            }
+            image_infos.emplace_back(VK_NULL_HANDLE, view, layout);
         }
     }
 
@@ -1230,6 +1252,11 @@ void Rasterizer::BindTextures(const Shader::Info& stage, Shader::Backend::Bindin
 
 RenderState Rasterizer::BeginRendering(const GraphicsPipeline* pipeline) {
     attachment_feedback_loop = false;
+    using VulkanUpscalerTarget = TemporalUpscaler::Target;
+    VulkanUpscalerTarget redirect{};
+    bool color_redirected = false, depth_redirected = false;
+    std::pair<u32, u32> guest_extent{1, 1};
+    std::pair<vk::ImageView, vk::ImageLayout> original_color{};
     const auto& regs = liverpool->regs;
     const auto& key = pipeline->GetGraphicsKey();
     RenderState state;
@@ -1293,6 +1320,15 @@ RenderState Rasterizer::BeginRendering(const GraphicsPipeline* pipeline) {
         attachment.is_clear = is_clear;
 
         image->usage.render_target = 1u;
+        if (cb == 0 && upscaler->Enabled()) {
+            color_redirected = upscaler->RedirectColor(image_id, desc.view_info, redirect);
+            if (color_redirected) {
+                guest_extent = {image->info.size.width, image->info.size.height};
+                original_color = {attachment.image_view, attachment.image_layout};
+                attachment.image_view = redirect.view;
+                attachment.image_layout = redirect.layout;
+            }
+        }
     }
     for (u32 cb = state.num_color_attachments; cb < state.color_attachments.size(); ++cb) {
         state.color_attachments[cb] = {};
@@ -1353,8 +1389,64 @@ RenderState Rasterizer::BeginRendering(const GraphicsPipeline* pipeline) {
         }
 
         image.usage.depth_target = true;
+        if (upscaler->Enabled()) {
+            VulkanUpscalerTarget depth_redirect;
+            depth_redirected = upscaler->RedirectDepth(image_id, depth_redirect);
+            if (depth_redirected) {
+                guest_extent = {image.info.size.width, image.info.size.height};
+                attachment.image_view = depth_redirect.view;
+                attachment.image_layout = depth_redirect.layout;
+                redirect = depth_redirect;
+            }
+        }
     } else {
         state.depth_stencil_attachment = {};
+    }
+
+    // bbport: a pass drawn into the upscaler's output-size images (UI, display pass): every
+    // attachment must be redirected, viewports and scissors are scaled.
+    target_scale = {1.0f, 1.0f};
+    if (color_redirected || depth_redirected) {
+        u32 color_targets = 0;
+        for (u32 cb = 0; cb < state.num_color_attachments; ++cb) {
+            color_targets += state.color_attachments[cb].image_view ? 1 : 0;
+        }
+        const bool has_depth = bool(db_desc.first);
+        if ((color_targets > 0 && !color_redirected) || (has_depth && !depth_redirected) ||
+            color_targets > 1) {
+            static u32 warned = 0;
+            if (warned < 8) {
+                ++warned;
+                const auto describe = [&](VideoCore::ImageId id) {
+                    if (!id) {
+                        return std::string{"-"};
+                    }
+                    const auto& info = texture_cache.GetImage(id).info;
+                    return fmt::format("{:#x} {}x{} {}", info.guest_address, info.size.width,
+                                       info.size.height, vk::to_string(info.pixel_format));
+                };
+                std::printf("Upscaler: pass not redirected (color %s: %s, depth %s: %s, %u "
+                            "targets)\n",
+                            color_redirected ? "yes" : "no", describe(cb_descs[0].first).c_str(),
+                            depth_redirected ? "yes" : "no", describe(db_desc.first).c_str(),
+                            state.num_color_attachments);
+            }
+            if (color_redirected) {
+                state.color_attachments[0].image_view = original_color.first;
+                state.color_attachments[0].image_layout = original_color.second;
+            }
+            if (depth_redirected) {
+                auto& depth_image = texture_cache.GetImage(db_desc.first);
+                state.depth_stencil_attachment.image_view =
+                    *texture_cache.FindDepthTarget(db_desc.first, db_desc.second).image_view;
+                state.depth_stencil_attachment.image_layout = depth_image.backing->state.layout;
+            }
+        } else {
+            state.width = redirect.width;
+            state.height = redirect.height;
+            target_scale = {float(redirect.width) / float(guest_extent.first),
+                            float(redirect.height) / float(guest_extent.second)};
+        }
     }
 
     if (state.num_layers == std::numeric_limits<u16>::max()) {
@@ -1641,10 +1733,10 @@ void Rasterizer::UpdateViewportScissorState() const {
 
             // bbport: sub-pixel jitter of scene geometry for the temporal upscaler; the same
             // shift as jittering the projection.
-            viewport.x = xoffset - xscale + draw_jitter[0];
-            viewport.y = yoffset - yscale + draw_jitter[1];
-            viewport.width = xscale * 2.0f;
-            viewport.height = yscale * 2.0f;
+            viewport.x = (xoffset - xscale) * target_scale[0] + draw_jitter[0];
+            viewport.y = (yoffset - yscale) * target_scale[1] + draw_jitter[1];
+            viewport.width = xscale * 2.0f * target_scale[0];
+            viewport.height = yscale * 2.0f * target_scale[1];
         }
 
         viewports.push_back(viewport);
@@ -1660,10 +1752,22 @@ void Rasterizer::UpdateViewportScissorState() const {
             vp_scsr.bottom_right_y = std::min(AmdGpu::Scissor::Clamp(vp_scsr.bottom_right_y),
                                               regs.viewport_scissors[i].bottom_right_y);
         }
-        scissors.push_back({
-            .offset = {vp_scsr.top_left_x, vp_scsr.top_left_y},
-            .extent = {vp_scsr.GetWidth(), vp_scsr.GetHeight()},
-        });
+        if (target_scale[0] != 1.0f || target_scale[1] != 1.0f) {
+            const auto scale = [](s32 v, float f) { return s32(std::lround(float(v) * f)); };
+            const s32 x0 = scale(vp_scsr.top_left_x, target_scale[0]);
+            const s32 y0 = scale(vp_scsr.top_left_y, target_scale[1]);
+            const s32 x1 = scale(vp_scsr.top_left_x + s32(vp_scsr.GetWidth()), target_scale[0]);
+            const s32 y1 = scale(vp_scsr.top_left_y + s32(vp_scsr.GetHeight()), target_scale[1]);
+            scissors.push_back({
+                .offset = {x0, y0},
+                .extent = {u32(std::max(x1 - x0, 0)), u32(std::max(y1 - y0, 0))},
+            });
+        } else {
+            scissors.push_back({
+                .offset = {vp_scsr.top_left_x, vp_scsr.top_left_y},
+                .extent = {vp_scsr.GetWidth(), vp_scsr.GetHeight()},
+            });
+        }
     }
 
     if (viewports.empty()) {

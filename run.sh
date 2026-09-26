@@ -31,7 +31,8 @@ if [[ -z ${PYTHON:-} ]]; then echo 'Install Python 3 or set PYTHON.' >&2; exit 1
 # Frame rate: BB_FPS=uncap (default; delta-time patch, vblank follows the display),
 # 60/90 (fixed-timestep patches) or 30 (unpatched). BB_PATCHES adds patch names ("a;b").
 fps=${BB_FPS:-uncap}
-"$PYTHON" patches.py --fps "$fps" --extra "${BB_PATCHES:-}"
+# Render resolution: the upscaler preset in ${BB_CONFIG:-bbport.ini}, or BB_RENDER_RES=WxH.
+"$PYTHON" patches.py --fps "$fps" --extra "${BB_PATCHES:-}" --settings "${BB_CONFIG:-bbport.ini}" --render-res "${BB_RENDER_RES:-}"
 if [[ -z ${BB_VBLANK_HZ:-} ]]; then
     case $fps in uncap) export BB_VBLANK_HZ=0 ;; 90) export BB_VBLANK_HZ=90 ;; *) export BB_VBLANK_HZ=60 ;; esac
 fi
