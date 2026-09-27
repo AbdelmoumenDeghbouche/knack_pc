@@ -5,6 +5,7 @@
 #include <chrono>
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
 #include <mutex>
 
 #include <SDL3/SDL.h>
@@ -191,21 +192,15 @@ void Menu() {
         }
         ImGui::EndCombo();
     }
-    Hint("Native AA: игра рендерится в родном разрешении, FSR работает как сглаживание. "
-         "Остальные пресеты снижают разрешение рендера игры, FSR восстанавливает 1920x1080, "
-         "интерфейс рисуется в полном разрешении.");
-    if (s.preset != s.startup_preset ||
-        (s.startup_preset != BbSettings::NativeAA && s.upscaler != s.startup_upscaler)) {
-        // The render resolution is a code patch applied at start and the game allocates its
-        // targets once: a restart, done here in one click.
-        ImGui::TextColored(ImVec4(1.0f, 0.75f, 0.3f, 1.0f),
-                           "Разрешение рендера задаётся при запуске игры");
-        if (ImGui::Button("Применить и перезапустить игру")) {
-            BbSettings::Save();
-            runtime_restart();
-        }
-        Hint("Игра перезапустится с титульного экрана. Bloodborne сохраняется "
-             "автоматически, но лучше не нажимать во время загрузки или сохранения.");
+    ImGui::Text("Активный рендер сцены: %d x %d", s.active_render_width.load(),
+                s.active_render_height.load());
+    if (std::getenv("BB_RENDER_RES")) {
+        Hint("BB_RENDER_RES задаёт фиксированное разрешение сцены при запуске. "
+             "Чтобы использовать пресеты меню, уберите переменную окружения.");
+    } else {
+        Hint("Native AA: FSR работает как сглаживание. Остальные пресеты уменьшают разрешение "
+             "отрисовки сцены. Постобработка и интерфейс остаются в 1920x1080. "
+             "Пресет применяется со следующего кадра без перезапуска игры.");
     }
     Checkbox("Резкость (RCAS)", s.sharpen);
     ImGui::BeginDisabled(!s.sharpen);
@@ -228,7 +223,20 @@ void Menu() {
         s.debug_view = show_mask ? BbSettings::DebugReactive : BbSettings::DebugNone;
     }
     ImGui::EndDisabled();
+    Checkbox("Векторы движения персонажей", s.object_motion);
+    Hint("Точные векторы для анимированных объектов: одежда и оружие меньше рассыпаются "
+         "при движении. Статичная сцена не получает дополнительный проход. "
+         "Изменение применяется после перезапуска игры.");
     ImGui::EndDisabled(); // upscaler off
+
+    if (s.object_motion != s.startup_object_motion) {
+        ImGui::TextColored(ImVec4(1.0f, 0.75f, 0.3f, 1.0f),
+                           "Векторы движения объектов требуют перезапуск");
+        if (ImGui::Button("Применить и перезапустить игру")) {
+            BbSettings::Save();
+            runtime_restart();
+        }
+    }
 
     ImGui::SeparatorText("Прочее");
     Checkbox("Счётчик FPS в углу", s.show_fps);
