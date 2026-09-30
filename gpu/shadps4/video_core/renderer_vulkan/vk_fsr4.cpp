@@ -192,7 +192,7 @@ struct Fsr4Upscaler::Impl {
         }
     }
 
-    bool Register(const Image& image, VkAccessFlags access) {
+    VkResult Register(const Image& image, VkAccessFlags access) {
         const FfxFsr4VkExternalImageState state{
             .structSize = sizeof(FfxFsr4VkExternalImageState),
             .image = image.image,
@@ -204,7 +204,7 @@ struct Fsr4Upscaler::Impl {
             .restoreStageMask = VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
             .restoreAccessMask = access,
         };
-        return ffxFsr4VkSetExternalImageState(&backend, &state) == VK_SUCCESS;
+        return ffxFsr4VkSetExternalImageState(&backend, &state);
     }
 
     bool Record(const Frame& f) {
@@ -236,11 +236,26 @@ struct Fsr4Upscaler::Impl {
             Fail("no free provider frame (" + std::to_string(int(begin)) + ")", false);
             return false;
         }
+        // bbport: a frame begun here must reach RetireFrame even when it records nothing,
+        // or every later BeginFrame fails (VK_ERROR_VALIDATION_FAILED_EXT).
+        const auto abandon = [&] { in_flight.emplace_back(frame_id, scheduler.CurrentTick()); };
         constexpr VkAccessFlags read = VK_ACCESS_SHADER_READ_BIT;
-        if (!Register(f.color, read) || !Register(f.depth, read) || !Register(f.motion, read) ||
-            !Register(f.output, read | VK_ACCESS_SHADER_WRITE_BIT)) {
-            Fail("external image registration failed", false);
-            return false;
+        const std::array<std::pair<const Image*, VkAccessFlags>, 4> images{{
+            {&f.color, read},
+            {&f.depth, read},
+            {&f.motion, read},
+            {&f.output, read | VK_ACCESS_SHADER_WRITE_BIT},
+        }};
+        static constexpr const char* names[] = {"color", "depth", "motion", "output"};
+        for (u32 i = 0; i < images.size(); ++i) {
+            if (const VkResult result = Register(*images[i].first, images[i].second);
+                result != VK_SUCCESS) {
+                Fail(std::string{"external image registration failed ("} + names[i] + ", " +
+                         std::to_string(int(result)) + ")",
+                     false);
+                abandon();
+                return false;
+            }
         }
         const auto resource = [](const Image& image, u32 format, u32 state) {
             FfxApiResource r{};
@@ -283,6 +298,7 @@ struct Fsr4Upscaler::Impl {
         if (const auto result = ffxFsr4V07Dispatch(&context, &d.header);
             result != FFX_API_RETURN_OK) {
             Fail("dispatch failed (" + std::to_string(result) + ")", false);
+            abandon();
             return false;
         }
         in_flight.emplace_back(frame_id, scheduler.CurrentTick());

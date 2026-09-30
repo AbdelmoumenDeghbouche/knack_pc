@@ -113,6 +113,21 @@ public:
     bool DisplayOverride(VAddr address, Display& display);
 
 private:
+    /// bbport: views of guest images the upscaler reads, kept across frames: FSR 4 registers
+    /// images by view in a registry of eight (a new view per frame filled it at Native AA).
+    vk::ImageView CachedView(const VideoCore::Image& image, vk::Format format,
+                             vk::ImageAspectFlags aspect);
+    struct ViewEntry {
+        vk::Image image;
+        u64 uid = 0;
+        vk::Format format{};
+        vk::ImageAspectFlags aspect{};
+        vk::ImageView view;
+        u64 last_use = 0;
+    };
+    std::array<ViewEntry, 6> view_cache{};
+    u64 view_uses = 0;
+
     void Run();
     void RunScaled();
     void RunUiOnly(VideoCore::ImageId color, VideoCore::ImageId depth);

@@ -615,21 +615,11 @@ void TemporalUpscaler::Run() {
         failed = true;
         return;
     }
-    const auto device = instance.GetDevice();
     const auto depth_format = depth.info.pixel_format;
-    const auto depth_view = Check(device.createImageView({
-        .image = vk::Image(depth.backing->image),
-        .viewType = vk::ImageViewType::e2D,
-        .format = depth_format,
-        .subresourceRange = {vk::ImageAspectFlagBits::eDepth, 0, 1, 0, 1},
-    }));
-
-    const auto color_view = Check(device.createImageView({
-        .image = vk::Image(color.backing->image),
-        .viewType = vk::ImageViewType::e2D,
-        .format = vk::Format::eR16G16B16A16Sfloat,
-        .subresourceRange = {vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1},
-    }));
+    const auto depth_view =
+        CachedView(depth, depth_format, vk::ImageAspectFlagBits::eDepth);
+    const auto color_view =
+        CachedView(color, vk::Format::eR16G16B16A16Sfloat, vk::ImageAspectFlagBits::eColor);
 
     scheduler.EndRendering();
     runtime.Transit(&depth, vk::ImageLayout::eGeneral, vk::PipelineStageFlagBits2::eComputeShader,
@@ -823,10 +813,40 @@ void TemporalUpscaler::Run() {
                              sizeof(mode), &mode);
         cmdbuf.dispatch((ow + 7) / 8, (oh + 7) / 8, 1);
     }
-    scheduler.DeferOperation([device, depth_view, color_view] {
-        device.destroyImageView(depth_view);
-        device.destroyImageView(color_view);
-    });
+}
+
+vk::ImageView TemporalUpscaler::CachedView(const VideoCore::Image& image, vk::Format format,
+                                           vk::ImageAspectFlags aspect) {
+    const vk::Image handle = image.GetImage();
+    ViewEntry* oldest = &view_cache[0];
+    for (auto& entry : view_cache) {
+        if (entry.view && entry.image == handle && entry.uid == image.image_uid &&
+            entry.format == format && entry.aspect == aspect) {
+            entry.last_use = ++view_uses;
+            return entry.view;
+        }
+        if (entry.last_use < oldest->last_use) {
+            oldest = &entry;
+        }
+    }
+    const auto device = instance.GetDevice();
+    if (oldest->view) {
+        scheduler.DeferOperation([device, view = oldest->view] { device.destroyImageView(view); });
+    }
+    *oldest = {
+        .image = handle,
+        .uid = image.image_uid,
+        .format = format,
+        .aspect = aspect,
+        .view = Check(device.createImageView({
+            .image = handle,
+            .viewType = vk::ImageViewType::e2D,
+            .format = format,
+            .subresourceRange = {aspect, 0, 1, 0, 1},
+        })),
+        .last_use = ++view_uses,
+    };
+    return oldest->view;
 }
 
 } // namespace Vulkan
