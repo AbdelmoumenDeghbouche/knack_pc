@@ -472,3 +472,10 @@ requires the same image registry generation, the same backings, no rebind, image
 no render-target feedback and no upscaler redirect; it then only redoes the per-draw effects
 (found tick, binding flags, bound list, layout transition, usage) and writes the descriptors.
 84% hits; 128.6 vs 121.8 FPS (+5.6%); screenshots on/off within the scene's own noise.
+
+### Copy shader merge distance
+
+The HLE merged copies whose ranges fit in 64 MiB, and each merged batch synchronizes its whole
+source and destination range. With 64 KiB (`BB_COPY_MERGE_KB`): the copy shader's GPU time
+1.5 -> 0.6 ms/frame (profiler), GPU busy 85% -> ~77%, frame rate not lower (restarts vary
+125-142 FPS; 16 KiB and 256 KiB similar).

@@ -168,7 +168,14 @@ static bool ExecuteCopyShaderHLE(const Shader::Info& info, const AmdGpu::Compute
         copies.emplace_back(local_src_offset, local_dst_offset, local_size);
     }
 
-    static constexpr vk::DeviceSize MaxDistanceForMerge = 64_MB;
+    // bbport: 64 KiB instead of 64 MiB. The copies are a few KiB spread over up to 57 MiB, and
+    // each batch synchronizes (uploads, marks GPU-modified) its whole range: GPU time of the copy
+    // shader 1.5 -> 0.6 ms/frame, GPU busy 85% -> 77%, frame rate no lower.
+    // BB_COPY_MERGE_KB overrides it.
+    static const vk::DeviceSize MaxDistanceForMerge = [] {
+        const char* env = std::getenv("BB_COPY_MERGE_KB");
+        return env ? vk::DeviceSize(std::strtoull(env, nullptr, 10)) * 1024 : vk::DeviceSize(64_KB);
+    }();
     u32 batch_start = 0;
     u32 batch_end = 0;
 
