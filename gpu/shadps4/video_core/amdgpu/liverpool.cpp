@@ -83,6 +83,9 @@ Liverpool::~Liverpool() {
 }
 
 void Liverpool::ProcessCommands() {
+    if (num_commands && rasterizer) {
+        rasterizer->DrainDrawPipe(Vulkan::DrawPipe::ReasonCommands); // bbport: commands touch the caches
+    }
     // Process incoming commands with high priority
     while (num_commands) {
         Common::UniqueFunction<void> callback{};
@@ -167,6 +170,130 @@ void Liverpool::Process(std::stop_token stoken) {
     }
 }
 
+namespace {
+/// bbport: packets the GPU command thread handles while the draw recording thread may still
+/// work on earlier draws (register state, draws it hands over, nested buffers). Every other
+/// packet first waits for that thread to run dry (Rasterizer::DrainDrawPipe).
+bool PipelinedOpcode(PM4ItOpcode opcode) {
+    switch (opcode) {
+    case PM4ItOpcode::Nop:
+    case PM4ItOpcode::ContextControl:
+    case PM4ItOpcode::ClearState:
+    case PM4ItOpcode::SetConfigReg:
+    case PM4ItOpcode::SetContextReg:
+    case PM4ItOpcode::SetShReg:
+    case PM4ItOpcode::SetUconfigReg:
+    case PM4ItOpcode::IndexType:
+    case PM4ItOpcode::NumInstances:
+    case PM4ItOpcode::IndexBase:
+    case PM4ItOpcode::IndexBufferSize:
+    case PM4ItOpcode::SetBase:
+    case PM4ItOpcode::DrawIndex2:
+    case PM4ItOpcode::DrawIndexOffset2:
+    case PM4ItOpcode::DrawIndexAuto:
+    case PM4ItOpcode::IndirectBuffer:
+    case PM4ItOpcode::AcquireMem:
+    case PM4ItOpcode::PfpSyncMe:
+    case PM4ItOpcode::IncrementDeCounter:
+    case PM4ItOpcode::WaitOnCeCounter:
+    case PM4ItOpcode::EventWrite:     // occlusion results only, no rasterizer state
+    case PM4ItOpcode::EventWriteEop:  // runs in order on the recording thread (RunInOrder)
+    case PM4ItOpcode::EventWriteEos:
+    case PM4ItOpcode::WaitRegMem:     // waits for the recording thread only while unmet
+    case PM4ItOpcode::DispatchDirect: // handed over like draws (PipelinedDispatch)
+        return true;
+    default:
+        return false;
+    }
+}
+} // namespace
+
+namespace {
+void SignalEop(const PM4CmdEventWriteEop& eop) {
+    eop.SignalFence(
+        [](void* address, u64 data, u32 num_bytes) {
+            auto* memory = Core::Memory::Instance();
+            if (!memory->TryWriteBacking(address, &data, num_bytes)) {
+                memcpy(address, &data, num_bytes);
+            }
+        },
+        [] { Platform::IrqC::Instance()->Signal(Platform::InterruptId::GfxEop); });
+}
+
+// bbport: end-of-pipe/-shader events run in order with the draws (Rasterizer::RunInOrder: on
+// the draw recording thread when the draw pipeline is in use).
+void RunEventWriteEop(Vulkan::Rasterizer& rasterizer, const u8* data) {
+    const auto eop = *reinterpret_cast<const PM4CmdEventWriteEop*>(data);
+    rasterizer.ProcessDownloadImages();
+    // Guest memory copies on the copy threads precede the fence the guest sees.
+    // BB_ASYNC_FENCES=1 writes it once they are done instead of waiting for them; measured
+    // slower (79 vs 83 FPS): the guest waits on these fences, and later fences stall it more
+    // than the wait costs.
+    static const bool async_fences = [] {
+        const char* env = std::getenv("BB_ASYNC_FENCES");
+        return env && env[0] == '1';
+    }();
+    if (async_fences && !BbToggle::Disabled(BbToggle::AsyncFences)) {
+        BbCopy::AfterCopies([eop] { SignalEop(eop); });
+    } else if (Vulkan::DrawPipe::OnStageB() && !BbToggle::Disabled(BbToggle::RecorderFences)) {
+        // The draw recording thread does not wait: the Vulkan recording thread signals the
+        // fence after the copies queued before it.
+        rasterizer.SignalAfterHostCopies([eop] { SignalEop(eop); });
+    } else {
+        rasterizer.WaitHostCopies();
+        SignalEop(eop);
+    }
+}
+
+void RunEventWriteEos(Vulkan::Rasterizer& rasterizer, const u8* data) {
+    const auto& event_eos = *reinterpret_cast<const PM4CmdEventWriteEos*>(data);
+    // Copies deferred to the recording thread precede writes the guest sees.
+    rasterizer.WaitHostCopies();
+    rasterizer.ProcessDownloadImages();
+    event_eos.SignalFence([](void* address, u64 value, u32 num_bytes) {
+        auto* memory = Core::Memory::Instance();
+        if (!memory->TryWriteBacking(address, &value, num_bytes)) {
+            memcpy(address, &value, num_bytes);
+        }
+    });
+    if (event_eos.command == PM4CmdEventWriteEos::Command::GdsStore) {
+        ASSERT(event_eos.size == 1);
+        rasterizer.Finish();
+        const u32 value = rasterizer.ReadDataFromGds(event_eos.gds_index);
+        *event_eos.Address() = value;
+    }
+}
+} // namespace
+
+void Liverpool::NotePendingFences(const auto& event) {
+    const u64 position = rasterizer->DrawPipeHead();
+    while (!pending_fences.empty() && rasterizer->DrawPipeReached(pending_fences.front().position)) {
+        pending_fences.pop_front();
+    }
+    const auto note = [&](void* address, u64 data, u32 num_bytes) {
+        pending_fences.push_back({reinterpret_cast<VAddr>(address), data, num_bytes, position});
+    };
+    if constexpr (requires { event.SignalFence(note, [] {}); }) {
+        event.SignalFence(note, [] {});
+    } else {
+        event.SignalFence(note);
+    }
+}
+
+bool Liverpool::PendingFenceValue(VAddr address, u32& value) {
+    for (auto it = pending_fences.rbegin(); it != pending_fences.rend(); ++it) {
+        if (rasterizer->DrawPipeReached(it->position)) {
+            break; // written already: memory holds it (or a later write)
+        }
+        if (address >= it->address && address + sizeof(u32) <= it->address + it->num_bytes) {
+            u64 data = it->data;
+            value = static_cast<u32>(data >> ((address - it->address) * 8));
+            return true;
+        }
+    }
+    return false;
+}
+
 Liverpool::Task Liverpool::ProcessCeUpdate(std::span<const u32> ccb) {
     FIBER_ENTER(ccb_task_name);
 
@@ -194,6 +321,10 @@ Liverpool::Task Liverpool::ProcessCeUpdate(std::span<const u32> ccb) {
             break;
         }
         case PM4ItOpcode::DumpConstRam: {
+            // bbport: earlier draws on the recording thread may still read constants here.
+            if (rasterizer) {
+                rasterizer->DrainDrawPipe(Vulkan::DrawPipe::ReasonConstRam);
+            }
             const auto* dump_const = reinterpret_cast<const PM4DumpConstRam*>(header);
             memcpy(dump_const->Address<void*>(),
                    cblock.constants_heap.data() + dump_const->Offset(), dump_const->Size());
@@ -518,7 +649,13 @@ Liverpool::Task Liverpool::ProcessGraphics(std::span<const u32> dcb, std::span<c
         case 3:
             const u32 count = header->type3.NumWords();
             const PM4ItOpcode opcode = header->type3.opcode;
-            ApplyGraphicsRegisterPacket(regs, header, gfx_reg_checksum);
+            ApplyGraphicsRegisterPacket(regs, header, gfx_reg_checksum, &pipe_dirty);
+            // DmaData to 0x3022C does nothing here (skipped below): no need to wait.
+            if (rasterizer && !PipelinedOpcode(opcode) &&
+                !(opcode == PM4ItOpcode::DmaData &&
+                  reinterpret_cast<const PM4DmaData*>(header)->dst_addr_lo == 0x3022C)) {
+                rasterizer->DrainDrawPipe(static_cast<u32>(opcode));
+            }
             switch (opcode) {
             case PM4ItOpcode::Nop: {
                 const auto* nop = reinterpret_cast<const PM4CmdNop*>(header);
@@ -880,60 +1017,21 @@ Liverpool::Task Liverpool::ProcessGraphics(std::span<const u32> dcb, std::span<c
                 break;
             }
             case PM4ItOpcode::EventWriteEos: {
-                // bbport: copies deferred to the recording thread precede writes the guest sees.
-                if (rasterizer) {
-                    rasterizer->WaitHostCopies();
-                }
                 const auto* event_eos = reinterpret_cast<const PM4CmdEventWriteEos*>(header);
-                if (rasterizer) {
-                    rasterizer->ProcessDownloadImages();
-                }
-                event_eos->SignalFence([](void* address, u64 data, u32 num_bytes) {
-                    auto* memory = Core::Memory::Instance();
-                    if (!memory->TryWriteBacking(address, &data, num_bytes)) {
-                        memcpy(address, &data, num_bytes);
-                    }
-                });
-                if (event_eos->command == PM4CmdEventWriteEos::Command::GdsStore) {
-                    ASSERT(event_eos->size == 1);
-                    if (rasterizer) {
-                        rasterizer->Finish();
-                        const u32 value = rasterizer->ReadDataFromGds(event_eos->gds_index);
-                        *event_eos->Address() = value;
-                    }
+                if (rasterizer &&
+                    rasterizer->RunInOrder(&RunEventWriteEos, event_eos, sizeof(*event_eos))) {
+                    NotePendingFences(*event_eos);
                 }
                 break;
             }
             case PM4ItOpcode::EventWriteEop: {
                 const auto* event_eop = reinterpret_cast<const PM4CmdEventWriteEop*>(header);
                 if (rasterizer) {
-                    rasterizer->ProcessDownloadImages();
-                }
-                const auto signal = [eop = *event_eop] {
-                    eop.SignalFence(
-                        [](void* address, u64 data, u32 num_bytes) {
-                            auto* memory = Core::Memory::Instance();
-                            if (!memory->TryWriteBacking(address, &data, num_bytes)) {
-                                memcpy(address, &data, num_bytes);
-                            }
-                        },
-                        [] { Platform::IrqC::Instance()->Signal(Platform::InterruptId::GfxEop); });
-                };
-                // bbport: guest memory copies on the copy threads precede the fence the guest
-                // sees. BB_ASYNC_FENCES=1 writes it once they are done instead of the GPU thread
-                // waiting for them; measured slower (79 vs 83 FPS): the guest waits on these
-                // fences, and later fences stall it more than the wait costs this thread.
-                static const bool async_fences = [] {
-                    const char* env = std::getenv("BB_ASYNC_FENCES");
-                    return env && env[0] == '1';
-                }();
-                if (rasterizer && async_fences && !BbToggle::Disabled(BbToggle::AsyncFences)) {
-                    BbCopy::AfterCopies(signal);
-                } else {
-                    if (rasterizer) {
-                        rasterizer->WaitHostCopies();
+                    if (rasterizer->RunInOrder(&RunEventWriteEop, event_eop, sizeof(*event_eop))) {
+                        NotePendingFences(*event_eop);
                     }
-                    signal();
+                } else {
+                    SignalEop(*event_eop);
                 }
                 break;
             }
@@ -1036,10 +1134,28 @@ Liverpool::Task Liverpool::ProcessGraphics(std::span<const u32> dcb, std::span<c
                 const u64* wait_addr = wait_reg_mem->Address<u64*>();
                 if (vo_port->IsVoLabel(wait_addr) &&
                     num_submits == mapped_queues[GfxQueueId].submits.size()) {
+                    if (rasterizer) {
+                        rasterizer->DrainDrawPipe(static_cast<u32>(opcode));
+                    }
                     vo_port->WaitVoLabel([&] { return wait_reg_mem->Test(regs.reg_array); });
                     break;
                 }
+                // bbport: a fence handed to the draw recording thread counts as written: that
+                // thread runs everything in stream order.
+                if (u32 value; wait_reg_mem->mem_space.Value() ==
+                                   PM4CmdWaitRegMem::MemSpace::Memory &&
+                               !BbToggle::Disabled(BbToggle::PendingFenceWaits) &&
+                               PendingFenceValue(wait_reg_mem->Address<VAddr>(), value) &&
+                               wait_reg_mem->TestValue(value)) {
+                    break;
+                }
+                // Else the value may come from a fence that thread has yet to write: let it
+                // catch up before yielding to other queues.
                 while (!wait_reg_mem->Test(regs.reg_array)) {
+                    if (rasterizer && !rasterizer->DrawPipeIdle()) {
+                        rasterizer->DrainDrawPipe(static_cast<u32>(opcode));
+                        continue;
+                    }
                     YIELD_GFX();
                 }
                 break;
@@ -1115,6 +1231,9 @@ Liverpool::Task Liverpool::ProcessGraphics(std::span<const u32> dcb, std::span<c
         ce_task.handle.destroy();
     }
 
+    if (rasterizer && seq != NoSeq) {
+        rasterizer->RetireSubmission(); // prepared draws live until the recording thread is past
+    }
     if (draw_prep) {
         draw_prep->EndSubmission();
     }
@@ -1149,6 +1268,9 @@ Liverpool::Task Liverpool::ProcessCompute(std::span<const u32> acb, u32 vqid) {
     size_t acb_size = acb.size_bytes();
     while (!acb.empty()) {
         ProcessCommands();
+        if (rasterizer) {
+            rasterizer->DrainDrawPipe(Vulkan::DrawPipe::ReasonCompute); // bbport: compute work uses the caches
+        }
 
         auto* header = reinterpret_cast<const PM4Header*>(acb.data());
         u32 next_dw_off = header->type3.NumWords() + 1;

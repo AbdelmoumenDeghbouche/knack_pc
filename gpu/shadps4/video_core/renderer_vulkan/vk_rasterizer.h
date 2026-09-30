@@ -11,6 +11,7 @@
 #include "video_core/renderer_vulkan/vk_camera_motion.h"
 #include "video_core/renderer_vulkan/vk_scene_resolution.h"
 #include "video_core/renderer_vulkan/vk_object_motion.h"
+#include "video_core/renderer_vulkan/vk_draw_pipe.h"
 #include "video_core/renderer_vulkan/vk_draw_prep.h"
 #include "video_core/renderer_vulkan/vk_temporal_upscaler.h"
 #include "video_core/renderer_vulkan/vk_pipeline_cache.h"
@@ -86,8 +87,40 @@ public:
     bool InvalidateMemory(VAddr addr, u64 size, bool assume_locks = false);
     /// GPU thread, before a write the guest can observe (see Scheduler::WaitHostCopies).
     void WaitHostCopies() {
+        DrainDrawPipe();
         scheduler.WaitHostCopies();
     }
+
+    /// bbport: GPU command thread: waits until the draw recording thread has recorded every
+    /// draw handed to it (vk_draw_pipe.h); no-op on other threads.
+    void DrainDrawPipe(u32 reason = DrawPipe::ReasonRasterizer);
+    /// Runs `task(rasterizer, copy of data)` in order with the draws: on the draw recording
+    /// thread while the draw pipeline is in use (PipelinedTasks), else here after a drain.
+    using OrderedTask = void (*)(Rasterizer& rasterizer, const u8* data);
+    /// Returns true when the task was handed to the recording thread (not run yet).
+    bool RunInOrder(OrderedTask task, const void* data, u32 size);
+    /// Stage A: the draw pipe position after the last handed-over packet, and whether the
+    /// recording thread has run everything before a position.
+    [[nodiscard]] u64 DrawPipeHead() const {
+        return draw_pipe ? draw_pipe->Head() : 0;
+    }
+    [[nodiscard]] bool DrawPipeReached(u64 position) const {
+        return !draw_pipe || draw_pipe->Reached(position);
+    }
+    /// Stage A: no draws waiting for the recording thread.
+    [[nodiscard]] bool DrawPipeIdle() const {
+        return !draw_pipe || draw_pipe->Idle();
+    }
+    /// Stage A, end of a submission: its prepared draws stay alive until the recording thread
+    /// has recorded them (instead of a drain).
+    void RetireSubmission();
+    /// Runs `signal` after the guest memory copies issued so far, without waiting here.
+    void SignalAfterHostCopies(std::function<void()> signal) {
+        scheduler.SignalAfterHostCopies(std::move(signal));
+    }
+    /// The GPU command thread or the draw recording thread (fault handling runs inline there).
+    bool IsGpuSideThread() const;
+    bool IsGpuSideThreadId(u32 tid) const;
     /// A guest write hit a protected page.
     bool OnWriteFault(VAddr addr, bool assume_locks);
     bool ReadMemory(VAddr addr, u64 size, bool assume_locks = false);
@@ -134,6 +167,26 @@ private:
     void UpdateColorBlendingState(const GraphicsPipeline* pipeline) const;
 
     bool FilterDraw();
+    bool FilterDrawPasses() const;
+    /// Everything of a direct draw after the pipeline selection (GPU thread or stage B).
+    void DrawRecord(const GraphicsPipeline* pipeline, const PreparedDraw* used_prepared,
+                    bool is_indexed, u32 index_offset);
+    static bool DrawPipeWanted();
+    bool UseDrawPipe() const;
+    bool OnStageA() const;
+    /// Hands a draw (or, with `cs`, a dispatch) to the recording thread.
+    void PostDraw(const Pipeline* pipeline, const PreparedDraw* used_prepared, bool is_indexed,
+                  u32 index_offset, const AmdGpu::ComputeProgram* cs = nullptr);
+    /// Everything of a direct dispatch after the pipeline selection (GPU thread or stage B).
+    void DispatchRecord(const ComputePipeline* pipeline);
+    /// The compute registers of the dispatch being recorded.
+    const AmdGpu::ComputeProgram& CsRegs() const;
+    static void RunDrawPacket(void* rasterizer, const u8* packet, u32 size);
+    void PrintPipeStats();
+    /// The registers of the draw being recorded: stage B's copy there, else Liverpool's.
+    const AmdGpu::Regs& Regs() const;
+    AmdGpu::CbDbExtent CbExtent(u32 index) const;
+    AmdGpu::CbDbExtent DbExtent() const;
 
     void BindBuffers(const Shader::Info& stage, const PreparedStage* prepared,
                      Shader::Backend::Bindings& binding,
@@ -327,6 +380,17 @@ private:
     bool fault_process_pending{};
     bool attachment_feedback_loop{};
     bool needs_barrier{};
+    // bbport: two-stage draw pipeline (stage B state; the thread is the last member so it
+    // stops first).
+    static inline thread_local const AmdGpu::Regs* stage_regs = nullptr;
+    static inline thread_local const AmdGpu::ComputeProgram* stage_cs = nullptr;
+    AmdGpu::Regs pipe_regs{};
+    bool pipe_synced = false;
+    std::array<AmdGpu::CbDbExtent, AmdGpu::NUM_COLOR_BUFFERS> pipe_cb_extent{};
+    AmdGpu::CbDbExtent pipe_db_extent{};
+    /// Submissions (prepared draws) kept alive until stage B reaches the position.
+    std::deque<std::pair<u64, std::shared_ptr<const void>>> pipe_keepalive;
+    std::unique_ptr<DrawPipe> draw_pipe;
 };
 
 } // namespace Vulkan

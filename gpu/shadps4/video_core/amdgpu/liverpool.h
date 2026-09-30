@@ -4,6 +4,7 @@
 #pragma once
 
 #include <condition_variable>
+#include <deque>
 #include <coroutine>
 #include <exception>
 #include <mutex>
@@ -64,6 +65,20 @@ struct Liverpool {
     Regs regs{};
     std::array<CbDbExtent, NUM_COLOR_BUFFERS> last_cb_extent{};
     CbDbExtent last_db_extent{};
+    /// bbport: register blocks written since the last draw handed to the draw recording thread
+    /// (Rasterizer::PostDraw sends them along).
+    RegDirty pipe_dirty;
+    /// bbport: fence writes handed to the draw recording thread and not yet done there: a
+    /// WaitRegMem on one of them is met in stream order without waiting for that thread.
+    struct PendingFence {
+        VAddr address;
+        u64 data;
+        u32 num_bytes;
+        u64 position;
+    };
+    std::deque<PendingFence> pending_fences;
+    void NotePendingFences(const auto& event);
+    bool PendingFenceValue(VAddr address, u32& value);
     /// bbport: running checksum of graphics-register packets (see ApplyGraphicsRegisterPacket).
     u64 gfx_reg_checksum{};
     /// Top-level graphics submissions, numbered for the draw preparation workers.

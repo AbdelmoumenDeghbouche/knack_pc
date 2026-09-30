@@ -171,6 +171,19 @@ std::unique_ptr<RecordChunk> Scheduler::AcquireChunk() {
     return chunk;
 }
 
+void Scheduler::SignalAfterHostCopies(std::function<void()> signal) {
+    if (!IsRecordingDeferred()) {
+        WaitHostCopies();
+        signal();
+        return;
+    }
+    BbCopy::FlushBatch();
+    Record([signal = std::move(signal)](vk::CommandBuffer) mutable {
+        BbCopy::AfterCopies(std::move(signal));
+    });
+    KickRecording(true);
+}
+
 void Scheduler::WaitHostCopies() {
     if (host_copies_done.load(std::memory_order_acquire) < host_copies_issued) {
         BbStats::WaitTimer timer{BbStats::host_copies_wait_ns};

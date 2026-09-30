@@ -8,6 +8,7 @@
 #include <cstring>
 #include <condition_variable>
 #include <deque>
+#include <functional>
 #include <memory>
 #include <span>
 #include <utility>
@@ -804,6 +805,11 @@ public:
             host_copies_done.store(seq, std::memory_order_release);
         });
     }
+
+    /// bbport: runs `signal` once the guest memory copies issued so far are done, without
+    /// waiting here: the recording thread reaches it after the copies queued before it and hands
+    /// it to the copy threads' completion (BbCopy::AfterCopies).
+    void SignalAfterHostCopies(std::function<void()> signal);
 
     /// CommandBuffer() calls that waited for a recording thread (BB_FRAME_STATS).
     static inline std::atomic<u64> direct_recordings{0};

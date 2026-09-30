@@ -326,3 +326,60 @@ Scaling needs splits where each thread owns its data for long stretches:
    generation, image cleanliness and layouts, instead of per-texture lookups.
 3. **The copies before fences** (~9% blocked): keep them off the GPU thread's critical path,
    e.g. by letting the idle draw-preparation workers drain a copy queue.
+
+## Two-stage draw pipeline (2026-09-30)
+
+`vk_draw_pipe.h`. The GPU command thread (stage A) keeps PM4 decoding, the register file, the
+constant engine and pipeline selection. A direct draw or dispatch becomes a packet in a 16 MiB
+ring: the 32-word register blocks written since the previous packet (`Liverpool::pipe_dirty`,
+marked by `ApplyGraphicsRegisterPacket`), the CB/DB size hints, each stage's user data, flattened
+user data and program base, and the draw parameters (for a dispatch the `ComputeProgram`).
+The draw recording thread `bb:DrawRec` (stage B) applies the blocks to its own register copy and
+runs the rest of the draw (`DrawRecord`, `DispatchRecord`): textures, buffers, render targets,
+barriers, descriptors, dynamic state, recording. While packets are in flight stage B owns the
+texture/buffer caches, the runtime, the scheduler, the scene targets, the upscaler and the motion
+state.
+
+- Stage B reads registers through `Rasterizer::Regs()/CbExtent()/CsRegs()` (its copy there,
+  Liverpool's elsewhere) and shader user data through `Shader::Info::UserData()/FlatUserData()/
+  ProgramBase()`, which return the snapshot stage B installed for the stages of the current
+  draw (`Info::ud_snapshots`, thread-local).
+- Everything else stage A does on stage B's state first waits for it to run dry
+  (`Rasterizer::DrainDrawPipe`): every public rasterizer entry point on the GPU thread, PM4
+  packets other than register writes/draws/dispatches/fences (`PipelinedOpcode`), pending
+  commands (`ProcessCommands`), compute queue packets, `DumpConstRam`.
+- End-of-pipe/-shader events run in order on stage B (`Rasterizer::RunInOrder`). A
+  `WaitRegMem` on a fence value handed to stage B counts as met (`Liverpool::pending_fences`):
+  stage B runs everything in stream order anyway. Unmet waits drain stage B, then yield.
+- The EOP fence is signalled by the Vulkan recording thread after the guest memory copies queued
+  before it (`Scheduler::SignalAfterHostCopies`), so stage B does not wait for them.
+- A submission's prepared draws stay alive until stage B has passed them
+  (`RetireSubmission`) instead of a drain at its end.
+- Faults: stage B handles its own inline, like the GPU thread (`IsGpuSideThread`); the GPU
+  thread drains stage B before handling one inline. With userfaultfd, faults of the GPU thread
+  take the locked path of guest threads.
+- `DmaData` to 0x3022C (skipped by the handler; ~70k/s) does not drain.
+- `BB_PIPE_VERIFY=N`: every Nth packet also carries the full register file and stage B reports
+  words where its copy differs (none seen in game, menus included).
+- `BB_DRAW_PIPE=0/1` overrides the default (on with 8+ hardware threads). Toggles: 1 << 25 whole
+  pipeline, 1 << 26 fences on stage B, 1 << 27 WaitRegMem on pending fences, 1 << 28 dispatches,
+  1 << 29 fences signalled by the recording thread. `Frame stats` add a `Draw pipe` line: draws,
+  drains that waited and why, stage A waiting, stage B busy.
+
+Results (Hunter's Nightmare, standing, FSR 4, `BB_FPS_LIMIT=0`, A/B in one run):
+
+| | pipeline on | off |
+|---|---|---|
+| 16 threads | 96.1 FPS | 80.6 FPS (+19%) |
+| 4 cores / 8 threads (`taskset -c 0-3,8-11`) | 83.8 FPS | 71.0 FPS (+18%) |
+
+Steps on the way (FPS in the same scene): first version, drains at every non-draw packet —
+79.8 (drained ~80k/s, almost all no-op `DmaData`); skipping those — 89; fences on stage B and
+lazy `WaitRegMem` — 92; dispatches handed over — 93; fences signalled by the recording thread —
+103.5 (A/B of that step alone: 103.5 vs 94.9).
+
+Now stage B is the limit (~85-90% busy, the draw path as profiled above), stage A waits most of
+the time, and the GPU is ~80% busy with FSR 4. Remaining drains: `WriteData` (~30/frame: 192
+zero bytes to a frame buffer and a 4-byte label, whose readers are unknown), non-trivial
+`DmaData`, indirect draws. Next: move work from stage B to stage A — the buffer side of a draw
+(ObtainBuffer, uploads) needs stage A to own the buffer cache and hand its commands to stage B.

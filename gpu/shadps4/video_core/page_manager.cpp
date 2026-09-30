@@ -109,8 +109,8 @@ struct PageManager::Impl {
 
     static bool GuestFaultSignalHandler(void* context, void* fault_address) {
         const auto addr = reinterpret_cast<VAddr>(fault_address);
-        const auto is_gpu_thread =
-            std::this_thread::get_id() == rasterizer->GetGpuCommandProcessorThread();
+        // bbport: the draw recording thread handles its faults inline too (vk_draw_pipe.h).
+        const auto is_gpu_thread = rasterizer->IsGpuSideThread();
         if (is_gpu_thread) {
             BbStats::gpu_signal_faults.fetch_add(1, std::memory_order_relaxed);
         }
@@ -398,7 +398,7 @@ public:
             const auto ptid = msg.arg.pagefault.feat.ptid;
             {
                 BbStats::Timer timer{BbStats::t_write_faults};
-                rasterizer->OnWriteFault(addr, ptid == rasterizer->GetGpuCommandProcessorThreadId());
+                rasterizer->OnWriteFault(addr, rasterizer->IsGpuSideThreadId(ptid));
             }
             // Protect() clears with DONTWAKE (it may run for pages nobody waits on).
             uffdio_range wake{};

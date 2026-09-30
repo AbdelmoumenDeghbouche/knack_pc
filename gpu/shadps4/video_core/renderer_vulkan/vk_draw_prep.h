@@ -150,6 +150,15 @@ private:
     std::deque<std::shared_ptr<Submission>> submissions; ///< ordered by seq
     std::atomic<u64> gpu_seq{0};
     std::shared_ptr<Submission> current;
+
+public:
+    /// bbport: the current submission (prepared draws), for the draw recording thread to keep
+    /// it alive while it still records its draws.
+    [[nodiscard]] std::shared_ptr<const void> KeepCurrent() const {
+        return current;
+    }
+
+private:
     u32 current_draw = 0;
     u64 used = 0, unused = 0;
     u32 worker_count = 0; ///< fixed before the worker threads start

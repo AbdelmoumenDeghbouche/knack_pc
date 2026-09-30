@@ -37,6 +37,11 @@ enum : std::uint32_t {
     TextureViewMemo = 1u << 21,
     TextureBindHelper = 1u << 22,
     EarlyDrawInputs = 1u << 23,
+    DrawPipeline = 1u << 25,
+    PipelinedTasks = 1u << 26,
+    PendingFenceWaits = 1u << 27,
+    PipelinedDispatch = 1u << 28,
+    RecorderFences = 1u << 29,
     UpdateImageFastPath = 1u << 30,
 };
 inline bool Disabled(std::uint32_t bit) {

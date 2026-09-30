@@ -90,13 +90,13 @@ struct BufferResource {
 
     constexpr AmdGpu::Buffer GetSharp(const auto& info) const noexcept {
         AmdGpu::Buffer buffer;
-        if (!sharp_fetch.Fetch(info.flattened_ud_buf.data(), &buffer)) {
+        if (!sharp_fetch.Fetch(info.FlatUserData().data(), &buffer)) {
             return AmdGpu::Buffer::Null();
         }
         if (post_op == SharpFetchPostOp::BitwiseOrDw1WithImm) {
             reinterpret_cast<u32*>(&buffer)[1] |= post_op_dw1_mask;
         } else if (post_op == SharpFetchPostOp::OffsetByProgramBase) {
-            buffer.base_address += info.pgm_base;
+            buffer.base_address += info.ProgramBase();
         }
         if (!buffer.Valid()) {
             return AmdGpu::Buffer::Null();
@@ -125,7 +125,7 @@ struct ImageResource {
 
     constexpr AmdGpu::Image GetSharp(const auto& info) const noexcept {
         AmdGpu::Image image{};
-        if (!Fetch(info.flattened_ud_buf.data(), &image)) {
+        if (!Fetch(info.FlatUserData().data(), &image)) {
             return AmdGpu::Image::Null(is_depth);
         }
         if (post_op == SharpFetchPostOp::ConvertCubeTo2DArray) {
@@ -174,9 +174,9 @@ struct SamplerResource {
 
     constexpr AmdGpu::Sampler GetSharp(const auto& info) const noexcept {
         AmdGpu::Sampler sampler{};
-        sharp_fetch.Fetch(info.flattened_ud_buf.data(), &sampler);
+        sharp_fetch.Fetch(info.FlatUserData().data(), &sampler);
         if (post_op == SharpFetchPostOp::DisableAnisoIfSingleLod) {
-            const u32 tsharp_dw3 = info.flattened_ud_buf[post_op_tsharp_dw3_off];
+            const u32 tsharp_dw3 = info.FlatUserData()[post_op_tsharp_dw3_off];
             if (((tsharp_dw3 >> 12) & 0xff) == 0) {
                 sampler.max_aniso.Assign(AmdGpu::AnisoRatio::One);
             }
