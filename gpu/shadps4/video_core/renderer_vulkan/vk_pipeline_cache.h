@@ -92,6 +92,7 @@ struct PipelineSelection {
     std::array<vk::ShaderModule, MaxShaderStages> modules{};
     std::optional<Shader::Gcn::FetchShaderData> fetch_shader{};
     GraphicsPipelineKey graphics_key{};
+    bool motion = false;
     DrawIndirectParams draw_indirect_params{};
     struct PrepWorker* worker{}; ///< set: read-only selection for a draw-preparation worker
 };
@@ -136,6 +137,11 @@ public:
     /// bbport: GPU-thread side: the pipeline for a prepared draw after checking that registers
     /// and flattened user data match; null to take the regular path.
     const GraphicsPipeline* TryPreparedPipeline(const PreparedDraw& prepared);
+
+    /// bbport: the prepared draw the last GetGraphicsPipeline used, or null (regular path).
+    [[nodiscard]] const PreparedDraw* UsedPrepared() const noexcept {
+        return used_prepared;
+    }
 
     const ComputePipeline* GetComputePipeline();
 
@@ -186,6 +192,7 @@ private:
     /// bbport: exclusive for program/permutation insertions, shared for worker lookups.
     std::shared_mutex programs_mutex;
     u64 prepared_hits = 0, prepared_misses = 0;
+    const PreparedDraw* used_prepared = nullptr;
     tsl::robin_map<ComputePipelineKey, std::unique_ptr<ComputePipeline>> compute_pipelines;
     tsl::robin_map<GraphicsPipelineKey, std::unique_ptr<GraphicsPipeline>> graphics_pipelines;
     PipelineSelection sel{}; ///< GPU thread selection state

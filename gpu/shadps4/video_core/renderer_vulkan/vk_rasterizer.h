@@ -8,6 +8,8 @@
 #include "video_core/buffer_cache/buffer_cache.h"
 #include "video_core/page_manager.h"
 #include "video_core/renderer_vulkan/vk_camera_motion.h"
+#include "video_core/renderer_vulkan/vk_scene_resolution.h"
+#include "video_core/renderer_vulkan/vk_object_motion.h"
 #include "video_core/renderer_vulkan/vk_draw_prep.h"
 #include "video_core/renderer_vulkan/vk_temporal_upscaler.h"
 #include "video_core/renderer_vulkan/vk_pipeline_cache.h"
@@ -132,12 +134,17 @@ private:
 
     bool FilterDraw();
 
-    void BindBuffers(const Shader::Info& stage, Shader::Backend::Bindings& binding,
+    void BindBuffers(const Shader::Info& stage, const PreparedStage* prepared,
+                     Shader::Backend::Bindings& binding,
                      Shader::PushData& push_data);
-    void BindTextures(const Shader::Info& stage, Shader::Backend::Bindings& binding);
+    void BindTextures(const Shader::Info& stage, const PreparedStage* prepared,
+                      Shader::Backend::Bindings& binding);
     bool BindResources(const Pipeline* pipeline);
 
-    void BindVertexBuffers(const GraphicsPipeline* pipeline);
+    /// Display pass: counts the frame (BbStats::gpu_frames) and, with BB_BUFFER_STATS, the lag.
+    void NoteFrameStart();
+    void BindVertexBuffers(const GraphicsPipeline* pipeline,
+                           const PreparedDraw* prepared = nullptr);
     void BindIndexBuffer(u32 index_offset = 0);
 
     void ResetBindings(bool is_compute);
@@ -162,6 +169,11 @@ private:
     PipelineCache pipeline_cache;
     std::unique_ptr<DrawPreparation> draw_prep;
     std::unique_ptr<CameraMotion> camera_motion; // bbport: motion vectors (docs/upscaler.md)
+    std::unique_ptr<SceneTargets> scene_targets;
+    bool scene_started = false;
+    std::unique_ptr<ObjectMotion> object_motion;
+    bool motion_draw = false;
+    u64 motion_geometry{};    ///< vertex-stream identity of the current direct draw
     bool gbuffer_draw = false;
     std::unique_ptr<TemporalUpscaler> upscaler; // bbport: FSR (docs/upscaler.md)
     std::array<float, 2> draw_jitter{};         ///< viewport offset of the current draw, pixels
@@ -234,8 +246,15 @@ private:
     VideoCore::ImageId FindTargetMemoized(VideoCore::TextureCache::ImageDesc& desc,
                                           LastTarget& last, auto&& make_desc,
                                           const Parts&... parts);
+    /// The prepared draw whose pipeline the current Draw uses (its sharps are valid), or null.
+    const PreparedDraw* bind_prepared = nullptr;
+    /// `hash` is ImageDescHash(sharp, res), computed by a draw-preparation worker or here.
     ImageDescCacheEntry& CachedImageDescEntry(const AmdGpu::Image& sharp,
-                                              const Shader::ImageResource& res);
+                                              const Shader::ImageResource& res, u64 hash);
+    ImageDescCacheEntry& CachedImageDescEntry(const AmdGpu::Image& sharp,
+                                              const Shader::ImageResource& res) {
+        return CachedImageDescEntry(sharp, res, ImageDescHash(sharp, res));
+    }
     const VideoCore::TextureCache::ImageDesc& CachedImageDesc(const AmdGpu::Image& sharp,
                                                               const Shader::ImageResource& res) {
         return CachedImageDescEntry(sharp, res).desc;

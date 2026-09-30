@@ -100,3 +100,153 @@ Findings, in the order they were fixed:
 
 Result: stalls are mostly 40–50 ms (GPU thread ~30 ms of draw work plus ~12 ms of copies)
 instead of 60–170 ms; the area load frame 350 ms instead of 430–760 ms.
+
+## Step 2, first slice: resource sharps on the workers (2026-09-30)
+
+A prepared stage now also carries the sharps its worker read from the flattened user data:
+every T# with its texture-description hash, every S# and V# (`PrepareResources`,
+`PreparedStage::image_sharps` and siblings, in the arena of the submission). The GPU thread
+uses them when `PipelineCache::UsedPrepared()` reports that the draw's pipeline came from the
+prepared draw — the flattened data was then compared word for word, and sharps depend on
+nothing else. Resource list sizes are checked per stage. Toggle 4096 switches it off.
+
+A/B in one run, standing still, `BB_FPS_LIMIT=0`, FSR 4, 20 s phases: 69–70 FPS with the
+prepared sharps, 66.5–67 without (+3%), same image.
+
+Upscaler costs removed from the GPU thread before this (perf, DWARF call graphs): per-draw
+driver format queries in `SceneTargets::Eligible` (~13%), direct recording forced by
+`CommandBuffer()` in object motion and the reactive mask, index-list scans for object motion
+(~10%, now `Motion::IndexRangeCache`).
+
+What remains on the GPU thread is mostly work on shared cache state: texture binding ~23%
+(FindView ~5.6%, UpdateImage/Track/Touch ~5%, barriers), buffer binding ~12% (ObtainBuffer
+~11%), render targets ~8%. The next step is a draw-level split: the GPU thread keeps decode,
+cache mutation and barriers; a second ordered stage builds descriptor writes and vertex
+input state from the resolved handles.
+
+## Scaling to the available threads (2026-09-30)
+
+Draw preparation used to replay the whole command stream in every worker and was switched
+off below 12 hardware threads (Steam Deck: no workers). Now:
+
+- One scanner (`bb:DrawScan`) replays the register writes in order and stores, per buffer,
+  its starting checksum and a delta of the 32-word register blocks it wrote
+  (`AmdGpu::RegDirty/RegDelta`, recorded by `ApplyGraphicsRegisterPacket`).
+- Workers (`bb:DrawPrepN`, half the hardware threads in the affinity mask, 1..8) claim the
+  nearest scanned buffer ahead of the GPU thread, reach its starting state by applying the
+  deltas since their last buffer (or from the queue's tail state), and prepare its draws.
+  More workers now mean more buffers prepared in parallel, not more duplicated replay.
+- All helpers are SCHED_IDLE (`bbport_threads.h`): they only take idle cores. If the scanner
+  starves (busy CPU), the GPU thread rebases it from its own register state once the lag
+  passes 64 buffers instead of queueing without bound (`scanner rebases` in the stats).
+- Copy threads use the same affinity count (critical path, normal priority).
+
+A/B in one run (toggle 8192, standing still, `BB_FPS_LIMIT=0`, FSR 4), ~98% of direct draws
+prepared, no rebases:
+
+| CPU | with preparation | without |
+|---|---|---|
+| 16 threads, 8 workers | ~74 FPS | ~57.7 FPS |
+| `taskset -c 0-3,8-11` (4 cores / 8 threads, Deck-like), 4 workers | ~68 FPS | ~53 FPS |
+
+The previous design (4 replaying workers) gave ~69 FPS at the same spot on 16 threads, and
+none on 8.
+
+## Vertex inputs on the workers (2026-09-30)
+
+`PreparedDraw::vertex` holds, for the dynamic vertex input path, the attribute and binding
+descriptions (`GetVertexInputs`), the V# of every stream, the stream memory merged into
+ranges with each stream's range index, and the XXH3 of the streams (object motion). The GPU
+thread only obtains the buffers of the merged ranges and records the bindings. Used when the
+prepared draw's pipeline was taken, the attribute count matches the pipeline's fetch shader
+and no frame capture runs; toggle 4096 switches it off together with the sharps.
+
+A/B (standing still, `BB_FPS_LIMIT=0`, FSR 4, 16 threads): ~69.3 FPS on, ~65.7 off (+5.5%;
+the sharps alone gave +3%). Screenshots identical.
+
+Render targets were looked at and left on the GPU thread: their descriptions are already
+memoized per slot (key copy + compare), the size hint (`last_cb_extent`) is GPU-thread state
+rather than register state, and the rest of `BeginRendering` is view lookup, barriers and the
+reduced-resolution proxies — all on shared mutable state.
+
+## Engine short paths: investigation (2026-09-30, in progress)
+
+- The eboot has no symbols but links Sony's Gnmx (`sdk\target\src\gnmx\gfxcontext.cpp`,
+  `lwgfxcontext.cpp`); FromSoftware's Dantelion2 CoreGraphics2 sits on top; YEBIS does the
+  post-processing.
+- `BB_BUFFER_STATS=1` (buffer_cache.cpp) prints buffer bindings per guest region every 5 s.
+  Almost all traffic comes from the engine's frame ring, ~0x1043400000–0x1049xxxxxx inside the
+  2.4 GB direct allocation at 0x1042c00000: ~400k small constant copies/s (~190 MB/s) and
+  ~850 MB/s of arena re-uploads after CPU writes (~13 MB per frame).
+- Candidate short path: import that ring into Vulkan (VK_EXT_external_memory_host) so the GPU
+  reads it in place — no copies, no page tracking, far fewer GPU-thread operations.
+  Blocker to resolve first: EOP fences are signalled when the GPU thread records the packet,
+  not when the GPU executes it, so the guest may rewrite ring data still unread by the GPU.
+  With ~100 MB of ring and ~13 MB per frame the wrap is ~7–8 frames; the GPU's lag is bounded
+  by the presenter's frame pool (`present_frames`, swapchain image count). Next: measure the
+  ring's wrap period per frame and the real GPU lag, then prototype the import behind a toggle.
+
+### Measurements for the frame-data window (BB_BUFFER_STATS=1)
+
+- Reuse distance of 64 KiB blocks in 0x104xxxxxxx: overwhelmingly 1 frame (then 2). The engine
+  rewrites the same memory every frame; there is no long ring.
+- GPU lag when the GPU thread starts a frame (`GPU lag at frame start`): almost always 0 —
+  the GPU has finished the previous frame. But the engine writes the next frame's data while
+  the GPU still executes the current one, and EOP fences are signalled at record time.
+  **Reading this memory in place (VK_EXT_external_memory_host) is therefore unsafe** unless
+  fences wait for real GPU completion, which costs the guest (it waits on them). Dropped.
+- Per second in the hot window: ~370k small constant copies (~179 MB, ~480 B each) and ~3.6k
+  arena bindings covering ~13.8 GB (≈3.8 MB per binding) of which only ~516 MB are re-uploaded.
+  Copying bound ranges instead of tracking pages would multiply the traffic by ~27 (why the
+  "hot pages" attempt fell to 33 FPS); page tracking is the right mechanism there.
+- Remaining candidates: per-submission snapshots of the constant area (fewer, larger copies
+  instead of ~6000 per frame) and trimming vertex-buffer bindings to the index range a draw
+  uses (the V#s cover whole vertex pools, so each binding walks ~950 tracked pages).
+
+### Tried and reverted: per-epoch constant chunks
+
+Small read-only constants served from one snapshot per chunk and queue-task epoch (the epoch
+changed at every task entry and resume, so a chunk only served data written before its copy).
+A/B in one run, standing still: 32 KiB chunks 82/82/79 FPS vs 85/84/84 without (slower: the
+extra copied bytes cost more than the saved operations); 8 KiB chunks 85/85/85 vs 85/83/85
+(no difference). The per-binding constant copies are not what limits the frame; the change
+was removed. `BB_BUFFER_STATS=1` (bindings per region, reuse distance, GPU lag) stays.
+
+State after this work, standing still, `BB_FPS_LIMIT=0`, FSR 4: 82–85 FPS; GPU command thread
+~90% of a core, recording thread ~92% (mostly its spin), GPU ~70% busy.
+
+### Texture binding: repeated sets and the UpdateImage fast path
+
+- Measured and dropped: only ~13% of draws bind exactly the textures and samplers of the
+  previous draw in every stage (running through Yharnam), so skipping whole texture sets
+  would save at most ~3% of the GPU thread.
+- `TextureCache::UpdateImage` runs for every texture binding; for a clean, registered image
+  already tracked and touched in this GC period it only took the texture-cache mutex (shared
+  with the guest threads' fault handlers). It now returns without the lock in that case,
+  reading the flags atomically (toggle 1073741824 = 1 << 30 restores the locked path).
+  A/B, 8 phases of 20 s: 81.8 vs 80.2 FPS mean (+2%), 3 of 4 pairs ahead; the game window
+  was partly covered by other applications during the run, so treat it as indicative.
+- The A/B script now records the log line at each phase switch and prints per-phase means.
+
+## LTO and PGO (2026-09-30)
+
+`build.sh` builds `libbbgpu` with LTO (`-flto=auto`, also for sirit and FSR-Vulkan linked
+into it) and, when `pgo/` holds a profile, with `-fprofile-use` (`-fprofile-partial-training
+-fprofile-correction`; functions changed since the profile compile without it). No `-march`:
+the same build runs on the Steam Deck.
+
+Collecting a profile: `BB_PGO=generate bash run.sh` builds an instrumented library
+(`-fprofile-generate -fprofile-update=atomic`) that writes `pgo/` every 30 s (`bb:pgo` thread:
+`__gcov_dump` + `__gcov_reset`, since the game often ends through `_exit`); play a few minutes
+of ordinary gameplay. The next plain build uses it. `BB_PGO=off` / `BB_LTO=OFF` disable them.
+Regenerate the profile after larger code changes.
+
+Comparison, three runs in game (median of in-game 5 s windows, >800 draws/frame), with the new
+`Frame stats` field "GPU thread us/draw" (CPU time of the GPU command thread per draw, which
+tolerates small scene differences better than FPS):
+
+| build | FPS | GPU thread µs/draw |
+|---|---|---|
+| no LTO, no PGO | 73.2 | 7.72 |
+| LTO | 74.4 | 7.58 (−1.8%) |
+| LTO + PGO | 76.3 | 7.35 (−4.8%) |

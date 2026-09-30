@@ -378,12 +378,25 @@ void VideoOutDriver::Flip(const Request& req) {
             const u64 compile_ns = Vulkan::g_bb_compile_ns.exchange(0);
             const u64 direct = Vulkan::Scheduler::direct_recordings.exchange(0);
             const u64 faults = BbStats::tracker_faults.exchange(0);
+            // GPU command thread CPU time per draw: comparable between builds even when the scene
+            // (and so the frame rate) differs a little.
+            static u64 window_draws = 0, window_gpu_us = 0;
+            const u64 all_draws = BbStats::draws.load();
+            const u64 gpu_us = BbStats::gpu_user_us.load() + BbStats::gpu_sys_us.load();
+            const double us_per_draw = all_draws > window_draws
+                                           ? double(gpu_us - window_gpu_us) / (all_draws - window_draws)
+                                           : 0.0;
+            const double draws_per_frame = frames ? double(all_draws - window_draws) / frames : 0.0;
+            window_draws = all_draws;
+            window_gpu_us = gpu_us;
             std::printf("Frame stats: %.1f FPS, worst frame %.1f ms (vblank %u Hz); "
                         "%u shader/pipeline compiles, %.1f ms; %llu recorder syncs; "
-                        "%.0f write faults/s, %lld hot pages\n",
+                        "%.0f write faults/s, %lld hot pages; GPU thread %.2f us/draw, "
+                        "%.0f draws/frame\n",
                         frames / window, worst_ms, EmulatorSettings.GetVblankFrequency(), compiles,
                         compile_ns / 1e6, static_cast<unsigned long long>(direct),
-                        faults / window, static_cast<long long>(BbStats::hot_pages.load()));
+                        faults / window, static_cast<long long>(BbStats::hot_pages.load()),
+                        us_per_draw, draws_per_frame);
             window_start = now;
             frames = 0;
             worst_ms = 0;

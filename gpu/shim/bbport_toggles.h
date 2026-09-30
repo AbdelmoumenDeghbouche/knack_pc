@@ -25,6 +25,7 @@ enum : std::uint32_t {
     AccessMemo = 512,
     TextureBindingMemo = 1024,
     CoarseReadTracking = 2048,
+    PreparedResources = 4096,
     DrawPreparation = 8192,
     DeferredStreamCopies = 16384,
     HotPages = 32768,
@@ -32,6 +33,7 @@ enum : std::uint32_t {
     ParallelCopies = 131072,
     AsyncFences = 262144,
     PoolSmallCopies = 524288,
+    UpdateImageFastPath = 1u << 30,
 };
 inline bool Disabled(std::uint32_t bit) {
     return (__atomic_load_n(&runtime_disabled_optimizations, __ATOMIC_RELAXED) & bit) != 0;
@@ -48,6 +50,8 @@ inline std::atomic<std::uint64_t> image_upload_bytes{0};
 inline std::atomic<std::uint64_t> buffer_upload_bytes{0};
 inline std::atomic<int> gpu_thread_clock{-1}; ///< clockid_t of the GPU command thread
 inline std::atomic<std::uint64_t> draws{0}, dispatches{0}, submissions{0};
+/// Frames the GPU command thread has started (display pass), for per-frame diagnostics.
+inline std::atomic<std::uint64_t> gpu_frames{0};
 /// Wall time spent in operations suspected of stalls (ns, all threads).
 inline std::atomic<std::uint64_t> t_resident{0}, t_protect{0}, t_image_create{0}, t_refresh{0},
     t_staging{0}, t_host_wait{0}, t_copy{0}, copy_bytes{0}, t_read_faults{0}, read_faults{0},

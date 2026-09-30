@@ -4,6 +4,7 @@
 #pragma once
 
 #include <atomic>
+#include "bbport_toggles.h"
 
 #include <condition_variable>
 #include <mutex>
@@ -131,6 +132,23 @@ public:
 
     /// Updates image contents if it was modified by CPU.
     void UpdateImage(ImageId image_id) {
+        // bbport: a clean image already tracked and touched in this GC period needs nothing.
+        // Every texture binding comes here; the mutex (shared with the fault handlers of the
+        // guest threads) was ~3% of the GPU thread. Flags are read atomically: an invalidation
+        // racing with this check races the same way with the locked path.
+        if (!BbToggle::Disabled(BbToggle::UpdateImageFastPath)) {
+            const Image& image = slot_images[image_id];
+            const u32 flags = std::atomic_ref<const u32>(reinterpret_cast<const u32&>(image.flags))
+                                  .load(std::memory_order_acquire);
+            constexpr u32 Dirty = static_cast<u32>(ImageFlagBits::Dirty);
+            constexpr u32 Registered = static_cast<u32>(ImageFlagBits::Registered);
+            if ((flags & (Dirty | Registered)) == Registered &&
+                image.track_addr == image.info.guest_address &&
+                image.track_addr_end == image.info.guest_address + image.info.guest_size &&
+                image.lru_touched_tick == gc_tick) {
+                return;
+            }
+        }
         std::scoped_lock lock{mutex};
         Image& image = slot_images[image_id];
         TrackImage(image_id);
@@ -160,6 +178,11 @@ public:
                                          bool is_depth);
 
     /// Retrieves the image with the specified id.
+    Image* TryGetImage(ImageId id, u64 uid) {
+        if (!slot_images.is_allocated(id)) return nullptr;
+        auto& image = slot_images[id];
+        return !uid || image.image_uid == uid ? &image : nullptr;
+    }
     [[nodiscard]] Image& GetImage(ImageId id) {
         auto& image = slot_images[id];
         TouchImage(image);

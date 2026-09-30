@@ -72,7 +72,7 @@ EmitContext::EmitContext(const Profile& profile_, const RuntimeInfo& runtime_inf
                          Bindings& binding_)
     : Sirit::Module(profile_.supported_spirv), info{info_}, runtime_info{runtime_info_},
       profile{profile_}, hw_stage{info.hw_stage}, sw_stage{info.sw_stage}, binding{binding_} {
-    if (info.uses_dma) {
+    if (info.uses_dma || VertexMotion()) {
         SetMemoryModel(spv::AddressingModel::PhysicalStorageBuffer64, spv::MemoryModel::GLSL450);
     } else {
         SetMemoryModel(spv::AddressingModel::Logical, spv::MemoryModel::GLSL450);
@@ -351,7 +351,7 @@ void EmitContext::DefineInputs() {
         break;
     }
     case SwStage::Fragment: {
-        if (info.loads.GetAny(IR::Attribute::FragCoord) ||
+        if (FragmentMotion() || info.loads.GetAny(IR::Attribute::FragCoord) ||
             (info.loads.GetAny(IR::Attribute::BaryCoordPullModel) &&
              !profile.supports_amd_shader_explicit_vertex_parameter)) {
             frag_coord = DefineVariable(F32[4], spv::BuiltIn::FragCoord, spv::StorageClass::Input);
@@ -644,6 +644,12 @@ void EmitContext::DefineOutputs() {
                 ++num_attrs;
             }
 
+            if (VertexMotion()) {
+                motion_out_cur = DefineOutput(F32[4], MotionVectors::CurrentLocation);
+                motion_out_prev = DefineOutput(F32[4], MotionVectors::PreviousLocation);
+                Name(motion_out_cur, "motion_cur");
+                Name(motion_out_prev, "motion_prev");
+            }
             if (needs_clip_distance_emulation) {
                 clip_distances = Id{DefineOutput(F32[MaxEmulatedClipDistances], 0)};
                 output_params[num_attrs] = GetAttributeInfo(
@@ -737,6 +743,12 @@ void EmitContext::DefineOutputs() {
             frag_outputs[i] = GetAttributeInfo(num_format, id, num_components, true);
             ++num_render_targets;
         }
+        if (FragmentMotion() && !Sirit::ValidId(frag_outputs[MotionVectors::Output].id)) {
+            motion_frag_out = DefineOutput(F32[4], MotionVectors::Output);
+            motion_in_cur = DefineInput(F32[4], MotionVectors::CurrentLocation);
+            motion_in_prev = DefineInput(F32[4], MotionVectors::PreviousLocation);
+            Name(motion_frag_out, "motion_vector");
+        }
         // Dual source blending allows at most 2 render targets, one for each source.
         // Fewer targets are allowed but the missing blending source values will be
         // undefined.
@@ -763,7 +775,7 @@ void EmitContext::DefineOutputs() {
 void EmitContext::DefinePushDataBlock() {
     // Create push constants block for instance steps rates
     const Id struct_type{Name(TypeStruct(F32[1], F32[1], F32[1], F32[1], U32[4], U32[4], U32[4],
-                                         U32[4], U32[4], U32[4], U32[2]),
+                                         U32[4], U32[4], U32[4], U32[2], U32[1], U32[1]),
                               "AuxData")};
     Decorate(struct_type, spv::Decoration::Block);
     MemberName(struct_type, PushData::XOffsetIndex, "xoffset");
@@ -788,6 +800,10 @@ void EmitContext::DefinePushDataBlock() {
     MemberDecorate(struct_type, PushData::BufOffsetIndex + 0, spv::Decoration::Offset, 80U);
     MemberDecorate(struct_type, PushData::BufOffsetIndex + 1, spv::Decoration::Offset, 96U);
     MemberDecorate(struct_type, PushData::BufOffsetIndex + 2, spv::Decoration::Offset, 112U);
+    MemberName(struct_type, PushData::MotionParamIndex, "motion_param");
+    MemberDecorate(struct_type, PushData::MotionParamIndex, spv::Decoration::Offset, 120U);
+    MemberName(struct_type, PushData::SceneSizeIndex, "scene_size");
+    MemberDecorate(struct_type, PushData::SceneSizeIndex, spv::Decoration::Offset, 124U);
     push_data_block = DefineVar(struct_type, spv::StorageClass::PushConstant);
     Name(push_data_block, "push_data");
     interfaces.push_back(push_data_block);

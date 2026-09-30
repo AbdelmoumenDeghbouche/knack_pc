@@ -70,7 +70,9 @@ struct Liverpool {
     static constexpr u64 NoSeq = ~0ull;
     u64 gfx_submit_seq{};
     static u64 HashRegisterPacket(u64 checksum, const u32* words, u32 count);
-    static void ApplyGraphicsRegisterPacket(Regs& regs, const PM4Header* header, u64& checksum);
+    /// `dirty` (draw-preparation scanner) records the register blocks written.
+    static void ApplyGraphicsRegisterPacket(Regs& regs, const PM4Header* header, u64& checksum,
+                                            RegDirty* dirty = nullptr);
 
 public:
     explicit Liverpool();

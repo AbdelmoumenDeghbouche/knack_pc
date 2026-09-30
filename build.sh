@@ -22,7 +22,16 @@ fi
 read -r -a includes <<< "$(pkg-config --cflags vulkan sdl3)"
 read -r -a libraries <<< "$(pkg-config --libs vulkan sdl3)"
 # GPU library (shadPS4 video core + drivers), built by CMake into out/gpu/libbbgpu.so.
-cmake -S gpu -B out/gpu -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo >/dev/null
+# BB_PGO: generate (instrumented build that writes pgo/ while the game runs), use, off.
+# Default: use the profile in pgo/ when there is one. BB_LTO=OFF disables link-time optimization.
+pgo=${BB_PGO:-}
+if [[ -z $pgo ]]; then
+    if [[ -n $(find pgo -name '*.gcda' -print -quit 2>/dev/null) ]]; then pgo=use; else pgo=off; fi
+fi
+mkdir -p pgo
+cmake -S gpu -B out/gpu -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo -DBB_PGO="$pgo" \
+    -DBB_LTO="${BB_LTO:-ON}" -DBB_PGO_DIR="$PWD/pgo" >/dev/null
+echo "GPU library: PGO $pgo, LTO ${BB_LTO:-ON}"
 # A failed GPU build must stop here: an older libbbgpu.so would otherwise be used silently.
 if ! ninja -C out/gpu bbgpu > out/gpu-build.log 2>&1; then
     grep -v '^\[' out/gpu-build.log | tail -40 >&2

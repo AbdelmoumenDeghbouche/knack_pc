@@ -51,6 +51,9 @@ struct UniqueImage {
           allocation{std::exchange(other.allocation, VK_NULL_HANDLE)},
           image{std::exchange(other.image, VK_NULL_HANDLE)}, image_ci{std::move(other.image_ci)} {}
     UniqueImage& operator=(UniqueImage&& other) {
+        if (this == &other) return *this;
+        Destroy();
+        device = other.device;
         image = std::exchange(other.image, VK_NULL_HANDLE);
         allocator = std::exchange(other.allocator, VK_NULL_HANDLE);
         allocation = std::exchange(other.allocation, VK_NULL_HANDLE);

@@ -22,12 +22,24 @@ namespace Vulkan {
 class Instance;
 class Scheduler;
 class Runtime;
+class ObjectMotion;
 
 class CameraMotion {
 public:
     CameraMotion(const Instance& instance, Scheduler& scheduler,
                  VideoCore::TextureCache& texture_cache, Runtime& runtime);
     ~CameraMotion();
+    void InvalidateHistory() { current.valid = previous.valid = false; }
+    void SetObjectMotion(ObjectMotion* motion) noexcept {
+        object_motion = motion;
+    }
+    /// This frame's object motion image (after RecordMotion), for the debug view; or null.
+    vk::ImageView ObjectMotionView() const noexcept;
+
+    void SetJitter(std::array<float, 2> value) noexcept {
+        previous_jitter = jitter;
+        jitter = value;
+    }
 
     [[nodiscard]] bool Enabled() const noexcept {
         return debug_overlay || for_upscaler;
@@ -79,8 +91,10 @@ private:
     vk::UniquePipelineLayout motion_pipeline_layout;
     vk::UniquePipeline motion_pipeline;
 
+    ObjectMotion* object_motion = nullptr;
     Camera current, previous;
     bool frame_has_camera = false;
+    std::array<float, 2> jitter{}, previous_jitter{};
     VideoCore::ImageId depth_id{};
 
     vk::UniqueDescriptorSetLayout desc_layout;

@@ -11,6 +11,35 @@ endif()
 # Frame pointers keep the loader's thread dumps (watchdog, SIGUSR2 sampling) walkable.
 add_compile_options(-fno-omit-frame-pointer)
 
+# bbport: link-time optimization (BB_LTO, default on) and profile-guided optimization
+# (BB_PGO: off, generate = instrumented build writing into BB_PGO_DIR, use = build with that
+# profile). Covers bbgpu and the static libraries linked into it. No -march: the same build
+# runs on the Steam Deck.
+option(BB_LTO "Link-time optimization of bbgpu" ON)
+set(BB_PGO "off" CACHE STRING "Profile-guided optimization: off, generate, use")
+set(BB_PGO_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../pgo" CACHE PATH "Profile directory")
+if (BB_LTO)
+    include(CheckIPOSupported)
+    check_ipo_supported(RESULT bb_ipo_ok OUTPUT bb_ipo_error)
+    if (bb_ipo_ok)
+        set(CMAKE_INTERPROCEDURAL_OPTIMIZATION ON)
+    else()
+        message(WARNING "LTO unavailable: ${bb_ipo_error}")
+    endif()
+endif()
+if (BB_PGO STREQUAL "generate")
+    # Atomic counters: the GPU, recording, preparation and copy threads run the same code.
+    add_compile_options(-fprofile-generate=${BB_PGO_DIR} -fprofile-update=atomic)
+    add_link_options(-fprofile-generate=${BB_PGO_DIR})
+    add_compile_definitions(BB_PGO_GENERATE)
+elseif (BB_PGO STREQUAL "use")
+    # Partial training keeps unprofiled code optimized normally; counters from concurrent
+    # threads can be slightly inconsistent (correction). Functions changed since the profile
+    # (or built differently for it, bbgpu_init) are compiled without it.
+    add_compile_options(-fprofile-use=${BB_PGO_DIR} -fprofile-partial-training
+                        -fprofile-correction -Wno-missing-profile -Wno-coverage-mismatch)
+endif()
+
 find_package(Vulkan REQUIRED)
 find_package(fmt REQUIRED)
 find_package(Boost REQUIRED)
@@ -61,6 +90,8 @@ add_host_shader(post_process.frag post_process_frag)
 add_host_shader(camera_motion.comp camera_motion_comp)
 add_host_shader(upscale_merge.comp upscale_merge_comp)
 add_host_shader(upscale_reactive.comp upscale_reactive_comp)
+add_host_shader(depth_resample.frag depth_resample_frag)
+add_host_shader(depth_resample.frag depth_stencil_resample_frag HAS_STENCIL=1)
 add_host_shader(camera_motion.comp camera_motion_debug_comp DEBUG_OVERLAY=1)
 foreach(BPP IN ITEMS 8 16 32 64 96 128)
     add_host_shader(tiling.comp tiling_micro_${BPP}_comp BITS_PER_PIXEL=${BPP} IS_MACRO_TILED=0)
@@ -101,6 +132,24 @@ target_compile_definitions(bbgpu PRIVATE BOOST_ASIO_STANDALONE NDEBUG)
 target_compile_options(bbgpu PRIVATE -Wno-deprecated-declarations -Wno-missing-field-initializers)
 # Runtime symbols (runtime_memory_*, runtime_process_*) resolve against bb-probe.
 target_link_options(bbgpu PRIVATE -Wl,--allow-shlib-undefined)
-target_link_libraries(bbgpu PRIVATE ffx-vulkan::portable)
+target_link_libraries(bbgpu PRIVATE ffx-vulkan::portable ffx-vulkan::fsr4-v07-vulkan)
 target_link_libraries(bbgpu PUBLIC Vulkan::Headers fmt::fmt Boost::headers magic_enum::magic_enum
     tsl::robin_map GPUOpen::VulkanMemoryAllocator PkgConfig::XXHASH PkgConfig::SDL3 PkgConfig::X11 PkgConfig::FFMPEG miniz::miniz Zydis::Zydis sirit)
+
+# Explicit test targets; neither launches the game nor needs a Vulkan device.
+add_executable(motion-history-test EXCLUDE_FROM_ALL ../test_motion_history.cpp)
+target_compile_options(motion-history-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
+add_executable(motion-shader-test EXCLUDE_FROM_ALL ../test_motion_shaders.cpp ../test_gpu_runtime_stubs.cpp)
+target_include_directories(motion-shader-test PRIVATE shim shadps4 third_party/gcn/include)
+target_link_libraries(motion-shader-test PRIVATE bbgpu)
+add_executable(ui-composition-test EXCLUDE_FROM_ALL ../test_ui_composition.cpp)
+target_compile_options(ui-composition-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
+
+add_executable(scene-resolution-test EXCLUDE_FROM_ALL ../test_scene_resolution.cpp ../test_gpu_runtime_stubs.cpp)
+target_include_directories(scene-resolution-test PRIVATE shim shadps4 third_party/gcn/include)
+# The test's Vulkan-Hpp inline methods have a different set of platform extensions
+# from vk_platform.cpp. Keep them local and use an explicit dispatcher in the test.
+target_compile_options(scene-resolution-test PRIVATE -UNDEBUG -fPIC)
+set_source_files_properties(../test_scene_resolution.cpp PROPERTIES
+    COMPILE_OPTIONS "-fvisibility=hidden;-fvisibility-inlines-hidden")
+target_link_libraries(scene-resolution-test PRIVATE bbgpu)

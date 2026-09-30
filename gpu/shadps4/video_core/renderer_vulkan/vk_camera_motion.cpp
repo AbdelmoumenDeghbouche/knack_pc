@@ -11,6 +11,7 @@
 #include "video_core/host_shaders/camera_motion_comp.h"
 #include "video_core/host_shaders/camera_motion_debug_comp.h"
 #include "video_core/renderer_vulkan/vk_instance.h"
+#include "video_core/renderer_vulkan/vk_object_motion.h"
 #include "video_core/renderer_vulkan/vk_runtime.h"
 #include "video_core/renderer_vulkan/vk_scheduler.h"
 #include "video_core/renderer_vulkan/vk_shader_util.h"
@@ -25,6 +26,8 @@ struct PushConstants {
     std::array<float, 4> proj;
     std::array<float, 4> prev_proj;
     std::array<float, 2> size;
+    std::array<float, 2> jitter;
+    std::array<float, 2> previous_jitter;
     u32 mode;
 };
 
@@ -56,13 +59,17 @@ CameraMotion::CameraMotion(const Instance& instance_, Scheduler& scheduler_,
     for_upscaler = !(upscaler && std::strcmp(upscaler, "none") == 0);
     const auto device = instance.GetDevice();
     if (for_upscaler) {
-        const std::array<vk::DescriptorSetLayoutBinding, 2> motion_bindings = {{
+        const std::array<vk::DescriptorSetLayoutBinding, 3> motion_bindings = {{
             {.binding = 0,
              .descriptorType = vk::DescriptorType::eSampledImage,
              .descriptorCount = 1,
              .stageFlags = vk::ShaderStageFlagBits::eCompute},
             {.binding = 1,
              .descriptorType = vk::DescriptorType::eStorageImage,
+             .descriptorCount = 1,
+             .stageFlags = vk::ShaderStageFlagBits::eCompute},
+            {.binding = 2,
+             .descriptorType = vk::DescriptorType::eSampledImage,
              .descriptorCount = 1,
              .stageFlags = vk::ShaderStageFlagBits::eCompute},
         }};
@@ -154,20 +161,31 @@ float CameraMotion::Near() const noexcept {
     return -current.proj[3] / current.proj[2];
 }
 
+vk::ImageView CameraMotion::ObjectMotionView() const noexcept {
+    return object_motion && object_motion->Enabled() ? object_motion->View() : vk::ImageView{};
+}
+
 void CameraMotion::RecordMotion(vk::CommandBuffer cmdbuf, vk::ImageView depth_view,
                                 vk::ImageView motion_view, u32 width, u32 height) {
+    bool object_valid = false;
+    const vk::ImageView object_view = object_motion && object_motion->Enabled()
+        ? object_motion->PrepareRead(cmdbuf, width, height, object_valid) : depth_view;
     const PushConstants push{
         .reproject = Multiply(previous.view, current.inv_view),
         .proj = current.proj,
         .prev_proj = previous.proj,
         .size = {float(width), float(height)},
-        .mode = 0,
+        .jitter = jitter,
+        .previous_jitter = previous_jitter,
+        .mode = object_valid ? 1u : 0u,
     };
     const vk::DescriptorImageInfo depth_info{.imageView = depth_view,
                                              .imageLayout = vk::ImageLayout::eGeneral};
     const vk::DescriptorImageInfo motion_info{.imageView = motion_view,
                                               .imageLayout = vk::ImageLayout::eGeneral};
-    const std::array<vk::WriteDescriptorSet, 2> writes = {{
+    const vk::DescriptorImageInfo object_info{.imageView = object_view,
+                                              .imageLayout = vk::ImageLayout::eGeneral};
+    const std::array<vk::WriteDescriptorSet, 3> writes = {{
         {.dstBinding = 0,
          .descriptorCount = 1,
          .descriptorType = vk::DescriptorType::eSampledImage,
@@ -176,6 +194,10 @@ void CameraMotion::RecordMotion(vk::CommandBuffer cmdbuf, vk::ImageView depth_vi
          .descriptorCount = 1,
          .descriptorType = vk::DescriptorType::eStorageImage,
          .pImageInfo = &motion_info},
+        {.dstBinding = 2,
+         .descriptorCount = 1,
+         .descriptorType = vk::DescriptorType::eSampledImage,
+         .pImageInfo = &object_info},
     }};
     cmdbuf.bindPipeline(vk::PipelineBindPoint::eCompute, *motion_pipeline);
     cmdbuf.pushDescriptorSetKHR(vk::PipelineBindPoint::eCompute, *motion_pipeline_layout, 0,
@@ -210,6 +232,7 @@ void CameraMotion::OnDisplayPass(VideoCore::ImageId frame) {
     if (debug_overlay && frame && depth_id && current.valid && previous.valid) {
         Overlay(frame);
     }
+    if (!frame_has_camera) InvalidateHistory();
     frame_has_camera = false;
     depth_id = {};
 }
@@ -259,6 +282,8 @@ void CameraMotion::Overlay(VideoCore::ImageId frame) {
         .proj = current.proj,
         .prev_proj = previous.proj,
         .size = {float(color.info.size.width), float(color.info.size.height)},
+        .jitter = jitter,
+        .previous_jitter = previous_jitter,
         .mode = BbToggle::Disabled(1u << 20)   ? 1u
                 : BbToggle::Disabled(1u << 21) ? 2u
                 : BbToggle::Disabled(1u << 22) ? 3u

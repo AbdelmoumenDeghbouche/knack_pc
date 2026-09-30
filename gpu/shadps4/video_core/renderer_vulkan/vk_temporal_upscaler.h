@@ -4,10 +4,10 @@
 // post-processing combine pass, with the scene depth and camera motion vectors, and writes the
 // result back so the game's own post, tonemap and UI continue unchanged (Native AA preset).
 //
-// Scaled presets: the game renders at a lower resolution (resolution patch from patches.py) and
-// FSR upscales its finished, tonemapped frame right before the UI. The UI passes and the pass
-// copying the frame to the display buffer are redirected to output-size images, and the
-// presenter shows those instead of the guest display buffer: the UI stays sharp.
+// Normal scaled presets keep guest targets at 1920x1080, rasterize the scene into
+// reduced host targets, and upscale HDR color before post and UI. BB_RENDER_RES
+// retains the older patched-resolution path, which upscales the tonemapped frame
+// and redirects UI/display passes to output-size images.
 
 #pragma once
 
@@ -20,6 +20,7 @@
 
 #include "common/types.h"
 #include "video_core/renderer_vulkan/vk_common.h"
+#include "video_core/renderer_vulkan/vk_fsr4.h"
 #include "video_core/texture_cache/image.h"
 
 struct FfxVkPortableUpscaleContext;
@@ -34,12 +35,13 @@ class Instance;
 class Scheduler;
 class Runtime;
 class CameraMotion;
+class SceneTargets;
 
 class TemporalUpscaler {
 public:
     TemporalUpscaler(const Instance& instance, Scheduler& scheduler,
                      VideoCore::TextureCache& texture_cache, Runtime& runtime,
-                     CameraMotion& camera_motion);
+                     CameraMotion& camera_motion, SceneTargets& scene_targets);
     ~TemporalUpscaler();
 
     [[nodiscard]] bool Enabled() const noexcept {
@@ -61,7 +63,9 @@ public:
     void OnDispatch(u64 cs_hash);
 
     /// Start of a frame in the command stream (display pass).
-    void OnFrameStart();
+    bool OnFrameStart();
+    bool RasterScaling() const;
+
 
     /// This frame's sub-pixel jitter in pixels (screen x right, y down); zero when off and after
     /// the upscale (post and UI are not jittered).
@@ -71,8 +75,10 @@ public:
 
     // Scaled presets.
 
-    /// Before every draw: the first UI pass's vertex shader starts the upscale.
-    void OnDraw(u64 vs_hash);
+    /// After identifying this draw's targets, before drawing any UI pixels. Menus use
+    /// spatial background copy and native UI, without needing scene depth or FSR history.
+    void OnDraw(u64 vs_hash, VideoCore::ImageId color, VideoCore::ImageId depth,
+                bool native_viewport);
 
     /// A pass's first color target: the last render-size RGBA8 target before the UI is the
     /// game's finished frame.
@@ -82,6 +88,7 @@ public:
         vk::ImageView view;
         vk::ImageLayout layout;
         u32 width, height;
+        bool native_ui = false;
     };
     /// Render target redirection (UI passes, display pass): false when not redirected.
     /// `view` is the game's view of the image: redirected views mirror its format (sRGB) and,
@@ -104,21 +111,37 @@ public:
 private:
     void Run();
     void RunScaled();
+    void RunUiOnly(VideoCore::ImageId color, VideoCore::ImageId depth);
+    void EnsureUiResources(u32 width, u32 height, vk::Format color, vk::Format depth);
+    void PrepareUiDepth(VideoCore::ImageId depth);
     /// Render size below the scaled-preset output size (the resolution patch is on).
     [[nodiscard]] bool Scaled() const;
+    // The scene color is drawn into a reduced SceneTargets proxy (live presets).
+    [[nodiscard]] bool ReducedScene(const VideoCore::Image& color) const;
     /// Available and switched on (menu setting, toggle 1 << 24).
     [[nodiscard]] bool Active() const;
     [[nodiscard]] bool ReactiveOn() const;
     bool EnsureResources(u32 width, u32 height, u32 out_width, u32 out_height, bool hdr);
     void CreatePipelines();
     /// Records the reactive mask pass; false when there is no snapshot this frame.
-    bool RecordReactive(vk::CommandBuffer cmdbuf, vk::ImageView color_view);
+    bool RecordReactive(vk::ImageView color_view);
+    /// FSR 4 is selected, possible in this session (not BB_RENDER_RES) and has not failed.
+    [[nodiscard]] bool UseFsr4() const;
+    /// Records FSR 4 into output_image; on a permanent failure FSR 3 takes over.
+    bool RecordFsr4(vk::CommandBuffer cmdbuf, Fsr4Upscaler::Image color, Fsr4Upscaler::Image depth,
+                    u32 w, u32 h, u32 ow, u32 oh, float frame_ms);
 
     const Instance& instance;
     Scheduler& scheduler;
     VideoCore::TextureCache& texture_cache;
     Runtime& runtime;
     CameraMotion& camera_motion;
+    SceneTargets& scene_targets;
+    int applied_preset = -1;
+    int applied_upscaler = -1;
+    bool dispatched_last_frame = false;
+    bool last_active = false, last_jitter = false;
+
 
     bool enabled = false;
     bool failed = false;
@@ -150,6 +173,10 @@ private:
     vk::UniqueImageView ui_depth_view;
     bool depth_blit = false;
     bool scaled_session = false;
+    u32 ui_width = 0, ui_height = 0;
+    u32 render_width = 0, render_height = 0;
+    vk::Format ui_format = vk::Format::eUndefined;
+    vk::Format ui_depth_format = vk::Format::eUndefined;
     /// Views of the port's images in the formats/swizzles the game's views use.
     struct MirrorView {
         vk::Format format;
@@ -163,11 +190,16 @@ private:
         VideoCore::UniqueImage image;
         std::vector<MirrorView> views;
         vk::Format format{};
+        u32 width = 0, height = 0;
         bool valid = false;
     };
     std::mutex display_mutex;
     std::unordered_map<VAddr, DisplayImage> displays;
     FfxVkPortableUpscaleContext* context = nullptr;
+    bool resources_ready = false; ///< images below match width/height/out size
+    bool resources_fsr4 = false;  ///< made for FSR 4 (no FSR 3 context)
+    std::unique_ptr<Fsr4Upscaler> fsr4;
+    bool fsr4_failed = false;
     VideoCore::UniqueImage motion_image;
     VideoCore::UniqueImage output_image;
     vk::UniqueImageView motion_view;

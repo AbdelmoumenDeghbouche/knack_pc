@@ -78,6 +78,21 @@ struct SwVertexRuntimeInfo {
     bool operator==(const SwVertexRuntimeInfo& other) const noexcept = default;
 };
 
+/// bbport: object motion vectors for temporal upscaling. G-buffer vertex shaders store their
+/// clip-space positions per referenced vertex and read the previous frame's; the
+/// fragment shader writes the screen-space difference to an extra color attachment.
+struct MotionVectors {
+    static constexpr u32 CurrentLocation = 30;  ///< varying: current clip position
+    static constexpr u32 PreviousLocation = 31; ///< varying: previous clip position, z = valid
+    static constexpr u32 Output = 7;            ///< color attachment index
+    /// Per-draw parameters (u32x4: store base, load base, vertices per instance, flags) and
+    /// the position array (vec4 per vertex; element 0 is scratch), fixed for the session.
+    static inline u64 params_address = 0;
+    static inline u64 positions_address = 0;
+    static constexpr u32 FlagStore = 1;
+    static constexpr u32 FlagLoad = 2;
+};
+
 struct HwLocalRuntimeInfo {
     u32 ls_stride;
 
@@ -96,6 +111,8 @@ struct HwVertexRuntimeInfo {
     bool emulate_depth_negative_one_to_one{};
     bool clip_disable{};
     u32 user_clip_plane_mask{};
+    /// bbport: object motion vectors (G-buffer draws), see MotionVectors below.
+    bool motion_vectors{};
 
     bool operator==(const HwVertexRuntimeInfo& other) const noexcept = default;
 };
@@ -206,6 +223,8 @@ struct HwFragmentRuntimeInfo {
     bool front_face_all_bits{false};
     bool dual_source_blending{false};
     bool clip_distance_emulation{false};
+    /// bbport: writes the object motion vector to MotionVectors::Output.
+    bool motion_vectors{false};
 
     bool operator==(const HwFragmentRuntimeInfo& other) const noexcept {
         return std::ranges::equal(color_buffers, other.color_buffers) &&
@@ -215,6 +234,7 @@ struct HwFragmentRuntimeInfo {
                front_face_all_bits == other.front_face_all_bits &&
                dual_source_blending == other.dual_source_blending &&
                clip_distance_emulation == other.clip_distance_emulation &&
+               motion_vectors == other.motion_vectors &&
                std::ranges::equal(inputs.begin(), inputs.begin() + num_inputs, other.inputs.begin(),
                                   other.inputs.begin() + num_inputs);
     }

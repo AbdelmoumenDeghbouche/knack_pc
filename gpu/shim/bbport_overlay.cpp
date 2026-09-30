@@ -155,8 +155,8 @@ void Menu() {
                 frame_ms_avg);
 
     ImGui::SeparatorText("Временной апскейлер");
-    static const char* upscalers[] = {"Выкл", "FSR 3.1"};
-    static const char* later[] = {"FSR 4", "DLSS", "XeSS"};
+    static const char* upscalers[] = {"Выкл", "FSR 3.1", "FSR 4 (INT8)"};
+    static const char* later[] = {"DLSS", "XeSS"};
     int upscaler = s.upscaler;
     if (ImGui::BeginCombo("Апскейлер", upscalers[upscaler])) {
         for (int i = 0; i < BbSettings::UpscalerCount; ++i) {
@@ -172,6 +172,18 @@ void Menu() {
             ImGui::TextDisabled("— в работе");
         }
         ImGui::EndCombo();
+    }
+    if (s.upscaler == BbSettings::UpscalerFsr4) {
+        if (const char* problem = s.fsr4_problem.load()) {
+            ImGui::TextColored(ImVec4(1.0f, 0.5f, 0.3f, 1.0f), "FSR 4 недоступен: %s", problem);
+        }
+        Hint("FSR 4 в режиме INT8 (модель v07 из исходников AMD FidelityFX SDK). Качество выше, "
+             "чем у FSR 3.1, но проход тяжелее. Смена пресета пересобирает модель (короткая "
+             "пауза). Ассеты: fetch_fsr4_assets.sh.");
+        Checkbox("FSR 4: авто-экспозиция", s.fsr4_auto_exposure);
+        Checkbox("FSR 4: обратный знак jitter", s.fsr4_invert_jitter);
+        Hint("Проверка при гостинге: сеть FSR 4 нормирует цвет по экспозиции и по ней решает, "
+             "когда отбросить прошлые кадры. Меняются сразу, без перезапуска.");
     }
     const bool upscaler_on = s.upscaler != BbSettings::UpscalerOff;
     ImGui::BeginDisabled(!upscaler_on);
@@ -227,6 +239,14 @@ void Menu() {
     Hint("Точные векторы для анимированных объектов: одежда и оружие меньше рассыпаются "
          "при движении. Статичная сцена не получает дополнительный проход. "
          "Изменение применяется после перезапуска игры.");
+    bool show_motion = s.debug_view == BbSettings::DebugMotion;
+    if (ImGui::Checkbox("Показать векторы движения (отладка)", &show_motion)) {
+        s.debug_view = show_motion ? BbSettings::DebugMotion : BbSettings::DebugNone;
+    }
+    Hint("Красный/зелёный: движение по горизонтали/вертикали (8 пикселей = полная яркость). "
+         "Синий: пиксель получил точный вектор объекта, а не только движение камеры. "
+         "Движущийся предмет без синего и без красного/зелёного апскейлер считает "
+         "неподвижным, отсюда шлейф.");
     ImGui::EndDisabled(); // upscaler off
 
     if (s.object_motion != s.startup_object_motion) {
@@ -266,7 +286,10 @@ void FpsCounter() {
                      ImGuiWindowFlags_NoFocusOnAppearing);
     const auto& s = BbSettings::Get();
     ImGui::Text("%.0f FPS  %.1f мс  %s", frame_ms_avg > 0.0f ? 1000.0f / frame_ms_avg : 0.0f,
-                frame_ms_avg, s.upscaler == BbSettings::UpscalerFsr3 ? "FSR 3.1" : "");
+                frame_ms_avg,
+                s.upscaler == BbSettings::UpscalerFsr3   ? "FSR 3.1"
+                : s.upscaler == BbSettings::UpscalerFsr4 ? "FSR 4"
+                                                         : "");
     ImGui::End();
 }
 

@@ -3,6 +3,10 @@
 
 #pragma once
 
+#include <algorithm>
+#include <bitset>
+#include <cstring>
+#include <vector>
 #include "video_core/amdgpu/regs_color.h"
 #include "video_core/amdgpu/regs_depth.h"
 #include "video_core/amdgpu/regs_primitive.h"
@@ -187,6 +191,65 @@ union Regs {
     }
 
     void SetDefaults();
+};
+
+// bbport: register blocks written by a stretch of packets, and their values at its end. The
+// draw-preparation scanner records one per submission so a worker reaches the state at the
+// start of any later submission without replaying the packets in between.
+struct RegDirty {
+    static constexpr u32 BlockWords = 32;
+    static constexpr u32 NumBlocks = Regs::NumRegs / BlockWords;
+    std::bitset<NumBlocks> blocks;
+    bool reset = false; ///< ClearState: defaults, then only the blocks marked after it
+
+    void Mark(u32 word, u32 count) {
+        if (count == 0 || word >= Regs::NumRegs) {
+            return;
+        }
+        const u32 last = std::min(word + count, Regs::NumRegs) - 1;
+        for (u32 block = word / BlockWords; block <= last / BlockWords; ++block) {
+            blocks.set(block);
+        }
+    }
+    template <typename T>
+    void MarkField(const Regs& regs, const T& field) {
+        const auto offset = reinterpret_cast<const u8*>(&field) -
+                            reinterpret_cast<const u8*>(regs.reg_array.data());
+        Mark(u32(offset / sizeof(u32)), u32((sizeof(T) + sizeof(u32) - 1) / sizeof(u32)));
+    }
+    void Clear() {
+        blocks.reset();
+        reset = false;
+    }
+};
+
+struct RegDelta {
+    bool reset = false;
+    std::vector<u16> blocks;
+    std::vector<u32> words;
+
+    void Capture(const Regs& regs, const RegDirty& dirty) {
+        reset = dirty.reset;
+        blocks.clear();
+        words.clear();
+        for (u32 block = 0; block < RegDirty::NumBlocks; ++block) {
+            if (dirty.blocks.test(block)) {
+                blocks.push_back(u16(block));
+                const u32* src = regs.reg_array.data() + block * RegDirty::BlockWords;
+                words.insert(words.end(), src, src + RegDirty::BlockWords);
+            }
+        }
+    }
+    void Apply(Regs& regs) const {
+        if (reset) {
+            regs.SetDefaults();
+        }
+        for (size_t i = 0; i < blocks.size(); ++i) {
+            std::memcpy(regs.reg_array.data() + blocks[i] * RegDirty::BlockWords,
+                        words.data() + i * RegDirty::BlockWords,
+                        RegDirty::BlockWords * sizeof(u32));
+        }
+    }
 };
 
 #undef DO_CONCAT2

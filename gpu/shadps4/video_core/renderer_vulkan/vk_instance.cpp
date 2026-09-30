@@ -95,8 +95,14 @@ Instance::Instance(bool enable_validation, bool enable_crash_diagnostic)
 
 Instance::Instance(Frontend::WindowSDL& window, s32 physical_device_index,
                    bool enable_validation /*= false*/, bool enable_crash_diagnostic /*= false*/)
-    : instance{CreateInstance(window.GetWindowInfo().type, enable_validation,
-                              enable_crash_diagnostic)},
+    : Instance(window.GetWindowInfo(), physical_device_index, enable_validation, enable_crash_diagnostic) {}
+
+Instance::Instance(s32 index, bool validation)
+    : Instance(Frontend::WindowSystemInfo{}, index, validation, false) {}
+
+Instance::Instance(const Frontend::WindowSystemInfo& window_info, s32 physical_device_index,
+                   bool enable_validation, bool enable_crash_diagnostic)
+    : instance{CreateInstance(window_info.type, enable_validation, enable_crash_diagnostic)},
       physical_devices{EnumeratePhysicalDevices(instance)} {
     if (enable_validation) {
         debug_callback = CreateDebugCallback(*instance);
@@ -210,7 +216,8 @@ bool Instance::CreateDevice() {
         vk::PhysicalDevicePrimitiveTopologyListRestartFeaturesEXT,
         vk::PhysicalDeviceShaderAtomicFloat2FeaturesEXT,
         vk::PhysicalDeviceWorkgroupMemoryExplicitLayoutFeaturesKHR,
-        vk::PhysicalDeviceImage2DViewOf3DFeaturesEXT, vk::PhysicalDeviceShaderClockFeaturesKHR>();
+        vk::PhysicalDeviceImage2DViewOf3DFeaturesEXT, vk::PhysicalDeviceShaderClockFeaturesKHR,
+        vk::PhysicalDeviceComputeShaderDerivativesFeaturesKHR>();
     features = feature_chain.get().features;
 
     const vk::StructureChain properties_chain = physical_device.getProperties2<
@@ -344,6 +351,12 @@ bool Instance::CreateDevice() {
     }
     image_view_min_lod = add_extension(VK_EXT_IMAGE_VIEW_MIN_LOD_EXTENSION_NAME);
     supports_memory_budget = add_extension(VK_EXT_MEMORY_BUDGET_EXTENSION_NAME);
+    // bbport: FSR 4 v07 INT8 (vk_temporal_upscaler): quad derivatives in compute shaders.
+    compute_shader_derivatives = add_extension(VK_KHR_COMPUTE_SHADER_DERIVATIVES_EXTENSION_NAME);
+    if (compute_shader_derivatives) {
+        compute_shader_derivatives_features =
+            feature_chain.get<vk::PhysicalDeviceComputeShaderDerivativesFeaturesKHR>();
+    }
     shader_clock = add_extension(VK_KHR_SHADER_CLOCK_EXTENSION_NAME);
     if (shader_clock) {
         shader_clock_features = feature_chain.get<vk::PhysicalDeviceShaderClockFeaturesKHR>();
@@ -450,6 +463,7 @@ bool Instance::CreateDevice() {
             .subgroupSizeControl = vk13_features.subgroupSizeControl,
             .synchronization2 = vk13_features.synchronization2,
             .dynamicRendering = vk13_features.dynamicRendering,
+            .shaderIntegerDotProduct = vk13_features.shaderIntegerDotProduct,
             .maintenance4 = vk13_features.maintenance4,
         },
         // Extensions
@@ -526,6 +540,12 @@ bool Instance::CreateDevice() {
         vk::PhysicalDeviceShaderClockFeaturesKHR{
             .shaderSubgroupClock = shader_clock_features.shaderSubgroupClock,
         },
+        vk::PhysicalDeviceComputeShaderDerivativesFeaturesKHR{
+            .computeDerivativeGroupQuads =
+                compute_shader_derivatives_features.computeDerivativeGroupQuads,
+            .computeDerivativeGroupLinear =
+                compute_shader_derivatives_features.computeDerivativeGroupLinear,
+        },
     };
 
     if (!custom_border_color) {
@@ -576,6 +596,9 @@ bool Instance::CreateDevice() {
     }
     if (!shader_clock) {
         device_chain.unlink<vk::PhysicalDeviceShaderClockFeaturesKHR>();
+    }
+    if (!compute_shader_derivatives) {
+        device_chain.unlink<vk::PhysicalDeviceComputeShaderDerivativesFeaturesKHR>();
     }
 
     auto [device_result, dev] = physical_device.createDeviceUnique(device_chain.get());

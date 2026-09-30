@@ -1,6 +1,10 @@
 // SPDX-FileCopyrightText: Copyright 2024 shadPS4 Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+#include <chrono>
+#include <array>
+#include <map>
+#include <unordered_map>
 #include <algorithm>
 #include <bit>
 #include <cstdlib>
@@ -198,10 +202,102 @@ void BufferCache::DownloadMemory(const Buffer* arena, VAddr device_addr, u64 siz
     memory_tracker->UnmarkRegionAsGpuModified(device_addr, size);
 }
 
+namespace {
+// bbport: BB_BUFFER_STATS=1 — how buffer bindings reach the GPU, by guest region (256 MiB),
+// printed every 5 s: small read-only copies into the stream buffer, arena bindings, and the
+// bytes those re-upload after CPU writes. Input for engine-level short paths.
+struct BufferStats {
+    struct Region {
+        u64 stream_count{}, stream_bytes{}, arena_count{}, arena_bytes{}, upload_bytes{};
+    };
+    std::map<u64, Region> regions;
+    /// Hot window: frame of the last binding per 64 KiB block, and the distribution of the
+    /// frames between uses (1, 2, 3, 4, 5-8, 9-16, 17+): the ring's reuse distance.
+    std::unordered_map<u64, u64> last_use;
+    std::array<u64, 7> reuse{};
+    std::chrono::steady_clock::time_point window = std::chrono::steady_clock::now();
+    u64 calls = 0;
+};
+/// 256 MiB regions; 1 MiB inside the hot 0x104xxxxxxx window (the engine's frame data).
+BufferStats& Stats();
+void NoteHotUse(VAddr address, u32 size) {
+    if ((address >> 28) != 0x104) {
+        return;
+    }
+    auto& st = Stats();
+    const u64 frame = BbStats::gpu_frames.load(std::memory_order_relaxed);
+    for (u64 block = address >> 16; block <= (address + size - 1) >> 16; ++block) {
+        auto [it, inserted] = st.last_use.try_emplace(block, frame);
+        if (!inserted && it->second != frame) {
+            const u64 d = frame - it->second;
+            ++st.reuse[d <= 4 ? d - 1 : d <= 8 ? 4 : d <= 16 ? 5 : 6];
+            it->second = frame;
+        }
+    }
+}
+u64 RegionKey(VAddr address) {
+    return (address >> 28) == 0x104 ? (address >> 20) | (1ull << 40) : address >> 28;
+}
+bool BufferStatsEnabled() {
+    static const bool enabled = [] {
+        const char* value = std::getenv("BB_BUFFER_STATS");
+        return value && value[0] == '1';
+    }();
+    return enabled;
+}
+BufferStats& Stats() {
+    static BufferStats stats;
+    return stats;
+}
+void PrintBufferStats() {
+    auto& st = Stats();
+    if ((++st.calls & 4095) != 0) {
+        return;
+    }
+    const auto now = std::chrono::steady_clock::now();
+    const double seconds = std::chrono::duration<double>(now - st.window).count();
+    if (seconds < 5.0) {
+        return;
+    }
+    std::printf("Buffer stats (%.1f s, per second): region, stream copies/bytes, arena bindings, "
+                "re-uploaded bytes\n", seconds);
+    std::printf("  hot window reuse distance in frames (1,2,3,4,5-8,9-16,17+): %llu %llu %llu %llu "
+                "%llu %llu %llu\n",
+                (unsigned long long)st.reuse[0], (unsigned long long)st.reuse[1],
+                (unsigned long long)st.reuse[2], (unsigned long long)st.reuse[3],
+                (unsigned long long)st.reuse[4], (unsigned long long)st.reuse[5],
+                (unsigned long long)st.reuse[6]);
+    st.reuse = {};
+    for (const auto& [region, r] : st.regions) {
+        const u64 base = (region >> 40) ? (region & ((1ull << 40) - 1)) << 20 : region << 28;
+        if ((region >> 40) && r.stream_bytes + r.upload_bytes < 1e6 * seconds) {
+            continue; // quiet MiB of the hot window
+        }
+        std::printf("  %#012llx: %8.0f copies %8.2f MB, %8.0f arena %8.2f MB bound, %8.2f MB uploads\n",
+                    static_cast<unsigned long long>(base), r.stream_count / seconds,
+                    r.stream_bytes / seconds / 1e6, r.arena_count / seconds,
+                    r.arena_bytes / seconds / 1e6,
+                    r.upload_bytes / seconds / 1e6);
+    }
+    st.regions.clear();
+    st.window = now;
+}
+} // namespace
+
 std::pair<const Buffer*, u64> BufferCache::ObtainBuffer(VAddr device_addr, u32 size,
                                                         bool is_written, bool is_texel_buffer) {
+    const bool stats = BufferStatsEnabled();
+    if (stats) {
+        PrintBufferStats();
+        NoteHotUse(device_addr, size);
+    }
     // For read-only buffers use device local stream buffer to reduce renderpass breaks.
     if (!is_written && size <= STREAM_THRESHOLD && !IsRegionGpuModified(device_addr, size)) {
+        if (stats) {
+            auto& region = Stats().regions[RegionKey(device_addr)];
+            ++region.stream_count;
+            region.stream_bytes += size;
+        }
         // bbport: the guest data is copied on a copy thread, started now; submission and
         // guest-visible fences wait for it (Scheduler::WaitHostCopies).
         if (!stream_buffer.mapped_data.empty() &&
@@ -227,7 +323,15 @@ std::pair<const Buffer*, u64> BufferCache::ObtainBuffer(VAddr device_addr, u32 s
     const u64 last_block = (device_addr + size - 1) >> block_shift;
     const auto* arena = GetArena(first_block, last_block);
     EnsureResident(arena, first_block, last_block);
+    const u64 uploaded_before = BbStats::buffer_upload_bytes.load(std::memory_order_relaxed);
     SynchronizeMemory(arena, device_addr, size, is_written, is_texel_buffer);
+    if (stats) {
+        auto& region = Stats().regions[RegionKey(device_addr)];
+        ++region.arena_count;
+        region.arena_bytes += size;
+        region.upload_bytes +=
+            BbStats::buffer_upload_bytes.load(std::memory_order_relaxed) - uploaded_before;
+    }
     if (is_written) {
         gpu_modified_ranges.Add(device_addr, size);
     }

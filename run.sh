@@ -28,10 +28,19 @@ if [[ -z ${PYTHON:-} ]]; then echo 'Install Python 3 or set PYTHON.' >&2; exit 1
 "$PYTHON" link_libc.py ../CUSA03173
 "$PYTHON" link_modules.py ../CUSA03173
 "$PYTHON" content_profile.py ../CUSA03173 --sku "${BB_CONTENT_SKU:-full}"
+# Dynamic scene resolution scaling now works on all GPUs (fallback: clear UI depth
+# instead of blit when D32S8 blit unsupported). The old startup resolution patch
+# is kept as BB_RENDER_RES for explicit overrides and compatibility testing.
+if [[ ${BB_AUTO_RENDER_RES:-} == 1 ]]; then
+    unset BB_RENDER_RES BB_AUTO_RENDER_RES
+fi
+# BB_RENDER_RES=WxH explicitly overrides dynamic scaling (for testing/debugging).
+# Without it, all GPUs use live preset switching.
 # Frame rate: BB_FPS=uncap (default; delta-time patch, vblank follows the display),
 # 60/90 (fixed-timestep patches) or 30 (unpatched). BB_PATCHES adds patch names ("a;b").
 fps=${BB_FPS:-uncap}
-# Render resolution: the upscaler preset in ${BB_CONFIG:-bbport.ini}, or BB_RENDER_RES=WxH.
+# Supported GPUs scale renderer targets at run time. BB_RENDER_RES=WxH keeps the
+# explicit guest-resolution patch for compatibility and debugging.
 "$PYTHON" patches.py --fps "$fps" --extra "${BB_PATCHES:-}" --settings "${BB_CONFIG:-bbport.ini}" --render-res "${BB_RENDER_RES:-}"
 if [[ -z ${BB_VBLANK_HZ:-} ]]; then
     case $fps in uncap) export BB_VBLANK_HZ=0 ;; 90) export BB_VBLANK_HZ=90 ;; *) export BB_VBLANK_HZ=60 ;; esac

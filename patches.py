@@ -5,6 +5,7 @@ image places eboot vaddr 0 at image offset 0. Only literal writes are supported
 (bytes, bytes16/32/64, float32/64, utf8, utf16); pattern ("mask") patches are rejected.
 """
 import argparse
+import os
 import struct
 import xml.etree.ElementTree as ET
 from pathlib import Path
@@ -16,10 +17,14 @@ FPS_PRESETS={'30':[],'60':['60 FPS++'],'90':['90 FPS++'],'uncap':['Uncap FPS++']
 # then renders at 1920x1080 / ratio and the port's temporal upscaler restores the output size.
 OUTPUT_SIZE=(1920,1080)
 PRESET_SCALES=[1.0,1.5,1.7,2.0,3.0]
-# The community resolution patch this is derived from: its "mov eax/ecx, imm32" render width
-# (0x500) and height (0x2D0) immediates are replaced; its other lines (UI coordinate space,
-# aspect) are kept.
+# The community patch changes two independent consumers: the game render/window setup
+# and the UI movie viewport. Keep the latter at native size so glyph rasterisation and
+# vector tessellation do not inherit the scene's FSR resolution.
 RESOLUTION_TEMPLATE='Resolution Patch 1280x720 (16:9)'
+SCENE_WIDTH=0x02196A6B-EBOOT_BASE
+SCENE_HEIGHT=0x02196A7A-EBOOT_BASE
+UI_WIDTH=0x02358554-EBOOT_BASE
+UI_HEIGHT=0x0235855D-EBOOT_BASE
 
 
 def read_settings(path):
@@ -46,13 +51,22 @@ def render_size(settings,override=''):
 
 def resolution_writes(xml,size,app_version,segments):
     writes=compile_patches(xml,[RESOLUTION_TEMPLATE],app_version,segments)
+    replacements={SCENE_WIDTH:(0xB8,0x500,size[0]),
+                  SCENE_HEIGHT:(0xB8,0x2D0,size[1]),
+                  UI_WIDTH:(0xB8,0x500,OUTPUT_SIZE[0]),
+                  UI_HEIGHT:(0xB9,0x2D0,OUTPUT_SIZE[1])}
     out=[]
+    seen=set()
     for offset,data in writes:
-        if len(data)==4 and data[0] in (0xB8,0xB9):
-            imm=int.from_bytes(data[1:4],'little')
-            if imm==0x500: data=bytes([data[0]])+size[0].to_bytes(3,'little')
-            elif imm==0x2D0: data=bytes([data[0]])+size[1].to_bytes(3,'little')
+        if offset in replacements:
+            opcode,old,value=replacements[offset]
+            if data!=bytes([opcode])+old.to_bytes(3,'little') or offset in seen:
+                raise ValueError(f'unexpected resolution patch at {offset+EBOOT_BASE:#x}')
+            data=bytes([opcode])+value.to_bytes(3,'little')
+            seen.add(offset)
         out.append((offset,data))
+    if seen!=replacements.keys():
+        raise ValueError('resolution patch is missing scene/UI viewport instructions')
     return out
 
 
@@ -105,14 +119,24 @@ def main():
     p.add_argument('--out',type=Path,default=Path(__file__).parent/'out')
     p.add_argument('--settings',type=Path,default=Path(__file__).parent/'bbport.ini')
     p.add_argument('--render-res',default='',help='render resolution WxH (overrides the preset)')
+    p.add_argument('--print-preset-size',action='store_true',help='print the selected preset size, if reduced')
     a=p.parse_args()
+    if a.print_preset_size:
+        settings=read_settings(a.settings)
+        if 'BB_UPSCALER' in os.environ:
+            settings['upscaler']='fsr3' if os.environ['BB_UPSCALER']=='fsr3' else 'off'
+        if 'BB_UPSCALE_PRESET' in os.environ:
+            settings['preset']=os.environ['BB_UPSCALE_PRESET']
+        size=render_size(settings)
+        if size: print(f'{size[0]}x{size[1]}')
+        return
     names=FPS_PRESETS[a.fps]+[n.strip() for n in a.extra.split(';') if n.strip()]
     segments=eboot_segments((a.out/'eboot.elf').read_bytes())
     writes=compile_patches(a.xml,names,a.app_version,segments)
-    size=render_size(read_settings(a.settings),a.render_res)
+    size=render_size(read_settings(a.settings),a.render_res) if a.render_res else None
     if size:
         writes+=resolution_writes(a.xml,size,a.app_version,segments)
-        print(f'Patches: render resolution {size[0]}x{size[1]} (upscaled to {OUTPUT_SIZE[0]}x{OUTPUT_SIZE[1]})')
+        print(f'Patches: scene {size[0]}x{size[1]}; native UI {OUTPUT_SIZE[0]}x{OUTPUT_SIZE[1]}')
     blob=struct.pack('<8sQ',b'BBPATCH1',len(writes))
     for offset,data in writes: blob+=struct.pack('<QQ',offset,len(data))+data
     (a.out/'patches.bin').write_bytes(blob)

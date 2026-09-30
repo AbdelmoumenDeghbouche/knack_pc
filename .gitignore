@@ -3,3 +3,7 @@ __pycache__/
 user/
 *.mp4
 bbport.ini
+fsr4_shaders/
+pgo/
+*.png
+last_run.log

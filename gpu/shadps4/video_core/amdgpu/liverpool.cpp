@@ -239,23 +239,40 @@ u64 Liverpool::HashRegisterPacket(u64 checksum, const u32* words, u32 count) {
     return checksum;
 }
 
-void Liverpool::ApplyGraphicsRegisterPacket(Regs& regs, const PM4Header* header, u64& checksum) {
+void Liverpool::ApplyGraphicsRegisterPacket(Regs& regs, const PM4Header* header, u64& checksum,
+                                             RegDirty* dirty) {
     const u32 count = header->type3.NumWords();
     const auto* payload = reinterpret_cast<const u32*>(header + 2);
+    const auto mark = [&](u32 word, u32 words) {
+        if (dirty) {
+            dirty->Mark(word, words);
+        }
+    };
+    const auto mark_field = [&](const auto& field) {
+        if (dirty) {
+            dirty->MarkField(regs, field);
+        }
+    };
     switch (header->type3.opcode) {
     case PM4ItOpcode::ClearState:
         regs.SetDefaults();
+        if (dirty) {
+            dirty->Clear();
+            dirty->reset = true;
+        }
         break;
     case PM4ItOpcode::SetConfigReg: {
         const auto* set_data = reinterpret_cast<const PM4CmdSetData*>(header);
         std::memcpy(&regs.reg_array[Regs::ConfigRegWordOffset + set_data->reg_offset], payload,
                     (count - 1) * sizeof(u32));
+        mark(Regs::ConfigRegWordOffset + set_data->reg_offset, count - 1);
         break;
     }
     case PM4ItOpcode::SetContextReg: {
         const auto* set_data = reinterpret_cast<const PM4CmdSetData*>(header);
         std::memcpy(&regs.reg_array[Regs::ContextRegWordOffset + set_data->reg_offset], payload,
                     (count - 1) * sizeof(u32));
+        mark(Regs::ContextRegWordOffset + set_data->reg_offset, count - 1);
         break;
     }
     case PM4ItOpcode::SetShReg: {
@@ -265,6 +282,7 @@ void Liverpool::ApplyGraphicsRegisterPacket(Regs& regs, const PM4Header* header,
               set_data->reg_offset <= (0x200 + sizeof(ComputeProgram) / 4))) {
             std::memcpy(&regs.reg_array[Regs::ShRegWordOffset + set_data->reg_offset], payload,
                         (count - 1) * sizeof(u32));
+            mark(Regs::ShRegWordOffset + set_data->reg_offset, count - 1);
         }
         break;
     }
@@ -272,10 +290,12 @@ void Liverpool::ApplyGraphicsRegisterPacket(Regs& regs, const PM4Header* header,
         const auto* set_data = reinterpret_cast<const PM4CmdSetData*>(header);
         std::memcpy(&regs.reg_array[Regs::UconfigRegWordOffset + set_data->reg_offset], payload,
                     (count - 1) * sizeof(u32));
+        mark(Regs::UconfigRegWordOffset + set_data->reg_offset, count - 1);
         break;
     }
     case PM4ItOpcode::IndexType:
         regs.index_buffer_type.raw = reinterpret_cast<const PM4CmdDrawIndexType*>(header)->raw;
+        mark_field(regs.index_buffer_type);
         break;
     case PM4ItOpcode::DrawIndex2: {
         const auto* draw_index = reinterpret_cast<const PM4CmdDrawIndex2*>(header);
@@ -283,7 +303,11 @@ void Liverpool::ApplyGraphicsRegisterPacket(Regs& regs, const PM4Header* header,
         regs.index_base_address.base_addr_lo = draw_index->index_base_lo;
         regs.index_base_address.base_addr_hi = draw_index->index_base_hi;
         regs.num_indices = draw_index->index_count;
+        mark_field(regs.max_index_size);
+        mark_field(regs.index_base_address);
+        mark_field(regs.num_indices);
         regs.draw_initiator = draw_index->draw_initiator;
+        mark_field(regs.draw_initiator);
         break;
     }
     case PM4ItOpcode::DrawIndexOffset2: {
@@ -291,10 +315,15 @@ void Liverpool::ApplyGraphicsRegisterPacket(Regs& regs, const PM4Header* header,
         regs.max_index_size = draw_index_off->max_size;
         regs.num_indices = draw_index_off->index_count;
         regs.draw_initiator = draw_index_off->draw_initiator;
+        mark_field(regs.max_index_size);
+        mark_field(regs.num_indices);
+        mark_field(regs.draw_initiator);
         break;
     }
     case PM4ItOpcode::DrawIndexAuto: {
         const auto* draw_index = reinterpret_cast<const PM4CmdDrawIndexAuto*>(header);
+        mark_field(regs.num_indices);
+        mark_field(regs.draw_initiator);
         regs.num_indices = draw_index->index_count;
         regs.draw_initiator = draw_index->draw_initiator;
         break;
@@ -302,15 +331,18 @@ void Liverpool::ApplyGraphicsRegisterPacket(Regs& regs, const PM4Header* header,
     case PM4ItOpcode::NumInstances:
         regs.num_instances.num_instances =
             reinterpret_cast<const PM4CmdDrawNumInstances*>(header)->num_instances;
+        mark_field(regs.num_instances);
         break;
     case PM4ItOpcode::IndexBase: {
         const auto* index_base = reinterpret_cast<const PM4CmdDrawIndexBase*>(header);
         regs.index_base_address.base_addr_lo = index_base->addr_lo;
         regs.index_base_address.base_addr_hi = index_base->addr_hi;
+        mark_field(regs.index_base_address);
         break;
     }
     case PM4ItOpcode::IndexBufferSize:
         regs.num_indices = reinterpret_cast<const PM4CmdDrawIndexBufferSize*>(header)->num_indices;
+        mark_field(regs.num_indices);
         break;
     case PM4ItOpcode::EventWrite: {
         const auto* event = reinterpret_cast<const PM4CmdEventWrite*>(header);
@@ -319,6 +351,7 @@ void Liverpool::ApplyGraphicsRegisterPacket(Regs& regs, const PM4Header* header,
         }
         // TODO: handle proper synchronization, for now signal that update is done immediately
         regs.cp_strmout_cntl.offset_update_done = 1;
+        mark_field(regs.cp_strmout_cntl);
         break;
     }
     default:

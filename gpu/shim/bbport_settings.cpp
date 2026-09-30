@@ -51,6 +51,10 @@ void Set(Values& v, const std::string& key, const std::string& value) {
         v.debug_view = std::clamp(i, 0, DebugViewCount - 1);
     } else if (key == "show_fps") {
         v.show_fps = i != 0;
+    } else if (key == "fsr4_auto_exposure") {
+        v.fsr4_auto_exposure = i != 0;
+    } else if (key == "fsr4_invert_jitter") {
+        v.fsr4_invert_jitter = i != 0;
     }
 }
 
@@ -79,7 +83,10 @@ void Load() {
     }
     // Environment overrides (scripts, A/B tests).
     if (const char* env = std::getenv("BB_UPSCALER")) {
-        v.upscaler = std::strcmp(env, "fsr3") == 0 ? UpscalerFsr3 : UpscalerOff;
+        v.upscaler = UpscalerOff;
+        for (int u = 0; u < UpscalerCount; ++u) {
+            if (std::strcmp(env, UpscalerName(u)) == 0) v.upscaler = u;
+        }
     }
     const std::pair<const char*, const char*> env_keys[] = {
         {"BB_FSR_SHARPNESS", "sharpness"},        {"BB_JITTER", "jitter"},
@@ -108,12 +115,13 @@ void Save() {
                  "# bbport settings (in-game menu: Insert / L3+R3)\n"
                  "upscaler=%s\npreset=%d\nsharpen=%d\nsharpness=%.2f\njitter=%d\n"
                  "reactive=%d\nobject_motion=%d\nreactive_scale=%.2f\nreactive_threshold=%.2f\nreactive_max=%.2f\n"
-                 "debug_view=%d\nshow_fps=%d\n",
+                 "debug_view=%d\nshow_fps=%d\nfsr4_auto_exposure=%d\nfsr4_invert_jitter=%d\n",
                  UpscalerName(v.upscaler), v.preset.load(), int(v.sharpen.load()),
                  v.sharpness.load(), int(v.jitter.load()), int(v.reactive.load()),
                  int(v.object_motion.load()),
                  v.reactive_scale.load(), v.reactive_threshold.load(), v.reactive_max.load(),
-                 v.debug_view.load(), int(v.show_fps.load()));
+                 v.debug_view.load(), int(v.show_fps.load()),
+                 int(v.fsr4_auto_exposure.load()), int(v.fsr4_invert_jitter.load()));
     std::fclose(file);
 }
 
@@ -129,7 +137,7 @@ const char* PresetName(int preset) {
 }
 
 const char* UpscalerName(int upscaler) {
-    static constexpr const char* names[UpscalerCount] = {"off", "fsr3"};
+    static constexpr const char* names[UpscalerCount] = {"off", "fsr3", "fsr4"};
     return names[std::clamp(upscaler, 0, UpscalerCount - 1)];
 }
 
