@@ -22,6 +22,8 @@ int bbgpu_init(const BbGpuConfig *config);
 uintptr_t bbgpu_resolve(const char *scoped_nid);
 /* Called first by the loader's SIGSEGV handler: 1 when a GPU page-tracking fault was handled. */
 int bbgpu_handle_fault(void *ucontext, void *address);
+/* BB_WRITE_LOG=1: prints the logged GPU-side writes to guest memory near the fault. */
+void bbgpu_dump_guest_writes(void *ucontext);
 /* Keyboard text entry through the game window (IME dialog). begin returns 0 when
  * no window exists; poll returns 0 typing, 1 confirmed, 2 cancelled (UTF-8 text). */
 int bbgpu_text_input_begin(const char *initial_utf8, const char *prompt_utf8);

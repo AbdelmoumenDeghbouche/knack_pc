@@ -1,3 +1,4 @@
+#include "bbport_write_log.h"
 // bbport: glue between the C loader and the vendored shadPS4 video core.
 #include "bbport_overlay.h"
 #include "bbport_settings.h"
@@ -126,6 +127,7 @@ void MemoryManager::CopySparseMemory(VAddr source, u8* dest, u64 size) {
     });
 }
 bool MemoryManager::TryWriteBacking(void* address, const void* data, u64 size) {
+    BbWriteLog::Note(reinterpret_cast<uintptr_t>(address), data, size, BbWriteLog::Backing);
     return runtime_memory_write_backing(reinterpret_cast<uintptr_t>(address), data, size) != 0;
 }
 void AddressSpace::Protect(VAddr virtual_addr, u64 size, MemoryPermission perms) {
