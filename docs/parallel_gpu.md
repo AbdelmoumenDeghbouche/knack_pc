@@ -463,3 +463,12 @@ pipeline attachment key, scene/raster scaling and upscaler redirect state, image
 generation, depth control), no clear is requested, and no target is also sampled by the draw.
 States with clears are not remembered (the next draw's differs). 90% hits; 122.1 vs 111.8 FPS
 (+9%); screenshots on/off differ no more than two taken in the same mode (animated scene).
+
+### Texture set memo (toggle 1 << 45)
+
+A stage's resolved textures (image after the depth redirect, view, backing, subresource range)
+remembered by the prepared T# hashes, 8192 slots, sets of up to 16 sampled images. A hit
+requires the same image registry generation, the same backings, no rebind, images up to date,
+no render-target feedback and no upscaler redirect; it then only redoes the per-draw effects
+(found tick, binding flags, bound list, layout transition, usage) and writes the descriptors.
+84% hits; 128.6 vs 121.8 FPS (+5.6%); screenshots on/off within the scene's own noise.

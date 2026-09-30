@@ -233,6 +233,31 @@ private:
                       Shader::Backend::Bindings& binding, u32& write_index, bool& barrier,
                       bool on_helper = false);
     bool BindResources(const Pipeline* pipeline);
+    void BindSamplers(const Shader::Info& stage, const PreparedStage* prepared,
+                      Shader::Backend::Bindings& binding, u32& write_index);
+    /// bbport: a stage's resolved textures remembered by its prepared T# hashes
+    /// (TextureSetMemo): a hit only redoes the per-draw effects (binding flags, transitions).
+    struct TextureSetEntry {
+        VideoCore::ImageId id{}; ///< after the depth redirect; null descriptor when invalid
+        vk::ImageView view;
+        const void* backing = nullptr;
+        VideoCore::SubresourceRange range;
+    };
+    struct TextureSet {
+        u64 key = 0;
+        const Shader::Info* stage = nullptr;
+        u64 generation = ~0ull;
+        u32 count = 0;
+        static constexpr u32 MaxImages = 16; ///< larger sets are not memoized
+        std::array<u64, MaxImages> hashes{};
+        std::array<TextureSetEntry, MaxImages> entries{};
+    };
+    std::array<TextureSet, 8192> texture_sets{};
+    u64 texture_set_hits = 0, texture_set_misses = 0;
+    std::array<u64, 4> texture_set_why{}; ///< misses: other key, generation, image check, new
+    /// Returns true when the stage's images were bound from the memo.
+    bool BindTexturesFromSet(const Shader::Info& stage, const PreparedStage* prepared,
+                             u32 first_image_idx, bool& barrier, TextureSet*& slot);
     /// The prepared sharps of `stage` in the current prepared draw, if they fit it.
     const PreparedStage* FindPreparedStage(const Shader::Info& stage) const;
     /// Whether the helper may bind textures for this pipeline at all (fixed descriptor layout,

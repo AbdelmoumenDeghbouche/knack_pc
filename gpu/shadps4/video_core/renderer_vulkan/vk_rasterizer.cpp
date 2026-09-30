@@ -2036,14 +2036,32 @@ Rasterizer::ImageDescCacheEntry& Rasterizer::CachedImageDescEntry(const AmdGpu::
 void Rasterizer::BindTextures(const Shader::Info& stage, const PreparedStage* prepared,
                               Shader::Backend::Bindings& binding, u32& write_index,
                               bool& barrier, bool on_helper) {
+    const u32 first_image_idx = image_infos.size();
+    TextureSet* set_slot = nullptr;
+    if (!on_helper && BindTexturesFromSet(stage, prepared, first_image_idx, barrier, set_slot)) {
+        // Descriptor writes: one per image (no mip arrays in a memoized set).
+        for (u32 i = 0; i < stage.images.size(); ++i) {
+            auto& set_write = set_writes[write_index++];
+            set_write.dstSet = VK_NULL_HANDLE;
+            set_write.dstBinding = binding.unified++;
+            set_write.dstArrayElement = 0;
+            set_write.descriptorCount = 1;
+            set_write.descriptorType = vk::DescriptorType::eSampledImage;
+            set_write.pImageInfo = &image_infos[first_image_idx + i];
+        }
+        BindSamplers(stage, prepared, binding, write_index);
+        return;
+    }
     image_bindings.clear();
     image_binding_entries.clear();
     image_desc_overflow.clear();
     image_desc_storage.clear();
     ++bind_epoch;
-    const u32 first_image_idx = image_infos.size();
     // To emulate storing to explicit mip levels, build a descriptor array with each mip level.
     boost::container::small_vector<u32, 8> image_descriptor_array_sizes;
+    // TextureSetMemo: what this call resolves, to remember when the set qualifies.
+    std::array<TextureSetEntry, TextureSet::MaxImages> resolved{};
+    bool set_ok = set_slot != nullptr;
 
     for (u32 image_index = 0; image_index < stage.images.size(); ++image_index) {
         const auto& image_desc = stage.images[image_index];
@@ -2166,6 +2184,7 @@ void Rasterizer::BindTextures(const Shader::Info& stage, const PreparedStage* pr
                 desc_ptr = &rebind_desc;
                 image_id = texture_cache.FindImage(rebind_desc);
                 memo_entry = nullptr;
+                set_ok = false;
             }
 
             bound_images.emplace_back(image_id);
@@ -2216,7 +2235,20 @@ void Rasterizer::BindTextures(const Shader::Info& stage, const PreparedStage* pr
                 upscaler->RedirectSampled(image_id, image_view.info, view, layout);
             }
             image_infos.emplace_back(VK_NULL_HANDLE, view, layout);
+            if (set_ok && binding_index < resolved.size()) {
+                resolved[binding_index] = {image_id, *image_view.image_view, image.backing,
+                                           desc.view_info.range};
+                set_ok = !is_storage && !binding.force_general && !binding.is_target;
+            }
         }
+    }
+    if (set_ok && image_bindings.size() == stage.images.size()) {
+        // Remember the set: the same T#s resolve the same way while no image is (un)registered.
+        set_slot->generation = texture_cache.RegistryGeneration();
+        set_slot->count = static_cast<u32>(stage.images.size());
+        std::copy_n(resolved.begin(), set_slot->count, set_slot->entries.begin());
+    } else if (set_slot) {
+        set_slot->key = 0;
     }
 
     u32 image_info_idx = first_image_idx;
@@ -2238,6 +2270,11 @@ void Rasterizer::BindTextures(const Shader::Info& stage, const PreparedStage* pr
         binding.unified += array_size;
     }
 
+    BindSamplers(stage, prepared, binding, write_index);
+}
+
+void Rasterizer::BindSamplers(const Shader::Info& stage, const PreparedStage* prepared,
+                              Shader::Backend::Bindings& binding, u32& write_index) {
     for (u32 sampler_index = 0; sampler_index < stage.samplers.size(); ++sampler_index) {
         const auto& sampler = stage.samplers[sampler_index];
         auto ssharp =
@@ -2284,14 +2321,94 @@ Rasterizer::BeginSignature Rasterizer::MakeBeginSignature(const GraphicsPipeline
     return sig;
 }
 
+bool Rasterizer::BindTexturesFromSet(const Shader::Info& stage, const PreparedStage* prepared,
+                                     u32 first_image_idx, bool& barrier, TextureSet*& slot) {
+    const u32 count = static_cast<u32>(stage.images.size());
+    if (!prepared || count == 0 || count > TextureSet::MaxImages ||
+        BbToggle::Disabled(BbToggle::TextureSetMemo) || FrameCapture::Active()) {
+        return false;
+    }
+    for (const auto& image : stage.images) {
+        if (image.is_written || image.mip_fallback_mode != Shader::MipStorageFallbackMode::None) {
+            return false;
+        }
+    }
+    u64 key = XXH3_64bits_withSeed(prepared->image_hashes, count * sizeof(u64),
+                                   reinterpret_cast<u64>(&stage));
+    key |= 1; // 0 marks an empty slot
+    auto& set = texture_sets[key % texture_sets.size()];
+    slot = &set;
+    const u64 generation = texture_cache.RegistryGeneration();
+    const bool match = set.key == key && set.stage == &stage && set.count == count &&
+                       set.generation == generation &&
+                       std::equal(set.hashes.begin(), set.hashes.begin() + count,
+                                  prepared->image_hashes);
+    if (!match) {
+        ++texture_set_why[set.key != key ? 0 : set.generation != generation ? 1 : 3];
+        ++texture_set_misses;
+        set.key = key;
+        set.stage = &stage;
+        set.count = 0;
+        set.generation = ~0ull;
+        std::copy_n(prepared->image_hashes, count, set.hashes.begin());
+        return false;
+    }
+    // Every image still has the backing its view belongs to and needs no refresh.
+    for (u32 i = 0; i < count; ++i) {
+        const auto& entry = set.entries[i];
+        if (!entry.id) {
+            continue;
+        }
+        const auto& image = texture_cache.GetImage(entry.id);
+        if (image.backing != entry.backing || image.binding.needs_rebind ||
+            image.binding.is_target || !texture_cache.IsUpToDate(entry.id) ||
+            (upscaler->Enabled() && upscaler->RedirectsSampled(entry.id))) {
+            ++texture_set_why[2];
+            ++texture_set_misses;
+            set.generation = ~0ull;
+            return false;
+        }
+    }
+    ++texture_set_hits;
+    slot = nullptr;
+    for (u32 i = 0; i < count; ++i) {
+        const auto& entry = set.entries[i];
+        if (!entry.id) {
+            image_infos.emplace_back(VK_NULL_HANDLE, VK_NULL_HANDLE, vk::ImageLayout::eGeneral);
+            continue;
+        }
+        texture_cache.MarkFound(entry.id);
+        auto& image = texture_cache.GetImage(entry.id);
+        image.binding.is_bound = 1u;
+        bound_images.emplace_back(entry.id);
+        const auto new_layout = image.info.props.is_depth
+                                    ? vk::ImageLayout::eDepthStencilReadOnlyOptimal
+                                    : vk::ImageLayout::eShaderReadOnlyOptimal;
+        barrier |= runtime.Transit(&image, new_layout, vk::PipelineStageFlagBits2::eAllCommands,
+                                   vk::AccessFlagBits2::eShaderRead, entry.range);
+        image.usage.texture = 1u;
+        image_infos.emplace_back(VK_NULL_HANDLE, entry.view, image.backing->state.layout);
+    }
+    (void)first_image_idx;
+    return true;
+}
+
 RenderState Rasterizer::BeginRendering(const GraphicsPipeline* pipeline) {
     // bbport: RenderStateMemo (see BeginMemo).
     const bool memo_on = !BbToggle::Disabled(BbToggle::RenderStateMemo) && !FrameCapture::Active();
     if (BbStats::enabled && ((begin_memo_hits + begin_memo_misses) & 0x3FFFF) == 0x3FFFF) {
-        std::printf("Render state memo: %llu hits, %llu misses\n",
+        std::printf("Render state memo: %llu hits, %llu misses; texture sets: %llu hits, %llu "
+                    "misses\n",
                     static_cast<unsigned long long>(begin_memo_hits),
-                    static_cast<unsigned long long>(begin_memo_misses));
-        begin_memo_hits = begin_memo_misses = 0;
+                    static_cast<unsigned long long>(begin_memo_misses),
+                    static_cast<unsigned long long>(texture_set_hits),
+                    static_cast<unsigned long long>(texture_set_misses));
+        std::printf("  texture set misses: other key %llu, generation %llu, image check %llu, "
+                    "other %llu\n",
+                    (unsigned long long)texture_set_why[0], (unsigned long long)texture_set_why[1],
+                    (unsigned long long)texture_set_why[2], (unsigned long long)texture_set_why[3]);
+        texture_set_why = {};
+        begin_memo_hits = begin_memo_misses = texture_set_hits = texture_set_misses = 0;
     }
     BeginSignature signature;
     if (memo_on) {
