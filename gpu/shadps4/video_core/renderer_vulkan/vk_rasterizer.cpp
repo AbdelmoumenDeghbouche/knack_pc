@@ -2255,7 +2255,86 @@ void Rasterizer::BindTextures(const Shader::Info& stage, const PreparedStage* pr
     }
 }
 
+Rasterizer::BeginSignature Rasterizer::MakeBeginSignature(const GraphicsPipeline* pipeline) const {
+    const auto& key = pipeline->GetGraphicsKey();
+    const auto& regs = Regs();
+    BeginSignature sig;
+    const u32 num_color = std::bit_width(key.mrt_mask);
+    for (u32 cb = 0; cb < num_color && cb < AmdGpu::NUM_COLOR_BUFFERS; ++cb) {
+        sig.ids[cb] = cb_descs[cb].first;
+        if (cb_descs[cb].first) {
+            sig.views[cb] = cb_descs[cb].second.view_info;
+        }
+        sig.color_samples[cb] = key.color_samples[cb];
+    }
+    sig.ids[AmdGpu::NUM_COLOR_BUFFERS] = db_desc.first;
+    if (db_desc.first) {
+        sig.views[AmdGpu::NUM_COLOR_BUFFERS] = db_desc.second.view_info;
+    }
+    sig.mrt_mask = key.mrt_mask;
+    sig.num_samples = key.num_samples;
+    sig.motion = key.motion_vectors;
+    sig.scene_started = scene_started;
+    sig.raster_scaling = upscaler->RasterScaling();
+    sig.upscaler_state = upscaler->RedirectState();
+    sig.generation = texture_cache.RegistryGeneration();
+    std::memcpy(&sig.depth_control, &regs.depth_control, sizeof(u32));
+    sig.depth_valid = regs.depth_buffer.DepthValid();
+    sig.stencil_valid = regs.depth_buffer.StencilValid();
+    return sig;
+}
+
 RenderState Rasterizer::BeginRendering(const GraphicsPipeline* pipeline) {
+    // bbport: RenderStateMemo (see BeginMemo).
+    const bool memo_on = !BbToggle::Disabled(BbToggle::RenderStateMemo) && !FrameCapture::Active();
+    if (BbStats::enabled && ((begin_memo_hits + begin_memo_misses) & 0x3FFFF) == 0x3FFFF) {
+        std::printf("Render state memo: %llu hits, %llu misses\n",
+                    static_cast<unsigned long long>(begin_memo_hits),
+                    static_cast<unsigned long long>(begin_memo_misses));
+        begin_memo_hits = begin_memo_misses = 0;
+    }
+    BeginSignature signature;
+    if (memo_on) {
+        signature = MakeBeginSignature(pipeline);
+        const auto& regs = Regs();
+        bool usable = begin_memo.valid && scheduler.IsRenderingWith(begin_memo.state) &&
+                      !regs.depth_render_control.depth_clear_enable &&
+                      !regs.depth_render_control.stencil_clear_enable &&
+                      signature == begin_memo.signature;
+        for (const auto id : signature.ids) {
+            if (usable && id) {
+                const auto& image = texture_cache.GetImage(id);
+                usable = !image.binding.is_bound && !image.binding.needs_rebind;
+            }
+        }
+        if (usable) {
+            ++begin_memo_hits;
+            attachment_feedback_loop = false;
+            push_data.scene_size = begin_memo.scene_size;
+            target_scale = begin_memo.target_scale;
+            return begin_memo.state;
+        }
+        ++begin_memo_misses;
+    }
+    begin_memo.valid = false;
+    RenderState state = BeginRenderingFull(pipeline);
+    if (memo_on && !attachment_feedback_loop) {
+        // (is_clear of the depth attachment shares its bytes with has_depth.)
+        bool clears = state.depth_stencil_attachment.depth_clear ||
+                      state.depth_stencil_attachment.stencil_clear;
+        for (u32 i = 0; i < state.num_color_attachments; ++i) {
+            clears |= state.color_attachments[i].is_clear != 0;
+        }
+        if (!clears) {
+            // Recomputed after the full path: it may have started the scene (scene_started).
+            begin_memo = {true, MakeBeginSignature(pipeline), state, push_data.scene_size,
+                          target_scale};
+        }
+    }
+    return state;
+}
+
+RenderState Rasterizer::BeginRenderingFull(const GraphicsPipeline* pipeline) {
     attachment_feedback_loop = false;
     using VulkanUpscalerTarget = TemporalUpscaler::Target;
     VulkanUpscalerTarget redirect{};

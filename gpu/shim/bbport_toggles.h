@@ -45,6 +45,7 @@ enum : std::uint64_t {
     RecorderFences = 1ull << 41,
     PipelinedMemoryWrites = 1ull << 42,
     MultiCopyShader = 1ull << 43,
+    RenderStateMemo = 1ull << 44,
     UpdateImageFastPath = 1u << 30,
     // Bits 20-29 are used as raw debug toggles by the camera/object motion and the upscaler.
 };

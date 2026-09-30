@@ -160,6 +160,35 @@ public:
 private:
     void PrepareRenderState(const GraphicsPipeline* pipeline);
     RenderState BeginRendering(const GraphicsPipeline* pipeline);
+    RenderState BeginRenderingFull(const GraphicsPipeline* pipeline);
+    /// bbport: a draw continuing the open render pass with the same inputs gets the same render
+    /// state (RenderStateMemo); nothing can have broken the pass in between (barriers, copies and
+    /// dispatches end it).
+    struct BeginSignature {
+        std::array<VideoCore::ImageId, AmdGpu::NUM_COLOR_BUFFERS + 1> ids{};
+        std::array<VideoCore::ImageViewInfo, AmdGpu::NUM_COLOR_BUFFERS + 1> views{};
+        u32 mrt_mask = 0;
+        u32 num_samples = 0;
+        std::array<u8, AmdGpu::NUM_COLOR_BUFFERS> color_samples{};
+        bool motion = false;
+        bool scene_started = false;
+        bool raster_scaling = false;
+        u64 upscaler_state = 0;
+        u64 generation = 0;
+        u32 depth_control = 0;
+        bool depth_valid = false;
+        bool stencil_valid = false;
+        bool operator==(const BeginSignature&) const = default;
+    };
+    BeginSignature MakeBeginSignature(const GraphicsPipeline* pipeline) const;
+    struct BeginMemo {
+        bool valid = false;
+        BeginSignature signature;
+        RenderState state;
+        u32 scene_size = 0;
+        std::array<float, 2> target_scale{};
+    } begin_memo;
+    u64 begin_memo_hits = 0, begin_memo_misses = 0;
     void Resolve();
     void DepthStencilCopy(bool is_depth, bool is_stencil);
     void EliminateFastClear();

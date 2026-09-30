@@ -452,3 +452,14 @@ KiB spread over up to 57 MiB of destination): synchronizing only the copied part
 ~0.75 ms of GPU time but cost more on the CPU (page protection per part, no stream path for
 small sources: 108.7 vs 114.3 FPS, sources only 105.7 vs 111.9), so it was dropped. Frame rate
 unchanged with the multi-copy shader (CPU-bound here); it helps where the GPU limits.
+
+### Render state memo (toggle 1 << 44)
+
+~90% of draws continue the render pass the previous draw opened, yet `BeginRendering` redid
+the target lookups, transitions, scene-target proxies and upscaler redirects for each. Now a
+draw reuses the previous render state when the scheduler still has that exact pass open (nothing
+broke it: barriers, copies and dispatches end passes), the inputs match (target ids and views,
+pipeline attachment key, scene/raster scaling and upscaler redirect state, image registry
+generation, depth control), no clear is requested, and no target is also sampled by the draw.
+States with clears are not remembered (the next draw's differs). 90% hits; 122.1 vs 111.8 FPS
+(+9%); screenshots on/off differ no more than two taken in the same mode (animated scene).

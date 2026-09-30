@@ -65,6 +65,12 @@ public:
     /// Start of a frame in the command stream (display pass).
     bool OnFrameStart();
     bool RasterScaling() const;
+    /// bbport: the state RedirectColor/RedirectDepth/RasterScaling depend on, for memoizing a
+    /// draw's render state (Rasterizer::BeginRendering).
+    [[nodiscard]] u64 RedirectState() const noexcept {
+        return u64(ui_phase) | u64(display_redirect) << 1 | u64(done_this_frame) << 2 |
+               u64(ui_color.index) << 8 | u64(ui_depth.index) << 36;
+    }
 
 
     /// This frame's sub-pixel jitter in pixels (screen x right, y down); zero when off and after

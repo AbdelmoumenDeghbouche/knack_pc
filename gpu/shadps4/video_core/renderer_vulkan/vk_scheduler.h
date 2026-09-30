@@ -811,6 +811,11 @@ public:
     /// it to the copy threads' completion (BbCopy::AfterCopies).
     void SignalAfterHostCopies(std::function<void()> signal);
 
+    /// Whether a render pass with exactly this state is open.
+    [[nodiscard]] bool IsRenderingWith(const RenderState& state) const {
+        return is_rendering && render_state == state;
+    }
+
     /// Whether BeginRendering(state) would start a new render pass.
     [[nodiscard]] bool WillBeginRendering(const RenderState& state) const {
         return !(is_rendering && render_state == state);
