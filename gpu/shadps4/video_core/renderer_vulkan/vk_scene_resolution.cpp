@@ -74,6 +74,7 @@ bool SceneTargets::SetSize(SceneResolution::Size next) {
     ResolveAll();
     scheduler.Finish();
     entries.clear(); // no command buffer can still reference these images/views
+    ++generation;
     recent = {};
     size = next;
     std::printf("Scene resolution: raster %ux%u, post/UI 1920x1080 (live)\n",
@@ -368,16 +369,15 @@ SceneTargets::Target SceneTargets::Attachment(VideoCore::ImageId id,
     attachment_info.is_storage = true; // include stencil in attachment views
     return {e.image, View(e, original, attachment_info), e.layout, e.image.image_ci.usage};
 }
-std::optional<SceneTargets::Target> SceneTargets::SampleProxy(
-    const VideoCore::Image& image, const VideoCore::ImageViewInfo& info) {
+bool SceneTargets::ProxyCurrent(const VideoCore::Image& image) const {
     if (copying || !image.scene_proxy || image.info.props.is_depth) {
-        return std::nullopt;
+        return false;
     }
     const auto it = entries.find(image.image_uid);
-    if (it == entries.end() || !it->second->state.valid) {
-        return std::nullopt;
-    }
-    auto& e = *it->second;
+    return it != entries.end() && it->second->state.valid;
+}
+vk::ImageLayout SceneTargets::PrepareSample(const VideoCore::Image& image) {
+    auto& e = *entries.find(image.image_uid)->second;
     constexpr auto layout = vk::ImageLayout::eShaderReadOnlyOptimal;
     if (e.layout != layout) {
         Transition(e, image.aspect_mask, layout,
@@ -386,7 +386,16 @@ std::optional<SceneTargets::Target> SceneTargets::SampleProxy(
                        vk::PipelineStageFlagBits2::eComputeShader,
                    vk::AccessFlagBits2::eShaderSampledRead);
     }
-    return Target{e.image, View(e, image, info), e.layout, e.image.image_ci.usage};
+    return layout;
+}
+std::optional<SceneTargets::Target> SceneTargets::SampleProxy(
+    const VideoCore::Image& image, const VideoCore::ImageViewInfo& info) {
+    if (!ProxyCurrent(image)) {
+        return std::nullopt;
+    }
+    auto& e = *entries.find(image.image_uid)->second;
+    const auto layout = PrepareSample(image);
+    return Target{e.image, View(e, image, info), layout, e.image.image_ci.usage};
 }
 SceneTargets::Target SceneTargets::Read(VideoCore::ImageId id,
                                        const VideoCore::ImageViewInfo& info,

@@ -41,6 +41,15 @@ public:
     /// native image is current). Transitions only after other use (attachment, copy).
     std::optional<Target> SampleProxy(const VideoCore::Image& image,
                                       const VideoCore::ImageViewInfo& info);
+    /// Whether SampleProxy would return the proxy of `image`.
+    [[nodiscard]] bool ProxyCurrent(const VideoCore::Image& image) const;
+    /// SampleProxy for a view obtained before (valid while Generation() is unchanged): the
+    /// layout to sample it in.
+    vk::ImageLayout PrepareSample(const VideoCore::Image& image);
+    /// Changes when proxies and their views are destroyed (SetSize).
+    [[nodiscard]] u64 Generation() const noexcept {
+        return generation;
+    }
     /// Whether NativeAccess has work for this image (a reduced-size proxy exists).
     [[nodiscard]] bool Tracks(u64 image_uid) const {
         return !copying && entries.contains(image_uid);
@@ -75,6 +84,7 @@ private:
     SceneResolution::Size size;
     std::unordered_map<u64, std::unique_ptr<Entry>> entries;
     bool copying = false;
+    u64 generation = 0;
     mutable std::unordered_map<vk::Format, vk::FormatFeatureFlags> format_features;
     mutable std::array<vk::FormatFeatureFlags, 256> format_table{};
     mutable std::array<bool, 256> format_known{};

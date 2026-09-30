@@ -257,11 +257,13 @@ private:
         vk::ImageView view;
         const void* backing = nullptr;
         VideoCore::SubresourceRange range;
+        bool proxy = false; ///< sampled from the scene proxy (view: SampleProxy on each use)
     };
     struct TextureSet {
         u64 key = 0;
         const Shader::Info* stage = nullptr;
         u64 generation = ~0ull;
+        u64 scene_generation = 0; ///< SceneTargets::Generation of the proxy views
         u32 count = 0;
         static constexpr u32 MaxImages = 16; ///< larger sets are not memoized
         std::array<u64, MaxImages> hashes{};

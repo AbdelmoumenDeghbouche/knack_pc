@@ -2344,7 +2344,10 @@ void Rasterizer::BindTextures(const Shader::Info& stage, const PreparedStage* pr
                 if (const auto proxy = scene_targets->SampleProxy(image, desc.view_info)) {
                     image.usage.texture = 1u;
                     image_infos.emplace_back(VK_NULL_HANDLE, proxy->view, proxy->layout);
-                    set_ok = false;
+                    if (set_ok && binding_index < resolved.size()) {
+                        resolved[binding_index] = {image_id, proxy->view, image.backing,
+                                                   desc.view_info.range, true};
+                    }
                     ++proxy_samples;
                     continue;
                 }
@@ -2400,6 +2403,7 @@ void Rasterizer::BindTextures(const Shader::Info& stage, const PreparedStage* pr
     if (set_ok && image_bindings.size() == stage.images.size()) {
         // Remember the set: the same T#s resolve the same way while no image is (un)registered.
         set_slot->generation = texture_cache.RegistryGeneration();
+        set_slot->scene_generation = scene_targets->Generation();
         set_slot->count = static_cast<u32>(stage.images.size());
         std::copy_n(resolved.begin(), set_slot->count, set_slot->entries.begin());
     } else if (set_slot) {
@@ -2496,6 +2500,7 @@ bool Rasterizer::BindTexturesFromSet(const Shader::Info& stage, const PreparedSt
     const u64 generation = texture_cache.RegistryGeneration();
     const bool match = set.key == key && set.stage == &stage && set.count == count &&
                        set.generation == generation &&
+                       set.scene_generation == scene_targets->Generation() &&
                        std::equal(set.hashes.begin(), set.hashes.begin() + count,
                                   prepared->image_hashes);
     if (!match) {
@@ -2515,10 +2520,13 @@ bool Rasterizer::BindTexturesFromSet(const Shader::Info& stage, const PreparedSt
             continue;
         }
         const auto& image = texture_cache.GetImage(entry.id);
-        // A scene proxy may be sampled instead (BindTextures decides, per binding).
+        // Proxy entries need a current proxy; native entries of a proxied image go through
+        // BindTextures, which may sample the proxy instead.
+        const bool proxies_on = !BbToggle::Disabled(BbToggle::SampleSceneProxies);
         if (image.backing != entry.backing || image.binding.needs_rebind ||
             image.binding.is_target || !texture_cache.IsUpToDate(entry.id) ||
-            (image.scene_proxy && !BbToggle::Disabled(BbToggle::SampleSceneProxies)) ||
+            (entry.proxy ? !proxies_on || !scene_targets->ProxyCurrent(image)
+                         : image.scene_proxy && proxies_on) ||
             (upscaler->Enabled() && upscaler->RedirectsSampled(entry.id))) {
             ++texture_set_why[2];
             ++texture_set_misses;
@@ -2538,12 +2546,18 @@ bool Rasterizer::BindTexturesFromSet(const Shader::Info& stage, const PreparedSt
         auto& image = texture_cache.GetImage(entry.id);
         image.binding.is_bound = 1u;
         bound_images.emplace_back(entry.id);
+        image.usage.texture = 1u;
+        if (entry.proxy) {
+            image_infos.emplace_back(VK_NULL_HANDLE, entry.view,
+                                     scene_targets->PrepareSample(image));
+            ++proxy_samples;
+            continue;
+        }
         const auto new_layout = image.info.props.is_depth
                                     ? vk::ImageLayout::eDepthStencilReadOnlyOptimal
                                     : vk::ImageLayout::eShaderReadOnlyOptimal;
         barrier |= runtime.Transit(&image, new_layout, vk::PipelineStageFlagBits2::eAllCommands,
                                    vk::AccessFlagBits2::eShaderRead, entry.range);
-        image.usage.texture = 1u;
         image_infos.emplace_back(VK_NULL_HANDLE, entry.view, image.backing->state.layout);
     }
     (void)first_image_idx;
