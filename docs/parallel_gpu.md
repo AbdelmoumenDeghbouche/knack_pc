@@ -479,3 +479,69 @@ The HLE merged copies whose ranges fit in 64 MiB, and each merged batch synchron
 source and destination range. With 64 KiB (`BB_COPY_MERGE_KB`): the copy shader's GPU time
 1.5 -> 0.6 ms/frame (profiler), GPU busy 85% -> ~77%, frame rate not lower (restarts vary
 125-142 FPS; 16 KiB and 256 KiB similar).
+
+## Third round (2026-09-30, afternoon)
+
+Frame rate at the level entrance, 16 threads, FSR 4 Ultra Performance: ~134 -> ~145-150 FPS
+(restarts vary by a few FPS; the A/B numbers below are from one run each).
+
+### Where stage A waits
+
+`Frame stats` now prints, next to the drain counts, the share of stage A's time each drain
+reason and each call site (`function:line`, `DrainDrawPipe` records `__builtin_LINE`) waited.
+Stage A waits ~25% of its time, almost all at one drain per frame: whichever drain comes first
+after a long stretch of draws waits for stage B to finish them. It was `DrawIndirect` (21%),
+then `DispatchIndirect`, then a `DumpConstRam` once those were pipelined. So stage A is faster
+than stage B, and removing drains helps only where it breaks the lockstep; stage B (85% busy,
+~2.8 µs per packet, flat profile) is the limit.
+
+- Indirect draws and dispatches are pipelined like direct ones (toggle 1 << 46): the pipeline is
+  selected on stage A, the argument buffer lookup and the indirect command are recorded on B.
+  +1.4%.
+- Pending GPU writes (the constant ring's guard) merge overlapping ranges and are pruned every
+  64th check instead of on every buffer: `PendingWriteOverlaps` 7.5% -> 3.6% of stage A; together
+  ~+4%.
+- Texture set memo: 32768 slots; a quarter of the misses were slot collisions (37k -> 11k per
+  5 s): +1.3%.
+- Motion history per-frame tables: open addressing instead of `std::unordered_map` (four node
+  allocations per stored draw, freed every frame). Neutral on FPS.
+- Tried: a release store instead of the sequentially consistent one in `DrawPipe::Commit` with a
+  timed futex sleep (+0.4%, not worth a possible missed wake-up; reverted).
+
+Object motion vectors cost ~10% FPS (155 vs 141 FPS with `object_motion=0`): stage B spends
+~0.28 µs more per packet, spread over DrawRecord (bone palette hashes, index range cache, motion
+pipeline variants).
+
+### Scene resolution and the preset/GPU load question
+
+GPU busy time per frame (profile total minus the idle time between submissions):
+
+| mode | GPU busy |
+|---|---|
+| upscaler off (native 1080p) | 3.67 ms |
+| FSR 4 Quality | 5.64 -> 5.50 ms |
+| FSR 4 Ultra Performance | 5.11 -> 4.98 -> 4.86 ms |
+
+Rasterizing the scene costs little on this GPU, so a lower preset saves ~0.5 ms, while FSR 4
+itself costs ~1.4 ms at 1080p output; FSR 4 Ultra Performance takes more GPU time than native
+rendering without an upscaler. Found on the way:
+
+- The reduced-size decision looked at all eight color slots, but slots past the mask width keep
+  earlier passes' targets — in the lighting passes the G-buffer images they sample. The light
+  accumulation passes stayed at 1920x1080 at every preset. Fixed (toggle 1 << 47 restores it).
+- Every pass that sampled a reduced target made the proxy be resampled to the native size first
+  (~25 resolves per frame, 0.4 ms; `BB_GPU_PROFILE` now labels resolves, fills, image uploads and
+  downloads). The recompiler marks images read by anything but normalized sampling without
+  offsets (`ImageResource::needs_native`); other sampled bindings read the proxy directly
+  (toggle 1 << 48): GPU busy 5.02 -> 4.86 ms, identical screenshots. Changes the `Info` layout:
+  shader meta version 7, pipeline key version 5 (caches rebuilt once).
+- `BB_SCENE_DEBUG=<file>`: touching the file prints the next frame's scene passes with the reason
+  each keeps the native size. What remains native before the upscaler: half-resolution
+  (960x540) passes, which `SceneTargets::Eligible` does not handle.
+
+Next GPU item (matters most on the Steam Deck): guest compute `3d5ebf4e` is a dword memcpy that
+copies render target memory (the 1080p depth buffer, 12 MB, sampled afterwards as R32F; a
+G-buffer target; two 960x540 targets): 8 dispatches, and each needs the image downloaded into
+the buffer, the proxy resolved and the destination image uploaded again. Recognizing copies
+whose source is an image and turning them into image copies (or a proxy-sized copy) would remove
+most of that. Skipping the dispatches blacks out the scene, so the copies are needed.
