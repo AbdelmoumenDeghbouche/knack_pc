@@ -811,6 +811,12 @@ public:
     /// it to the copy threads' completion (BbCopy::AfterCopies).
     void SignalAfterHostCopies(std::function<void()> signal);
 
+    /// bbport: before a guest-visible write that is not deferred (WriteData, end-of-shader
+    /// fences, flip): waits until every signal handed to SignalAfterHostCopies ran, so that
+    /// the write cannot overtake an earlier fence. Otherwise the guest, seeing the later value,
+    /// may free memory the earlier fence then writes into (corrupted heap, guest fault).
+    void WaitDeferredSignals();
+
     /// Whether a render pass with exactly this state is open.
     [[nodiscard]] bool IsRenderingWith(const RenderState& state) const {
         return is_rendering && render_state == state;
@@ -910,6 +916,9 @@ private:
     bool direct_mode = false; ///< the command buffer is recorded on the caller's thread
     u64 host_copies_issued = 0;
     std::atomic<u64> host_copies_done{0};
+    u64 deferred_signals_issued = 0;
+    std::shared_ptr<std::atomic<u64>> deferred_signals_done =
+        std::make_shared<std::atomic<u64>>(0);
     std::jthread recorder_thread;
     tracy::VkCtxScope* profiler_scope{};
 };

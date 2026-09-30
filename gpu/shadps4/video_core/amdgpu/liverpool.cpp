@@ -287,15 +287,18 @@ void RunDmaData(Vulkan::Rasterizer& rasterizer, const u8* data) {
     }
 }
 
-void SignalFlip(Vulkan::Rasterizer&, const u8*) {
+void SignalFlip(Vulkan::Rasterizer& rasterizer, const u8*) {
+    rasterizer.WaitDeferredSignals();
     Platform::IrqC::Instance()->Signal(Platform::InterruptId::GfxFlip);
 }
 
 void RunWriteData(Vulkan::Rasterizer& rasterizer, const u8* data) {
     const auto* header = reinterpret_cast<const PM4Header*>(data);
     const auto* write_data = reinterpret_cast<const PM4CmdWriteData*>(data);
-    // Copies deferred to the recording thread precede writes the guest sees.
+    // Copies deferred to the recording thread, and fences deferred to it (RecorderFences),
+    // precede writes the guest sees.
     rasterizer.WaitHostCopies();
+    rasterizer.WaitDeferredSignals();
     std::memcpy(write_data->Address<u64*>(), write_data->data,
                 (header->type3.count.Value() - 2) * sizeof(u32));
 }
@@ -304,6 +307,7 @@ void RunEventWriteEos(Vulkan::Rasterizer& rasterizer, const u8* data) {
     const auto& event_eos = *reinterpret_cast<const PM4CmdEventWriteEos*>(data);
     // Copies deferred to the recording thread precede writes the guest sees.
     rasterizer.WaitHostCopies();
+    rasterizer.WaitDeferredSignals();
     rasterizer.ProcessDownloadImages();
     event_eos.SignalFence([](void* address, u64 value, u32 num_bytes) {
         auto* memory = Core::Memory::Instance();

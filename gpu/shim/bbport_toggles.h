@@ -50,6 +50,7 @@ enum : std::uint64_t {
     PipelinedIndirectDraws = 1ull << 46,
     SceneAttachmentsOnly = 1ull << 47,
     SampleSceneProxies = 1ull << 48,
+    OrderedGuestWrites = 1ull << 49,
     UpdateImageFastPath = 1u << 30,
     // Bits 20-29 are used as raw debug toggles by the camera/object motion and the upscaler.
 };
