@@ -361,10 +361,13 @@ state.
 - `DmaData` to 0x3022C (skipped by the handler; ~70k/s) does not drain.
 - `BB_PIPE_VERIFY=N`: every Nth packet also carries the full register file and stage B reports
   words where its copy differs (none seen in game, menus included).
-- `BB_DRAW_PIPE=0/1` overrides the default (on with 8+ hardware threads). Toggles: 1 << 25 whole
-  pipeline, 1 << 26 fences on stage B, 1 << 27 WaitRegMem on pending fences, 1 << 28 dispatches,
-  1 << 29 fences signalled by the recording thread. `Frame stats` add a `Draw pipe` line: draws,
-  drains that waited and why, stage A waiting, stage B busy.
+- `BB_DRAW_PIPE=0/1` overrides the default (on with 8+ hardware threads). The toggle mask is 64
+  bits now (bits 20-29 are raw debug toggles of the motion vectors and the upscaler, which the
+  first measurements below also flipped): 1 << 37 whole pipeline, 1 << 38 fences on stage B,
+  1 << 39 WaitRegMem on pending fences, 1 << 40 dispatches, 1 << 41 fences signalled by the
+  recording thread, 1 << 42 WriteData/DmaData/special draws/flip IRQ on stage B, 1 << 36 constant
+  ring. `Frame stats` add a `Draw pipe` line: draws, drains that waited and why, stage A waiting,
+  stage B busy.
 
 Results (Hunter's Nightmare, standing, FSR 4, `BB_FPS_LIMIT=0`, A/B in one run):
 
@@ -383,3 +386,39 @@ the time, and the GPU is ~80% busy with FSR 4. Remaining drains: `WriteData` (~3
 zero bytes to a frame buffer and a 4-byte label, whose readers are unknown), non-trivial
 `DmaData`, indirect draws. Next: move work from stage B to stage A — the buffer side of a draw
 (ObtainBuffer, uploads) needs stage A to own the buffer cache and hand its commands to stage B.
+
+### Second round (2026-09-30)
+
+- `WriteData`, `DmaData`, the flip IRQ after them (the buffer label is a `WriteData`) and draws
+  `FilterDraw` handles itself (fast clear elimination, resolve, depth copy) run in order on
+  stage B. Drains: ~7 per frame (DumpConstRam, indirect draws/dispatches).
+- **Constant ring** (`vk_constant_ring.h`): stage A copies small read-only guest buffers (the
+  stream path of `ObtainBuffer`, and the flattened user data) into a 32 MiB ring of its own;
+  stage B only binds them. A region is reused once the submission stage B recorded its last
+  draw in has completed (stage B stamps packets with the submission tick). Buffers overlapping
+  guest memory that queued work will write (storage buffers, DMA, WriteData, fences:
+  `NotePendingGpuWrite`) or GPU-modified memory stay with stage B.
+- `BB_PIPE_VERIFY` also re-walks each stage's resource tables on stage B and compares them with
+  stage A's snapshot (guarded against faults: pointers may be stale by then). Pixel shaders whose
+  `Info` the pipeline selection does not refresh (no user data) are skipped.
+
+A/B in one run (16 threads, FSR 4 Ultra Performance, clean toggle bits): whole pipeline
+110.9 vs 83.9 FPS (+32%); constant ring 114.2 vs 102.5 FPS (+11%).
+
+### GPU time per frame vs upscaler preset
+
+The GPU (RX 7800 XT) now limits more than the CPU. Presets change it little:
+
+| mode | FPS | GPU busy | GPU ms/frame |
+|---|---|---|---|
+| upscaler off | 132 | 76% | 5.8 |
+| FSR 3 Native AA | 116 | 76% | 6.6 |
+| FSR 3 Ultra Performance (scene 640x360) | 114 | 71% | 6.3 |
+| FSR 4 Quality | 115 | 88% | 7.7 |
+| FSR 4 Ultra Performance | 114 | 84% | 7.4 |
+
+The reduced scene targets are used (1160 of ~1530 scene draws per frame), but rasterizing the
+scene costs little on this GPU: a ninth of the pixels saves ~0.3 ms. The rest does not depend on
+the preset (shadow maps, full-resolution post-processing and UI, FSR itself — FSR 4 costs
+~1.1-1.4 ms more than FSR 3 —, and emulation overhead: barriers, copies, resampling). FSR 4 at
+Native AA fails to start ("no free provider frame").

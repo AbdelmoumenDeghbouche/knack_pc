@@ -7,12 +7,12 @@
 #include <cstdint>
 #include <cstdlib>
 
-extern "C" std::uint32_t runtime_disabled_optimizations;
+extern "C" std::uint64_t runtime_disabled_optimizations;
 /// Recovery point for speculative guest memory reads on this thread (runtime_memory.c).
 extern "C" __thread sigjmp_buf* runtime_fault_recover;
 
 namespace BbToggle {
-enum : std::uint32_t {
+enum : std::uint64_t {
     RegionCache = 1,
     FetchShaderCache = 2,
     PageTrackingEarlyExit = 4,
@@ -33,18 +33,21 @@ enum : std::uint32_t {
     ParallelCopies = 131072,
     AsyncFences = 262144,
     PoolSmallCopies = 524288,
-    RecordPrefetch = 1u << 20,
-    TextureViewMemo = 1u << 21,
-    TextureBindHelper = 1u << 22,
-    EarlyDrawInputs = 1u << 23,
-    DrawPipeline = 1u << 25,
-    PipelinedTasks = 1u << 26,
-    PendingFenceWaits = 1u << 27,
-    PipelinedDispatch = 1u << 28,
-    RecorderFences = 1u << 29,
+    RecordPrefetch = 1ull << 32,
+    TextureViewMemo = 1ull << 33,
+    TextureBindHelper = 1ull << 34,
+    EarlyDrawInputs = 1ull << 35,
+    ConstantRing = 1ull << 36,
+    DrawPipeline = 1ull << 37,
+    PipelinedTasks = 1ull << 38,
+    PendingFenceWaits = 1ull << 39,
+    PipelinedDispatch = 1ull << 40,
+    RecorderFences = 1ull << 41,
+    PipelinedMemoryWrites = 1ull << 42,
     UpdateImageFastPath = 1u << 30,
+    // Bits 20-29 are used as raw debug toggles by the camera/object motion and the upscaler.
 };
-inline bool Disabled(std::uint32_t bit) {
+inline bool Disabled(std::uint64_t bit) {
     return (__atomic_load_n(&runtime_disabled_optimizations, __ATOMIC_RELAXED) & bit) != 0;
 }
 } // namespace BbToggle
@@ -86,6 +89,8 @@ struct Timer {
 };
 /// Wall time the GPU command thread waited for guest submissions (ns).
 inline std::atomic<std::uint64_t> gpu_idle_ns{0};
+/// Draws recorded into the reduced scene targets, and draws after the scene started.
+inline std::atomic<std::uint64_t> reduced_draws{0}, scene_draws{0};
 /// Wall time spent blocked in the scheduler (ns): waiting for the recording thread to drain,
 /// for host copies before a submission or fence, and for GPU ticks.
 inline std::atomic<std::uint64_t> sync_recording_ns{0}, host_copies_wait_ns{0}, tick_wait_ns{0},

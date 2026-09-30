@@ -201,6 +201,8 @@ bool PipelinedOpcode(PM4ItOpcode opcode) {
     case PM4ItOpcode::EventWriteEos:
     case PM4ItOpcode::WaitRegMem:     // waits for the recording thread only while unmet
     case PM4ItOpcode::DispatchDirect: // handed over like draws (PipelinedDispatch)
+    case PM4ItOpcode::WriteData:      // run in order on the recording thread (RunInOrder)
+    case PM4ItOpcode::DmaData:
         return true;
     default:
         return false;
@@ -245,6 +247,53 @@ void RunEventWriteEop(Vulkan::Rasterizer& rasterizer, const u8* data) {
     }
 }
 
+void RunDmaData(Vulkan::Rasterizer& rasterizer, const u8* data) {
+    const auto* dma_data = reinterpret_cast<const PM4DmaData*>(data);
+    ASSERT(dma_data->command.das == 0);
+    if (dma_data->src_sel == DmaDataSrc::Data && dma_data->dst_sel == DmaDataDst::Gds) {
+        rasterizer.FillBuffer(dma_data->dst_addr_lo, dma_data->NumBytes(),
+                               dma_data->data, true);
+    } else if ((dma_data->src_sel == DmaDataSrc::Memory ||
+                dma_data->src_sel == DmaDataSrc::MemoryUsingL2) &&
+               dma_data->dst_sel == DmaDataDst::Gds) {
+        rasterizer.CopyBuffer(dma_data->dst_addr_lo, dma_data->SrcAddress<VAddr>(),
+                               dma_data->NumBytes(), true, false);
+    } else if (dma_data->src_sel == DmaDataSrc::Data &&
+               (dma_data->dst_sel == DmaDataDst::Memory ||
+                dma_data->dst_sel == DmaDataDst::MemoryUsingL2)) {
+        rasterizer.FillBuffer(dma_data->DstAddress<VAddr>(), dma_data->NumBytes(),
+                               dma_data->data, false);
+    } else if (dma_data->src_sel == DmaDataSrc::Gds &&
+               (dma_data->dst_sel == DmaDataDst::Memory ||
+                dma_data->dst_sel == DmaDataDst::MemoryUsingL2)) {
+        rasterizer.CopyBuffer(dma_data->DstAddress<VAddr>(), dma_data->src_addr_lo,
+                               dma_data->NumBytes(), false, true);
+    } else if ((dma_data->src_sel == DmaDataSrc::Memory ||
+                dma_data->src_sel == DmaDataSrc::MemoryUsingL2) &&
+               (dma_data->dst_sel == DmaDataDst::Memory ||
+                dma_data->dst_sel == DmaDataDst::MemoryUsingL2)) {
+        rasterizer.CopyBuffer(dma_data->DstAddress<VAddr>(),
+                               dma_data->SrcAddress<VAddr>(), dma_data->NumBytes(),
+                               false, false);
+    } else {
+        UNREACHABLE_MSG("WriteData src_sel = {}, dst_sel = {}", u32(dma_data->src_sel),
+                        u32(dma_data->dst_sel));
+    }
+}
+
+void SignalFlip(Vulkan::Rasterizer&, const u8*) {
+    Platform::IrqC::Instance()->Signal(Platform::InterruptId::GfxFlip);
+}
+
+void RunWriteData(Vulkan::Rasterizer& rasterizer, const u8* data) {
+    const auto* header = reinterpret_cast<const PM4Header*>(data);
+    const auto* write_data = reinterpret_cast<const PM4CmdWriteData*>(data);
+    // Copies deferred to the recording thread precede writes the guest sees.
+    rasterizer.WaitHostCopies();
+    std::memcpy(write_data->Address<u64*>(), write_data->data,
+                (header->type3.count.Value() - 2) * sizeof(u32));
+}
+
 void RunEventWriteEos(Vulkan::Rasterizer& rasterizer, const u8* data) {
     const auto& event_eos = *reinterpret_cast<const PM4CmdEventWriteEos*>(data);
     // Copies deferred to the recording thread precede writes the guest sees.
@@ -272,12 +321,23 @@ void Liverpool::NotePendingFences(const auto& event) {
     }
     const auto note = [&](void* address, u64 data, u32 num_bytes) {
         pending_fences.push_back({reinterpret_cast<VAddr>(address), data, num_bytes, position});
+        rasterizer->NotePendingGpuWrite(reinterpret_cast<VAddr>(address), num_bytes);
     };
     if constexpr (requires { event.SignalFence(note, [] {}); }) {
         event.SignalFence(note, [] {});
     } else {
         event.SignalFence(note);
     }
+}
+
+void Liverpool::NotePendingWrite(const PM4CmdWriteData& write_data, u32 num_bytes) {
+    if (num_bytes > sizeof(u64)) {
+        return; // labels are small; larger writes are not waited on
+    }
+    u64 data = 0;
+    std::memcpy(&data, write_data.data, num_bytes);
+    pending_fences.push_back(
+        {write_data.Address<VAddr>(), data, num_bytes, rasterizer->DrawPipeHead()});
 }
 
 bool Liverpool::PendingFenceValue(VAddr address, u32& value) {
@@ -667,7 +727,14 @@ Liverpool::Task Liverpool::ProcessGraphics(std::span<const u32> dcb, std::span<c
                 case PM4CmdNop::PayloadType::PatchedFlip: {
                     // There is no evidence that GPU CP drives flip events by parsing
                     // special NOP packets. For convenience lets assume that it does.
-                    Platform::IrqC::Instance()->Signal(Platform::InterruptId::GfxFlip);
+                    // bbport: after the writes before it (the buffer label: WriteData, which
+                    // may still be queued on the draw recording thread).
+                    if (rasterizer) {
+                        rasterizer->RunInOrder(&SignalFlip, header, sizeof(u32),
+                                               BbToggle::PipelinedMemoryWrites);
+                    } else {
+                        Platform::IrqC::Instance()->Signal(Platform::InterruptId::GfxFlip);
+                    }
                     break;
                 }
                 case PM4CmdNop::PayloadType::DebugMarkerPush: {
@@ -1040,51 +1107,29 @@ Liverpool::Task Liverpool::ProcessGraphics(std::span<const u32> dcb, std::span<c
                 if (dma_data->dst_addr_lo == 0x3022C || !rasterizer) {
                     break;
                 }
-                ASSERT(dma_data->command.das == 0);
-                if (dma_data->src_sel == DmaDataSrc::Data && dma_data->dst_sel == DmaDataDst::Gds) {
-                    rasterizer->FillBuffer(dma_data->dst_addr_lo, dma_data->NumBytes(),
-                                           dma_data->data, true);
-                } else if ((dma_data->src_sel == DmaDataSrc::Memory ||
-                            dma_data->src_sel == DmaDataSrc::MemoryUsingL2) &&
-                           dma_data->dst_sel == DmaDataDst::Gds) {
-                    rasterizer->CopyBuffer(dma_data->dst_addr_lo, dma_data->SrcAddress<VAddr>(),
-                                           dma_data->NumBytes(), true, false);
-                } else if (dma_data->src_sel == DmaDataSrc::Data &&
-                           (dma_data->dst_sel == DmaDataDst::Memory ||
-                            dma_data->dst_sel == DmaDataDst::MemoryUsingL2)) {
-                    rasterizer->FillBuffer(dma_data->DstAddress<VAddr>(), dma_data->NumBytes(),
-                                           dma_data->data, false);
-                } else if (dma_data->src_sel == DmaDataSrc::Gds &&
-                           (dma_data->dst_sel == DmaDataDst::Memory ||
-                            dma_data->dst_sel == DmaDataDst::MemoryUsingL2)) {
-                    rasterizer->CopyBuffer(dma_data->DstAddress<VAddr>(), dma_data->src_addr_lo,
-                                           dma_data->NumBytes(), false, true);
-                } else if ((dma_data->src_sel == DmaDataSrc::Memory ||
-                            dma_data->src_sel == DmaDataSrc::MemoryUsingL2) &&
-                           (dma_data->dst_sel == DmaDataDst::Memory ||
-                            dma_data->dst_sel == DmaDataDst::MemoryUsingL2)) {
-                    rasterizer->CopyBuffer(dma_data->DstAddress<VAddr>(),
-                                           dma_data->SrcAddress<VAddr>(), dma_data->NumBytes(),
-                                           false, false);
-                } else {
-                    UNREACHABLE_MSG("WriteData src_sel = {}, dst_sel = {}", u32(dma_data->src_sel),
-                                    u32(dma_data->dst_sel));
+                if (rasterizer->RunInOrder(&RunDmaData, dma_data, sizeof(PM4DmaData),
+                                           BbToggle::PipelinedMemoryWrites) &&
+                    (dma_data->dst_sel == DmaDataDst::Memory ||
+                     dma_data->dst_sel == DmaDataDst::MemoryUsingL2)) {
+                    rasterizer->NotePendingGpuWrite(dma_data->DstAddress<VAddr>(),
+                                                    dma_data->NumBytes());
                 }
                 break;
             }
             case PM4ItOpcode::WriteData: {
-                // bbport: copies deferred to the recording thread precede writes the guest sees.
-                if (rasterizer) {
-                    rasterizer->WaitHostCopies();
-                }
                 const auto* write_data = reinterpret_cast<const PM4CmdWriteData*>(header);
                 ASSERT(write_data->dst_sel.Value() == 2 || write_data->dst_sel.Value() == 5);
-                const u32 data_size = (header->type3.count.Value() - 2) * 4;
-                u64* address = write_data->Address<u64*>();
-                if (!write_data->wr_one_addr.Value()) {
-                    std::memcpy(address, write_data->data, data_size);
+                ASSERT(!write_data->wr_one_addr.Value());
+                if (rasterizer) {
+                    // In order with the draws (on the draw recording thread when in use).
+                    if (rasterizer->RunInOrder(&RunWriteData, header, (count + 1) * sizeof(u32),
+                                               BbToggle::PipelinedMemoryWrites)) {
+                        NotePendingWrite(*write_data, (count - 2) * sizeof(u32));
+                        rasterizer->NotePendingGpuWrite(write_data->Address<VAddr>(),
+                                                        (count - 2) * sizeof(u32));
+                    }
                 } else {
-                    UNREACHABLE();
+                    std::memcpy(write_data->Address<u64*>(), write_data->data, (count - 2) * 4);
                 }
                 break;
             }

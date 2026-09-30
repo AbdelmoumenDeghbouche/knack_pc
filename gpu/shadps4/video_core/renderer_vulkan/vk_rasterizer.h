@@ -9,6 +9,7 @@
 #include "video_core/page_manager.h"
 #include "video_core/renderer_vulkan/vk_bind_helper.h"
 #include "video_core/renderer_vulkan/vk_camera_motion.h"
+#include "video_core/renderer_vulkan/vk_constant_ring.h"
 #include "video_core/renderer_vulkan/vk_scene_resolution.h"
 #include "video_core/renderer_vulkan/vk_object_motion.h"
 #include "video_core/renderer_vulkan/vk_draw_pipe.h"
@@ -98,7 +99,8 @@ public:
     /// thread while the draw pipeline is in use (PipelinedTasks), else here after a drain.
     using OrderedTask = void (*)(Rasterizer& rasterizer, const u8* data);
     /// Returns true when the task was handed to the recording thread (not run yet).
-    bool RunInOrder(OrderedTask task, const void* data, u32 size);
+    bool RunInOrder(OrderedTask task, const void* data, u32 size,
+                    u64 toggle = BbToggle::PipelinedTasks);
     /// Stage A: the draw pipe position after the last handed-over packet, and whether the
     /// recording thread has run everything before a position.
     [[nodiscard]] u64 DrawPipeHead() const {
@@ -114,6 +116,9 @@ public:
     /// Stage A, end of a submission: its prepared draws stay alive until the recording thread
     /// has recorded them (instead of a drain).
     void RetireSubmission();
+    /// Stage A: guest memory the recording thread will write for work handed to it (storage
+    /// buffers, DMA, WriteData, fences); constants overlapping it are bound there, not copied here.
+    void NotePendingGpuWrite(VAddr address, u64 size);
     /// Runs `signal` after the guest memory copies issued so far, without waiting here.
     void SignalAfterHostCopies(std::function<void()> signal) {
         scheduler.SignalAfterHostCopies(std::move(signal));
@@ -182,6 +187,9 @@ private:
     /// The compute registers of the dispatch being recorded.
     const AmdGpu::ComputeProgram& CsRegs() const;
     static void RunDrawPacket(void* rasterizer, const u8* packet, u32 size);
+    struct RingBinding;
+    void CollectRingBindings(const Shader::Info& stage, const PreparedDraw* prepared,
+                             boost::container::static_vector<RingBinding, Shader::NUM_BUFFERS>& out);
     void PrintPipeStats();
     /// The registers of the draw being recorded: stage B's copy there, else Liverpool's.
     const AmdGpu::Regs& Regs() const;
@@ -388,6 +396,42 @@ private:
     bool pipe_synced = false;
     std::array<AmdGpu::CbDbExtent, AmdGpu::NUM_COLOR_BUFFERS> pipe_cb_extent{};
     AmdGpu::CbDbExtent pipe_db_extent{};
+    /// Stage A: small read-only guest buffers copied into the constant ring for a packet.
+    struct RingBinding {
+        u32 index;  ///< buffer resource of the stage
+        u32 size;
+        u64 offset; ///< in the ring
+        VAddr address;
+    };
+    struct PendingWrite {
+        VAddr begin;
+        VAddr end;
+        u64 position;
+    };
+    std::deque<PendingWrite> pending_writes;
+    bool PendingWriteOverlaps(VAddr address, u64 size);
+    /// Stage B: the ring bindings of the stages of the packet being recorded.
+    struct RingStage {
+        const Shader::Info* info;
+        const RingBinding* bindings;
+        u32 count;
+    };
+    std::array<RingStage, Shader::MaxStageTypes> ring_stages{};
+    u32 num_ring_stages = 0;
+    const RingBinding* FindRingBinding(const Shader::Info& stage, u32 index) const {
+        for (u32 i = 0; i < num_ring_stages; ++i) {
+            if (ring_stages[i].info == &stage) {
+                for (u32 j = 0; j < ring_stages[i].count; ++j) {
+                    if (ring_stages[i].bindings[j].index == index) {
+                        return &ring_stages[i].bindings[j];
+                    }
+                }
+                return nullptr;
+            }
+        }
+        return nullptr;
+    }
+    std::unique_ptr<ConstantRing> constant_ring;
     /// Submissions (prepared draws) kept alive until stage B reaches the position.
     std::deque<std::pair<u64, std::shared_ptr<const void>>> pipe_keepalive;
     std::unique_ptr<DrawPipe> draw_pipe;

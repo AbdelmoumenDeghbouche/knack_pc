@@ -9,6 +9,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <inttypes.h>
+#include <limits.h>
 #include <pthread.h>
 #include <time.h>
 #ifndef _WIN32
@@ -508,18 +509,19 @@ void *runtime_low_map(size_t size, int prot) {
  * 262144 with BB_ASYNC_FENCES=1: wait for guest copies at fences again,
  * 524288 small guest copies batched for the copy threads instead of the recording thread,
  * 1073741824 the lock-free UpdateImage path for clean, tracked images. */
-uint32_t runtime_disabled_optimizations;
+/* Bits 32 and up: the draw pipeline and related GPU thread work (gpu/shim/bbport_toggles.h). */
+uint64_t runtime_disabled_optimizations;
 /* Speculative readers of guest memory (GPU draw-preparation workers) register a recovery
  * point: a fault on that thread jumps back to it instead of terminating (probe.c). */
 __thread sigjmp_buf *runtime_fault_recover;
 static void *toggle_watcher(void *path) {
-    for (uint32_t last=UINT32_MAX;;) {
+    for (unsigned long long last=ULLONG_MAX;;) {
         FILE *f=fopen(path,"r");
-        unsigned value=0;
-        if (f) { if (fscanf(f,"%u",&value)!=1) value=0; fclose(f); }
+        unsigned long long value=0;
+        if (f) { if (fscanf(f,"%llu",&value)!=1) value=0; fclose(f); }
         if (value!=last) {
-            __atomic_store_n(&runtime_disabled_optimizations,value,__ATOMIC_RELEASE);
-            printf("Runtime: disabled optimizations mask=%u\n",value);
+            __atomic_store_n(&runtime_disabled_optimizations,(uint64_t)value,__ATOMIC_RELEASE);
+            printf("Runtime: disabled optimizations mask=%llu\n",value);
             last=value;
         }
         struct timespec t={0,250000000}; nanosleep(&t,NULL);
