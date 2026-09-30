@@ -316,6 +316,9 @@ void Scheduler::Wait(u64 tick) {
 }
 
 void Scheduler::PopPendingOperations() {
+    if (num_pending_ops.load(std::memory_order_acquire) == 0) {
+        return; // every draw comes here
+    }
     std::unique_lock lk(pending_ops_mutex);
     // bbport: this runs on every draw and dispatch. Querying the timeline semaphore is an
     // ioctl, so it is skipped when nothing waits and done once per 32 calls (~0.3 ms; reading
@@ -332,6 +335,7 @@ void Scheduler::PopPendingOperations() {
     while (!pending_ops.empty() && work_semaphore.IsFree(pending_ops.front().gpu_tick)) {
         pending_ops.front().callback();
         pending_ops.pop();
+        num_pending_ops.fetch_sub(1, std::memory_order_release);
     }
 }
 

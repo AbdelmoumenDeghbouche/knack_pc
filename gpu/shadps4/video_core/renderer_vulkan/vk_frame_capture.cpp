@@ -52,6 +52,9 @@ void AddBuffers(Entry& entry) {
 bool pass_open = false;
 std::mutex display_mutex;
 std::vector<VAddr> display_buffers;
+// bbport: read on every draw; the game registers a handful of display buffers once.
+std::array<std::atomic<VAddr>, 16> display_list{};
+std::atomic<u32> display_count{0};
 
 Target ToTarget(const VideoCore::ImageInfo& info) {
     return {info.guest_address, info.pixel_format, info.size.width, info.size.height};
@@ -140,6 +143,15 @@ void FrameCapture::OnFlip(VAddr presented_address) {
 void FrameCapture::Poll() {}
 
 bool FrameCapture::IsDisplayBuffer(VAddr address) {
+    const u32 count = display_count.load(std::memory_order_acquire);
+    for (u32 i = 0; i < count; ++i) {
+        if (display_list[i].load(std::memory_order_relaxed) == address) {
+            return true;
+        }
+    }
+    if (count < display_list.size()) {
+        return false;
+    }
     std::scoped_lock lk{display_mutex};
     return std::ranges::find(display_buffers, address) != display_buffers.end();
 }
@@ -148,6 +160,11 @@ void FrameCapture::AddDisplayBuffer(VAddr address) {
     std::scoped_lock lk{display_mutex};
     if (std::ranges::find(display_buffers, address) == display_buffers.end()) {
         display_buffers.push_back(address);
+        const u32 count = display_count.load(std::memory_order_relaxed);
+        if (count < display_list.size()) {
+            display_list[count].store(address, std::memory_order_relaxed);
+            display_count.store(count + 1, std::memory_order_release);
+        }
     }
 }
 

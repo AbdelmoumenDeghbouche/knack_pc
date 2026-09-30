@@ -88,7 +88,7 @@ void SceneTargets::ResolveAll() {
     }
 }
 void SceneTargets::NativeAccess(VideoCore::Image& image, vk::AccessFlags2 access) {
-    if (copying) return;
+    if (copying || !image.scene_proxy) return; // most images never had a proxy
     const auto it = entries.find(image.image_uid);
     if (it == entries.end()) return;
     auto& entry = *it->second;
@@ -317,6 +317,7 @@ SceneTargets::Entry& SceneTargets::Get(VideoCore::ImageId id) {
         }
     }
     auto& entry = entries[original.image_uid];
+    original.scene_proxy = true;
     if (!entry) {
         entry = std::make_unique<Entry>();
         entry->source = id;

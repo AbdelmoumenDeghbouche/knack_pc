@@ -7,8 +7,8 @@
 
 #pragma once
 
-#include <deque>
-#include <mutex>
+#include <array>
+#include <atomic>
 
 #include "common/assert.h"
 #include "common/types.h"
@@ -63,25 +63,41 @@ public:
         return position;
     }
 
-    /// Stage B, after recording a packet whose allocations end at `end`.
+    /// Stage B, after recording a packet whose allocations end at `end`. Stamps of one
+    /// submission tick are merged: only the last end per tick is published.
     void Stamp(u64 end) {
-        if (end == last_stamped) {
+        if (end == pending_end) {
             return;
         }
-        last_stamped = end;
-        std::scoped_lock lock{mutex};
-        stamps.push_back({end, scheduler.CurrentTick()});
+        const u64 tick = scheduler.CurrentTick();
+        if (tick != pending_tick && pending_end != last_published) {
+            Publish(pending_end, pending_tick);
+        }
+        pending_end = end;
+        pending_tick = tick;
     }
 
 private:
+    void Publish(u64 end, u64 tick) {
+        const u64 at = stamps_head.load(std::memory_order_relaxed);
+        if (at - stamps_tail.load(std::memory_order_acquire) >= stamps.size()) {
+            return; // full: this region retires with a later stamp
+        }
+        stamps[at % stamps.size()] = {end, tick};
+        stamps_head.store(at + 1, std::memory_order_release);
+        last_published = end;
+    }
+
     void Retire() {
         auto* semaphore = scheduler.GetWorkSemaphore();
         semaphore->Refresh();
-        std::scoped_lock lock{mutex};
-        while (!stamps.empty() && semaphore->IsFree(stamps.front().tick)) {
-            retired = stamps.front().end;
-            stamps.pop_front();
+        u64 at = stamps_tail.load(std::memory_order_relaxed);
+        const u64 head = stamps_head.load(std::memory_order_acquire);
+        while (at < head && semaphore->IsFree(stamps[at % stamps.size()].tick)) {
+            retired = stamps[at % stamps.size()].end;
+            ++at;
         }
+        stamps_tail.store(at, std::memory_order_release);
     }
 
     struct StampEntry {
@@ -92,9 +108,10 @@ private:
     VideoCore::Buffer buffer;
     u64 position = 0;     ///< stage A
     u64 retired = 0;      ///< stage A: the GPU is done with everything before this
-    u64 last_stamped = 0; ///< stage B
-    std::mutex mutex;
-    std::deque<StampEntry> stamps;
+    u64 pending_end = 0, pending_tick = 0, last_published = 0; ///< stage B
+    std::array<StampEntry, 1024> stamps{};
+    alignas(64) std::atomic<u64> stamps_head{0}; ///< stage B writes
+    alignas(64) std::atomic<u64> stamps_tail{0}; ///< stage A reads
 };
 
 } // namespace Vulkan
