@@ -950,6 +950,8 @@ void Rasterizer::DrawRecord(const GraphicsPipeline* pipeline, const PreparedDraw
         camera_motion->SetJitter(upscaler->Jitter());
         object_motion->OnFrameStart();
         NoteFrameStart();
+        static const char* scene_debug = std::getenv("BB_SCENE_DEBUG");
+        scene_debug_frame = scene_debug && std::remove(scene_debug) == 0;
     }
     bind_prepared = used_prepared;
     motion_draw = pipeline->GetGraphicsKey().motion_vectors;
@@ -2589,15 +2591,49 @@ RenderState Rasterizer::BeginRenderingFull(const GraphicsPipeline* pipeline) {
     // A proxy attachment cannot represent MSAA or a feedback loop that reads the
     // same image through the guest's native descriptor during this draw.
     bool reduced = scene_started && upscaler->RasterScaling() && key.num_samples == 1;
-    for (const auto& [id,desc] : cb_descs) {
+    // BB_SCENE_DEBUG=<file>: once the file exists, why the passes of one frame keep the
+    // native size (see NoteFrameStart).
+    const bool debug_pass = scene_debug_frame && scene_started;
+    std::string why;
+    if (debug_pass) {
+        why = fmt::format("pass vs {:08x} ps {:08x} mrt {:#x} samples {} raster_scaling {}:",
+                          pipeline->GetStage(Shader::SwStage::Vertex).pgm_hash,
+                          key.mrt_mask ? pipeline->GetStage(Shader::SwStage::Fragment).pgm_hash
+                                       : 0,
+                          key.mrt_mask, u32(key.num_samples), upscaler->RasterScaling());
+    }
+    // Only this pass's attachments: slots past the mask's width keep earlier passes' targets,
+    // often the G-buffer images the lighting passes sample (bound), which kept those native.
+    const u32 num_attachments = BbToggle::Disabled(BbToggle::SceneAttachmentsOnly)
+                                    ? u32(cb_descs.size())
+                                    : u32(std::bit_width(key.mrt_mask));
+    for (u32 cb = 0; cb < num_attachments; ++cb) {
+        const auto& [id, desc] = cb_descs[cb];
         if (id) {
             const auto& image = texture_cache.GetImage(id);
             if (!scene_targets->Eligible(image) || image.binding.is_bound ||
                 image.binding.needs_rebind || desc.view_info.range.base.level ||
                 desc.view_info.range.base.layer) reduced = false;
+            if (debug_pass) {
+                why += fmt::format(" [{} {}x{} eligible {} bound {} rebind {} level {} layer {}]",
+                                   vk::to_string(image.info.pixel_format), image.info.size.width,
+                                   image.info.size.height, scene_targets->Eligible(image),
+                                   u32(image.binding.is_bound), u32(image.binding.needs_rebind),
+                                   desc.view_info.range.base.level,
+                                   desc.view_info.range.base.layer);
+            }
         }
     }
     if (db_desc.first && !scene_targets->Eligible(texture_cache.GetImage(db_desc.first))) reduced = false;
+    if (debug_pass) {
+        if (db_desc.first) {
+            const auto& depth = texture_cache.GetImage(db_desc.first);
+            why += fmt::format(" depth [{} {}x{} eligible {}]",
+                               vk::to_string(depth.info.pixel_format), depth.info.size.width,
+                               depth.info.size.height, scene_targets->Eligible(depth));
+        }
+        std::printf("Scene pass: reduced %d %s\n", reduced, why.c_str());
+    }
     push_data.scene_size = reduced ? SceneResolution::Pack(scene_targets->Size()) : 0;
     if (BbStats::enabled) {
         BbStats::reduced_draws.fetch_add(reduced, std::memory_order_relaxed);
