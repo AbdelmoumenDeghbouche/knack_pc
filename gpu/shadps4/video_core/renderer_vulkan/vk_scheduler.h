@@ -811,6 +811,11 @@ public:
     /// it to the copy threads' completion (BbCopy::AfterCopies).
     void SignalAfterHostCopies(std::function<void()> signal);
 
+    /// Whether BeginRendering(state) would start a new render pass.
+    [[nodiscard]] bool WillBeginRendering(const RenderState& state) const {
+        return !(is_rendering && render_state == state);
+    }
+
     /// CommandBuffer() calls that waited for a recording thread (BB_FRAME_STATS).
     static inline std::atomic<u64> direct_recordings{0};
 

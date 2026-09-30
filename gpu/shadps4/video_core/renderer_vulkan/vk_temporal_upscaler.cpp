@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "video_core/renderer_vulkan/vk_temporal_upscaler.h"
+#include "video_core/renderer_vulkan/vk_gpu_profiler.h"
 #include "video_core/renderer_vulkan/motion_history.h"
 #include "video_core/renderer_vulkan/vk_scene_resolution.h"
 #include "video_core/renderer_vulkan/ui_composition.h"
@@ -595,6 +596,10 @@ bool TemporalUpscaler::RecordReactive(vk::ImageView color_view) {
 }
 
 void TemporalUpscaler::Run() {
+    if (auto* profiler = GpuProfiler::Get()) {
+        profiler->Mark(0xF5A0'0000ull ^ std::hash<std::string_view>{}("upscaler Run (FSR)"),
+                       [] { return std::string{"upscaler Run (FSR)"}; });
+    }
     auto& color = texture_cache.GetImage(scene_color);
     auto& depth = texture_cache.GetImage(camera_motion.Depth());
     const u32 ow = color.info.size.width, oh = color.info.size.height;
@@ -999,6 +1004,9 @@ void TemporalUpscaler::PrepareUiDepth(VideoCore::ImageId depth_id) {
 }
 
 void TemporalUpscaler::RunUiOnly(VideoCore::ImageId color_id, VideoCore::ImageId depth_id) {
+    if (auto* profiler = GpuProfiler::Get()) {
+        profiler->Mark(0xF5A1'0000ull, [] { return std::string{"upscaler RunUiOnly"}; });
+    }
     const auto& color = texture_cache.GetImage(color_id);
     const auto depth_format = depth_id ? texture_cache.GetImage(depth_id).info.pixel_format
                                       : vk::Format::eD32SfloatS8Uint;
@@ -1047,6 +1055,10 @@ void TemporalUpscaler::RunUiOnly(VideoCore::ImageId color_id, VideoCore::ImageId
 }
 
 void TemporalUpscaler::RunScaled() {
+    if (auto* profiler = GpuProfiler::Get()) {
+        profiler->Mark(0xF5A0'0000ull ^ std::hash<std::string_view>{}("upscaler RunScaled (FSR)"),
+                       [] { return std::string{"upscaler RunScaled (FSR)"}; });
+    }
     auto& color = texture_cache.GetImage(ldr_target);
     auto& depth = texture_cache.GetImage(camera_motion.Depth());
     const u32 w = color.info.size.width, h = color.info.size.height;

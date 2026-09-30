@@ -18,6 +18,7 @@
 #include "video_core/renderer_vulkan/vk_instance.h"
 #include "video_core/renderer_vulkan/vk_pipeline_cache.h"
 #include "video_core/renderer_vulkan/vk_rasterizer.h"
+#include "video_core/renderer_vulkan/vk_gpu_profiler.h"
 #include "bbport_threads.h"
 #include "video_core/renderer_vulkan/vk_runtime.h"
 #include "video_core/renderer_vulkan/vk_scheduler.h"
@@ -61,6 +62,7 @@ Rasterizer::Rasterizer(const Instance& instance_, Scheduler& scheduler_, Runtime
     }
     memory->SetRasterizer(this);
 
+    GpuProfiler::Init(instance, scheduler);
     if (DrawPipeWanted()) {
         constant_ring = std::make_unique<ConstantRing>(instance, scheduler);
         draw_pipe = std::make_unique<DrawPipe>(&RunDrawPacket, this);
@@ -1004,6 +1006,7 @@ void Rasterizer::DrawRecord(const GraphicsPipeline* pipeline, const PreparedDraw
         draw_jitter = upscaler->Jitter();
     }
     UpdateDynamicState(pipeline, is_indexed);
+    MarkPass(pipeline, state);
     scheduler.BeginRendering(state);
 
     const auto& vs_info = pipeline->GetStage(Shader::SwStage::Vertex);
@@ -1109,6 +1112,7 @@ void Rasterizer::DrawIndirect(bool is_indexed, VAddr arg_address, u32 offset, u3
         draw_jitter = upscaler->Jitter();
     }
     UpdateDynamicState(pipeline, is_indexed);
+    MarkPass(pipeline, state);
     scheduler.BeginRendering(state);
 
     ASSERT(stride == (is_indexed ? sizeof(VkDrawIndexedIndirectCommand)
@@ -1167,6 +1171,12 @@ void Rasterizer::DispatchRecord(const ComputePipeline* pipeline) {
     const auto& cs_program = CsRegs();
 
     const auto& cs = pipeline->GetStage(Shader::SwStage::Compute);
+    if (auto* profiler = GpuProfiler::Get()) {
+        profiler->Mark(cs.pgm_hash ^ 0xD15Aull, [&] {
+            return fmt::format("dispatch cs {:016x} ({}x{}x{} groups)", cs.pgm_hash,
+                               cs_program.dim_x, cs_program.dim_y, cs_program.dim_z);
+        });
+    }
     if (upscaler->Enabled()) {
         upscaler->OnDispatch(cs.pgm_hash);
     }
@@ -3044,7 +3054,45 @@ u32 Rasterizer::GetGpuCommandProcessorThreadId() {
 
 namespace Vulkan {
 
+void Rasterizer::MarkPass(const GraphicsPipeline* pipeline, const RenderState& state) {
+    auto* profiler = GpuProfiler::Get();
+    if (!profiler || !scheduler.WillBeginRendering(state)) {
+        return;
+    }
+    const auto& vs = pipeline->GetStage(Shader::SwStage::Vertex);
+    const auto* ps = pipeline->GetStages()[u32(Shader::SwStage::Fragment)];
+    std::array<u64, AmdGpu::NUM_COLOR_BUFFERS + 6> parts{};
+    parts[0] = state.width | u64(state.height) << 32;
+    parts[1] = vs.pgm_hash;
+    parts[2] = ps ? ps->pgm_hash : 0;
+    parts[3] = db_desc.first ? u64(texture_cache.GetImage(db_desc.first).info.pixel_format) : 0;
+    for (u32 cb = 0; cb < state.num_color_attachments && cb < AmdGpu::NUM_COLOR_BUFFERS; ++cb) {
+        parts[4 + cb] = cb_descs[cb].first
+                            ? u64(texture_cache.GetImage(cb_descs[cb].first).info.pixel_format) + 1
+                            : 0;
+    }
+    const u64 key = XXH3_64bits(parts.data(), sizeof(parts));
+    profiler->Mark(key, [&] {
+        std::string targets;
+        for (u32 cb = 0; cb < state.num_color_attachments; ++cb) {
+            targets += cb_descs[cb].first
+                           ? vk::to_string(texture_cache.GetImage(cb_descs[cb].first).info.pixel_format)
+                           : std::string{"-"};
+            targets += ' ';
+        }
+        return fmt::format("pass {}x{} [{}] depth {} vs {:016x} ps {:016x}", state.width,
+                           state.height, targets,
+                           db_desc.first ? vk::to_string(
+                                               texture_cache.GetImage(db_desc.first).info.pixel_format)
+                                         : std::string{"-"},
+                           vs.pgm_hash, ps ? ps->pgm_hash : 0);
+    });
+}
+
 void Rasterizer::NoteFrameStart() {
+    if (auto* profiler = GpuProfiler::Get()) {
+        profiler->BeginFrame();
+    }
     const u64 frame = BbStats::gpu_frames.fetch_add(1, std::memory_order_relaxed) + 1;
     // BB_BUFFER_STATS=1: how many earlier frames the GPU has not finished when the GPU thread
     // starts a frame — the lag that decides whether guest memory can be read in place.

@@ -422,3 +422,33 @@ scene costs little on this GPU: a ninth of the pixels saves ~0.3 ms. The rest do
 the preset (shadow maps, full-resolution post-processing and UI, FSR itself — FSR 4 costs
 ~1.1-1.4 ms more than FSR 3 —, and emulation overhead: barriers, copies, resampling). FSR 4 at
 Native AA fails to start ("no free provider frame").
+
+### GPU profile (`BB_GPU_PROFILE=1`, `vk_gpu_profiler.h`)
+
+Timestamps where each render pass, dispatch, upscaler run and submission end starts; the time to
+the next one is charged to it (barriers and copies in between included; "between submissions"
+is mostly the GPU waiting for the CPU). Printed every 5 s, GPU ms per frame by label. Timestamps
+are written outside render passes (`radv_CmdWriteTimestamp2` crashed inside some) and only into
+the rasterizer's scheduler (the presenter has its own).
+
+Hunter's Nightmare, FSR 4 Ultra Performance, ~110 FPS (8.8 ms/frame):
+
+| label | ms/frame |
+|---|---|
+| GPU idle between submissions | 2.1 |
+| guest copy shader `fefebf9f`, 57 dispatches (HLE) | 2.1 |
+| FSR 4 | 1.5 |
+| guest compute `3d5ebf4e`, 8 dispatches | 0.5 |
+| G-buffer passes at 640x360 | ~0.8 |
+| the rest (post-processing, UI, smaller passes) | ~1.8 |
+
+This is why presets barely change the GPU load: only the scene passes scale.
+
+The copy shader is HLE'd (`vk_shader_hle.cpp`) as `vkCmdCopyBuffer` with ~1024 small regions
+per dispatch. `buffer_multi_copy.comp` now does a batch in one dispatch (toggle 1 << 43):
+the copies themselves 0.4 ms/frame; with the buffer preparation before them the label fell from
+2.1 to 1.6 ms/frame. Most of the rest is `ObtainBuffer` over the merged ranges (copies of a few
+KiB spread over up to 57 MiB of destination): synchronizing only the copied parts saved another
+~0.75 ms of GPU time but cost more on the CPU (page protection per part, no stream path for
+small sources: 108.7 vs 114.3 FPS, sources only 105.7 vs 111.9), so it was dropped. Frame rate
+unchanged with the multi-copy shader (CPU-bound here); it helps where the GPU limits.

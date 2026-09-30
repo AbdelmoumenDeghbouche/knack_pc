@@ -25,6 +25,10 @@ public:
     explicit Runtime(const Instance& instance, Scheduler& scheduler);
     ~Runtime() = default;
 
+    Scheduler& GetScheduler() {
+        return scheduler;
+    }
+
     const Instance& GetInstance() const {
         return instance;
     }
