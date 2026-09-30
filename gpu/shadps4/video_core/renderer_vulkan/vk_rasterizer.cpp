@@ -1274,12 +1274,15 @@ void Rasterizer::DispatchRecord(const ComputePipeline* pipeline) {
     const auto& cs_program = CsRegs();
 
     const auto& cs = pipeline->GetStage(Shader::SwStage::Compute);
-    if (auto* profiler = GpuProfiler::Get()) {
-        profiler->Mark(cs.pgm_hash ^ 0xD15Aull, [&] {
-            return fmt::format("dispatch cs {:016x} ({}x{}x{} groups)", cs.pgm_hash,
-                               cs_program.dim_x, cs_program.dim_y, cs_program.dim_z);
-        });
-    }
+    // After the resource binding: its transfers (image uploads, downloads) mark themselves.
+    const auto mark = [&] {
+        if (auto* profiler = GpuProfiler::Get()) {
+            profiler->Mark(cs.pgm_hash ^ 0xD15Aull, [&] {
+                return fmt::format("dispatch cs {:016x} ({}x{}x{} groups)", cs.pgm_hash,
+                                   cs_program.dim_x, cs_program.dim_y, cs_program.dim_z);
+            });
+        }
+    };
     if (upscaler->Enabled()) {
         upscaler->OnDispatch(cs.pgm_hash);
     }
@@ -1296,6 +1299,7 @@ void Rasterizer::DispatchRecord(const ComputePipeline* pipeline) {
     }
 
     scheduler.EndRendering();
+    mark();
     pipeline->BindResources(set_writes, push_data);
 
     const vk::Pipeline handle = pipeline->Handle();
@@ -2188,6 +2192,11 @@ void Rasterizer::BindTextures(const Shader::Info& stage, const PreparedStage* pr
     // TextureSetMemo: what this call resolves, to remember when the set qualifies.
     std::array<TextureSetEntry, TextureSet::MaxImages> resolved{};
     bool set_ok = set_slot != nullptr;
+    // SampleSceneProxies: bindings that may read a reduced scene proxy instead of the native
+    // image (normalized sampling only; see Shader::ImageResource::needs_native).
+    boost::container::small_vector<bool, 16> binding_proxy_ok;
+    const bool sample_proxies = !BbToggle::Disabled(BbToggle::SampleSceneProxies) &&
+                                !on_helper && scene_targets->Reduced();
 
     for (u32 image_index = 0; image_index < stage.images.size(); ++image_index) {
         const auto& image_desc = stage.images[image_index];
@@ -2204,6 +2213,7 @@ void Rasterizer::BindTextures(const Shader::Info& stage, const PreparedStage* pr
         if (tsharp.Address() == 0 || data_fmt == AmdGpu::DataFormat::FormatInvalid) {
             image_bindings.emplace_back(VideoCore::ImageId{}, &image_desc_storage.emplace_back());
             image_binding_entries.push_back(nullptr);
+            binding_proxy_ok.push_back(false);
             image_descriptor_array_sizes.push_back(1);
             continue;
         }
@@ -2217,6 +2227,7 @@ void Rasterizer::BindTextures(const Shader::Info& stage, const PreparedStage* pr
                         static_cast<u32>(num_fmt));
             image_bindings.emplace_back(VideoCore::ImageId{}, &image_desc_storage.emplace_back());
             image_binding_entries.push_back(nullptr);
+            binding_proxy_ok.push_back(false);
             image_descriptor_array_sizes.push_back(1);
             continue;
         }
@@ -2227,6 +2238,9 @@ void Rasterizer::BindTextures(const Shader::Info& stage, const PreparedStage* pr
             mip_fallback_mode == Shader::MipStorageFallbackMode::DynamicIndex
                 ? static_cast<u32>(tsharp.last_level - tsharp.base_level + 1)
                 : 1u;
+        const bool proxy_candidate = sample_proxies && num_bindings == 1 &&
+                                     !image_desc.needs_native && !image_desc.is_written &&
+                                     mip_fallback_mode == Shader::MipStorageFallbackMode::None;
 
         auto& desc_entry =
             prepared ? CachedImageDescEntry(tsharp, image_desc, prepared->image_hashes[image_index])
@@ -2241,6 +2255,7 @@ void Rasterizer::BindTextures(const Shader::Info& stage, const PreparedStage* pr
                 auto& [image_id, _] =
                     image_bindings.emplace_back(desc_entry.found_id, &desc_entry.found_desc);
                 image_binding_entries.push_back(&desc_entry);
+                binding_proxy_ok.push_back(proxy_candidate);
                 texture_cache.MarkFound(image_id);
                 auto* image = &texture_cache.GetImage(image_id);
                 if (auto depth_image_id = texture_cache.GetAssociatedDepth(*image)) {
@@ -2256,6 +2271,7 @@ void Rasterizer::BindTextures(const Shader::Info& stage, const PreparedStage* pr
             auto& desc = image_desc_storage.emplace_back(desc_entry.desc);
             auto& [image_id, _] = image_bindings.emplace_back(VideoCore::ImageId{}, &desc);
             image_binding_entries.push_back(nullptr);
+            binding_proxy_ok.push_back(proxy_candidate);
 
             if (mip_fallback_mode == Shader::MipStorageFallbackMode::ConstantIndex) {
                 ASSERT(num_bindings == 1);
@@ -2320,6 +2336,19 @@ void Rasterizer::BindTextures(const Shader::Info& stage, const PreparedStage* pr
                 image_id, desc, memo_entry ? &memo_entry->view_memo : nullptr, !on_helper);
             const auto binding = image.binding;
 
+            // bbport: a proxied scene image sampled with normalized coordinates reads the proxy:
+            // no resample to the native size (the native image is not touched).
+            if (binding_proxy_ok[binding_index] && !is_storage && !binding.force_general &&
+                !binding.is_target &&
+                !(upscaler->Enabled() && upscaler->RedirectsSampled(image_id))) {
+                if (const auto proxy = scene_targets->SampleProxy(image, desc.view_info)) {
+                    image.usage.texture = 1u;
+                    image_infos.emplace_back(VK_NULL_HANDLE, proxy->view, proxy->layout);
+                    set_ok = false;
+                    ++proxy_samples;
+                    continue;
+                }
+            }
             // The image is either bound as storage in a separate descriptor or bound as render
             // target in feedback loop. Depth images are excluded because they can't be bound as
             // storage and feedback loop doesn't make sense for them
@@ -2486,8 +2515,10 @@ bool Rasterizer::BindTexturesFromSet(const Shader::Info& stage, const PreparedSt
             continue;
         }
         const auto& image = texture_cache.GetImage(entry.id);
+        // A scene proxy may be sampled instead (BindTextures decides, per binding).
         if (image.backing != entry.backing || image.binding.needs_rebind ||
             image.binding.is_target || !texture_cache.IsUpToDate(entry.id) ||
+            (image.scene_proxy && !BbToggle::Disabled(BbToggle::SampleSceneProxies)) ||
             (upscaler->Enabled() && upscaler->RedirectsSampled(entry.id))) {
             ++texture_set_why[2];
             ++texture_set_misses;
@@ -2533,6 +2564,9 @@ RenderState Rasterizer::BeginRendering(const GraphicsPipeline* pipeline) {
                     "other %llu\n",
                     (unsigned long long)texture_set_why[0], (unsigned long long)texture_set_why[1],
                     (unsigned long long)texture_set_why[2], (unsigned long long)texture_set_why[3]);
+        std::printf("  scene proxies sampled directly: %llu bindings\n",
+                    static_cast<unsigned long long>(proxy_samples));
+        proxy_samples = 0;
         texture_set_why = {};
         begin_memo_hits = begin_memo_misses = texture_set_hits = texture_set_misses = 0;
     }

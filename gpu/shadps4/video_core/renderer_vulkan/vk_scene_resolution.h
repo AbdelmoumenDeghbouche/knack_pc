@@ -2,6 +2,7 @@
 #pragma once
 #include <array>
 #include <memory>
+#include <optional>
 #include <functional>
 #include <unordered_map>
 #include "video_core/renderer_vulkan/scene_resolution.h"
@@ -36,6 +37,10 @@ public:
                 vk::PipelineStageFlags2 = vk::PipelineStageFlagBits2::eComputeShader,
                 vk::AccessFlags2 = vk::AccessFlagBits2::eShaderRead);
     void NativeAccess(VideoCore::Image&, vk::AccessFlags2);
+    /// The proxy of `image` for sampling when it holds the current content (else nullopt: the
+    /// native image is current). Transitions only after other use (attachment, copy).
+    std::optional<Target> SampleProxy(const VideoCore::Image& image,
+                                      const VideoCore::ImageViewInfo& info);
     /// Whether NativeAccess has work for this image (a reduced-size proxy exists).
     [[nodiscard]] bool Tracks(u64 image_uid) const {
         return !copying && entries.contains(image_uid);

@@ -38,6 +38,15 @@ public:
         WriteTimestamp(key);
     }
 
+    /// The label of the open segment, for Resume after a nested segment (transfers).
+    [[nodiscard]] u64 Current() const noexcept {
+        return current;
+    }
+    /// Continues the segment of `key` (a label seen before) where a nested one ends.
+    void Resume(u64 key) {
+        WriteTimestamp(key);
+    }
+
     /// Whether `other` is the scheduler it records into (the presenter has its own).
     [[nodiscard]] bool Records(const Scheduler* other) const noexcept {
         return other == &scheduler;
@@ -71,6 +80,7 @@ private:
     };
     std::unordered_map<u64, Total> totals;
     u64 frames = 0;
+    u64 current = 0;
     std::chrono::steady_clock::time_point window = std::chrono::steady_clock::now();
 };
 

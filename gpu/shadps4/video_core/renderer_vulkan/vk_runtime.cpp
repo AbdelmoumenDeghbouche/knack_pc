@@ -7,6 +7,7 @@
 #include "video_core/renderer_vulkan/liverpool_to_vk.h"
 #include "video_core/renderer_vulkan/vk_instance.h"
 #include "video_core/renderer_vulkan/vk_runtime.h"
+#include "video_core/renderer_vulkan/vk_gpu_profiler.h"
 #include "video_core/renderer_vulkan/vk_scene_resolution.h"
 #include "video_core/renderer_vulkan/vk_scheduler.h"
 #include "video_core/texture_cache/blit_helper.h"
@@ -201,10 +202,35 @@ bool Runtime::Transit(VideoCore::Image* image, vk::ImageLayout dst_layout,
     return image_barriers.size() != prev_num_barriers;
 }
 
+Runtime::TransferMark::TransferMark(Runtime& runtime, const char* what,
+                                    const VideoCore::Image& image) {
+    profiler = GpuProfiler::Get();
+    if (!profiler || !profiler->Records(&runtime.scheduler)) {
+        profiler = nullptr;
+        return;
+    }
+    resume = profiler->Current();
+    const auto& info = image.info;
+    const u64 key = (u64(reinterpret_cast<uintptr_t>(what)) << 20) ^
+                    (u64(info.pixel_format) << 40) ^ (u64(info.size.width) << 16) ^
+                    info.size.height ^ 0x7A5Full;
+    profiler->Mark(key, [&] {
+        return fmt::format("{} {} {}x{}", what, vk::to_string(info.pixel_format),
+                           info.size.width, info.size.height);
+    });
+}
+
+Runtime::TransferMark::~TransferMark() {
+    if (profiler && resume) {
+        profiler->Resume(resume);
+    }
+}
+
 void Runtime::UploadImage(VideoCore::Image* dst, const VideoCore::Buffer* src,
                           std::span<const vk::BufferImageCopy> upload_copies) {
     SetBackingSamples(dst, dst->info.num_samples, false);
     scheduler.EndRendering();
+    const TransferMark mark{*this, "image upload", *dst};
 
     bool needs_flush =
         Transit(dst, vk::ImageLayout::eTransferDstOptimal, vk::PipelineStageFlagBits2::eCopy,
@@ -236,6 +262,7 @@ void Runtime::DownloadImage(VideoCore::Image* src, const VideoCore::Buffer* dst,
                             std::span<const vk::BufferImageCopy> download_copies) {
     SetBackingSamples(src, src->info.num_samples);
     scheduler.EndRendering();
+    const TransferMark mark{*this, "image download", *src};
 
     bool needs_flush =
         Transit(src, vk::ImageLayout::eTransferSrcOptimal, vk::PipelineStageFlagBits2::eCopy,

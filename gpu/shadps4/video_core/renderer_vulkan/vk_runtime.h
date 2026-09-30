@@ -15,6 +15,8 @@ class BlitHelper;
 } // namespace VideoCore
 
 namespace Vulkan {
+
+class GpuProfiler;
 class SceneTargets;
 
 class Instance;
@@ -51,6 +53,19 @@ public:
                  vk::PipelineStageFlags2 dst_stage, vk::AccessFlags2 dst_access,
                  std::optional<VideoCore::SubresourceRange> subres_range = {});
 
+    /// BB_GPU_PROFILE: a profiler segment for a transfer of `image` while it lives; the
+    /// segment it interrupted continues afterwards.
+    class TransferMark {
+    public:
+        TransferMark(Runtime& runtime, const char* what, const VideoCore::Image& image);
+        ~TransferMark();
+        TransferMark(const TransferMark&) = delete;
+        TransferMark& operator=(const TransferMark&) = delete;
+
+    private:
+        GpuProfiler* profiler = nullptr;
+        u64 resume = 0;
+    };
     void UploadImage(VideoCore::Image* dst, const VideoCore::Buffer* src,
                      std::span<const vk::BufferImageCopy> upload_copies);
     void DownloadImage(VideoCore::Image* src, const VideoCore::Buffer* dst,

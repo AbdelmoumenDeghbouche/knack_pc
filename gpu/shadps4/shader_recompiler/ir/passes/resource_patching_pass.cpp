@@ -122,6 +122,7 @@ public:
         auto& image = image_resources[index];
         image.is_atomic |= desc.is_atomic;
         image.is_written |= desc.is_written;
+        image.needs_native |= desc.needs_native;
         return index;
     }
 
@@ -226,6 +227,15 @@ void PatchImageSharp(const ResourceDiscovery& resource, Info& info, Descriptors&
     // need fallback (TODO is this 100% true?)
     const bool needs_mip_storage_fallback =
         inst_info.has_lod && is_written && !profile.supports_image_load_store_lod;
+    const auto opcode = inst.GetOpcode();
+    const bool normalized_sample =
+        (opcode == IR::Opcode::ImageSampleRaw || opcode == IR::Opcode::ImageSampleImplicitLod ||
+         opcode == IR::Opcode::ImageSampleExplicitLod ||
+         opcode == IR::Opcode::ImageSampleDrefImplicitLod ||
+         opcode == IR::Opcode::ImageSampleDrefExplicitLod || opcode == IR::Opcode::ImageGather ||
+         opcode == IR::Opcode::ImageGatherDref || opcode == IR::Opcode::ImageGradient ||
+         opcode == IR::Opcode::ImageQueryLod) &&
+        !inst_info.has_offset && !inst_info.is_unnormalized;
     ImageResource image_res = {
         .sharp_fetch = ConstructSharpFetch<AmdGpu::Image>(resource.sharps[0]),
         .is_depth = bool(inst_info.is_depth),
@@ -233,6 +243,7 @@ void PatchImageSharp(const ResourceDiscovery& resource, Info& info, Descriptors&
         .is_array = bool(inst_info.is_array),
         .is_written = is_written,
         .is_r128 = bool(inst_info.is_r128),
+        .needs_native = !normalized_sample,
         .post_op = resource.sharps[0].post_op,
     };
 

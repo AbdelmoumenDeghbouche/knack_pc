@@ -116,6 +116,8 @@ void SceneTargets::Transition(Entry& e, vk::ImageAspectFlags aspect, vk::ImageLa
 void SceneTargets::Copy(Entry& e, VideoCore::Image& original, bool to_native) {
     copying = true;
     scheduler.EndRendering();
+    const Runtime::TransferMark mark{runtime, to_native ? "scene proxy resolve" : "scene proxy fill",
+                                     original};
     const vk::Image src = to_native ? vk::Image(e.image) : original.GetImage();
     const vk::Image dst = to_native ? original.GetImage() : vk::Image(e.image);
     if (ShaderResampled(original)) {
@@ -365,6 +367,26 @@ SceneTargets::Target SceneTargets::Attachment(VideoCore::ImageId id,
     auto attachment_info = info;
     attachment_info.is_storage = true; // include stencil in attachment views
     return {e.image, View(e, original, attachment_info), e.layout, e.image.image_ci.usage};
+}
+std::optional<SceneTargets::Target> SceneTargets::SampleProxy(
+    const VideoCore::Image& image, const VideoCore::ImageViewInfo& info) {
+    if (copying || !image.scene_proxy || image.info.props.is_depth) {
+        return std::nullopt;
+    }
+    const auto it = entries.find(image.image_uid);
+    if (it == entries.end() || !it->second->state.valid) {
+        return std::nullopt;
+    }
+    auto& e = *it->second;
+    constexpr auto layout = vk::ImageLayout::eShaderReadOnlyOptimal;
+    if (e.layout != layout) {
+        Transition(e, image.aspect_mask, layout,
+                   vk::PipelineStageFlagBits2::eVertexShader |
+                       vk::PipelineStageFlagBits2::eFragmentShader |
+                       vk::PipelineStageFlagBits2::eComputeShader,
+                   vk::AccessFlagBits2::eShaderSampledRead);
+    }
+    return Target{e.image, View(e, image, info), e.layout, e.image.image_ci.usage};
 }
 SceneTargets::Target SceneTargets::Read(VideoCore::ImageId id,
                                        const VideoCore::ImageViewInfo& info,
