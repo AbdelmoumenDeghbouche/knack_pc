@@ -338,7 +338,7 @@ void Rasterizer::EliminateFastClear() {
 // DrawPacket, u16 block indices, u32 block words (RegDirty::BlockWords each), then per stage a
 // PacketStage with its user data and flattened user data, then (verification) the full file.
 namespace {
-enum class PacketKind : u32 { Draw, Task, Dispatch, Special };
+enum class PacketKind : u32 { Draw, Task, Dispatch, Special, Indirect, IndirectDispatch };
 struct TaskPacket {
     PacketKind kind;
     u32 size;
@@ -396,9 +396,24 @@ bool Rasterizer::OnStageA() const {
     return std::this_thread::get_id() == liverpool->GetGpuCommandProcessorThread();
 }
 
-void Rasterizer::DrainDrawPipe(u32 reason) {
-    if (draw_pipe && OnStageA()) {
+namespace {
+/// Stage A: cycles waited per drain site (BB_FRAME_STATS), keyed by function name and line.
+std::unordered_map<const char*, std::unordered_map<u32, u64>> drain_sites;
+} // namespace
+
+void Rasterizer::DrainDrawPipe(u32 reason, u32 line, const char* function) {
+    if (!draw_pipe || !OnStageA()) {
+        return;
+    }
+    static const bool stats = std::getenv("BB_FRAME_STATS") != nullptr;
+    if (!stats) {
         draw_pipe->Drain(reason);
+        return;
+    }
+    const u64 before = draw_pipe->drain_cycles;
+    draw_pipe->Drain(reason);
+    if (const u64 waited = draw_pipe->drain_cycles - before) {
+        drain_sites[function][line] += waited;
     }
 }
 
@@ -517,7 +532,8 @@ void Rasterizer::CollectRingBindings(const Shader::Info& stage, const PreparedDr
 }
 
 void Rasterizer::PostDraw(const Pipeline* pipeline, const PreparedDraw* used_prepared,
-                          bool is_indexed, u32 index_offset, const AmdGpu::ComputeProgram* cs) {
+                          bool is_indexed, u32 index_offset, const AmdGpu::ComputeProgram* cs,
+                          const IndirectDraw* indirect) {
     auto& dirty = liverpool->pipe_dirty;
     if (!pipe_synced) {
         // Stage B has not run yet: its register copy starts as this one.
@@ -557,6 +573,9 @@ void Rasterizer::PostDraw(const Pipeline* pipeline, const PreparedDraw* used_pre
     if (cs) {
         size += AlignPacket(sizeof(AmdGpu::ComputeProgram));
     }
+    if (indirect) {
+        size += AlignPacket(sizeof(IndirectDraw));
+    }
     const u32 interval = VerifyInterval();
     const bool verify = interval && (draw_pipe->packets % interval) == 0;
     if (verify) {
@@ -566,7 +585,10 @@ void Rasterizer::PostDraw(const Pipeline* pipeline, const PreparedDraw* used_pre
     u8* out = draw_pipe->Begin(size);
     u8* const start = out;
     auto& packet = *reinterpret_cast<DrawPacket*>(out);
-    packet.kind = cs ? PacketKind::Dispatch : pipeline ? PacketKind::Draw : PacketKind::Special;
+    packet.kind = cs         ? (indirect ? PacketKind::IndirectDispatch : PacketKind::Dispatch)
+                  : indirect ? PacketKind::Indirect
+                  : pipeline ? PacketKind::Draw
+                             : PacketKind::Special;
     packet.pipeline = pipeline;
     packet.prepared = used_prepared;
     packet.index_offset = index_offset;
@@ -612,6 +634,10 @@ void Rasterizer::PostDraw(const Pipeline* pipeline, const PreparedDraw* used_pre
     if (cs) {
         std::memcpy(out, cs, sizeof(AmdGpu::ComputeProgram));
         out += AlignPacket(sizeof(AmdGpu::ComputeProgram));
+    }
+    if (indirect) {
+        std::memcpy(out, indirect, sizeof(IndirectDraw));
+        out += AlignPacket(sizeof(IndirectDraw));
     }
     if (verify) {
         std::memcpy(out, &liverpool->regs, sizeof(AmdGpu::Regs));
@@ -683,9 +709,14 @@ void Rasterizer::RunDrawPacket(void* context, const u8* data, u32 size) {
     Shader::Info::num_ud_snapshots = packet.num_stages;
     self.num_ring_stages = packet.num_stages;
     const AmdGpu::ComputeProgram* cs = nullptr;
-    if (packet.kind == PacketKind::Dispatch) {
+    if (packet.kind == PacketKind::Dispatch || packet.kind == PacketKind::IndirectDispatch) {
         cs = reinterpret_cast<const AmdGpu::ComputeProgram*>(in);
         in += AlignPacket(sizeof(AmdGpu::ComputeProgram));
+    }
+    const IndirectDraw* indirect = nullptr;
+    if (packet.kind == PacketKind::Indirect || packet.kind == PacketKind::IndirectDispatch) {
+        indirect = reinterpret_cast<const IndirectDraw*>(in);
+        in += AlignPacket(sizeof(IndirectDraw));
     }
     if (packet.verify) {
         // The resource tables the GPU thread walked must read the same now: else a write
@@ -755,8 +786,16 @@ void Rasterizer::RunDrawPacket(void* context, const u8* data, u32 size) {
         self.FilterDraw();
     } else if (cs) {
         stage_cs = cs;
-        self.DispatchRecord(static_cast<const ComputePipeline*>(packet.pipeline));
+        const auto* pipeline = static_cast<const ComputePipeline*>(packet.pipeline);
+        if (indirect) {
+            self.DispatchIndirectRecord(pipeline, indirect->args, indirect->stride);
+        } else {
+            self.DispatchRecord(pipeline);
+        }
         stage_cs = nullptr;
+    } else if (indirect) {
+        self.DrawIndirectRecord(static_cast<const GraphicsPipeline*>(packet.pipeline),
+                                packet.is_indexed, *indirect);
     } else {
         self.DrawRecord(static_cast<const GraphicsPipeline*>(packet.pipeline), packet.prepared,
                         packet.is_indexed, packet.index_offset);
@@ -795,15 +834,27 @@ void Rasterizer::PrintPipeStats() {
         if (const u64 n = draw_pipe->drains_by_reason[r]) {
             static constexpr const char* names[] = {"ConstRam", "commands", "compute",
                                                     "submission end", "draw", "rasterizer"};
+            const double share = 100.0 * draw_pipe->cycles_by_reason[r] / cycles;
+            draw_pipe->cycles_by_reason[r] = 0;
             if (r < 256) {
-                std::printf(" %s=%.0f", magic_enum::enum_name(AmdGpu::PM4ItOpcode(r)).data(),
-                            n / seconds);
+                std::printf(" %s=%.0f (%.1f%%)",
+                            magic_enum::enum_name(AmdGpu::PM4ItOpcode(r)).data(), n / seconds,
+                            share);
             } else {
-                std::printf(" %s=%.0f", names[r - 256], n / seconds);
+                std::printf(" %s=%.0f (%.1f%%)", names[r - 256], n / seconds, share);
+            }
+        }
+    }
+    std::printf("\n  stage A waits over 0.5%%:");
+    for (const auto& [function, lines] : drain_sites) {
+        for (const auto& [line, waited] : lines) {
+            if (waited * 200 > cycles) {
+                std::printf(" %s:%u %.1f%%", function, line, 100.0 * waited / cycles);
             }
         }
     }
     std::printf("\n");
+    drain_sites.clear();
     draw_pipe->drains_by_reason = {};
     window = now;
     last_tsc = tsc;
@@ -1070,13 +1121,17 @@ void Rasterizer::DrawRecord(const GraphicsPipeline* pipeline, const PreparedDraw
 void Rasterizer::DrawIndirect(bool is_indexed, VAddr arg_address, u32 offset, u32 stride,
                               u32 max_count, VAddr count_address, u16 vertex_sgpr_offset,
                               u16 instance_sgpr_offset) {
-    DrainDrawPipe();
     RENDERER_TRACE;
-
-    scheduler.PopPendingOperations();
-
-    if (!FilterDraw()) {
-        return;
+    // bbport: like direct draws, handed to the recording thread after the pipeline selection
+    // (else the GPU thread waited here for a whole frame of queued draws).
+    const bool pipelined = UseDrawPipe() && FilterDrawPasses() &&
+                           !BbToggle::Disabled(BbToggle::PipelinedIndirectDraws);
+    if (!pipelined) {
+        DrainDrawPipe();
+        scheduler.PopPendingOperations();
+        if (!FilterDraw()) {
+            return;
+        }
     }
 
     const DrawIndirectParams params = {
@@ -1087,6 +1142,23 @@ void Rasterizer::DrawIndirect(bool is_indexed, VAddr arg_address, u32 offset, u3
     if (!pipeline) {
         return;
     }
+    const IndirectDraw indirect = {arg_address + offset, count_address, stride, max_count};
+    if (pipelined) {
+        PostDraw(pipeline, nullptr, is_indexed, 0, nullptr, &indirect);
+        return;
+    }
+    DrawIndirectRecord(pipeline, is_indexed, indirect);
+}
+
+void Rasterizer::DrawIndirectRecord(const GraphicsPipeline* pipeline, bool is_indexed,
+                                    const IndirectDraw& indirect) {
+    if (DrawPipe::OnStageB()) {
+        FrameCapture::Poll();
+        scheduler.PopPendingOperations();
+    }
+    const VAddr count_address = indirect.count;
+    const u32 stride = indirect.stride;
+    const u32 max_count = indirect.max_count;
 
     // Indirect arguments may be GPU-written: leave these draws on camera fallback.
     motion_draw = false;
@@ -1109,7 +1181,7 @@ void Rasterizer::DrawIndirect(bool is_indexed, VAddr arg_address, u32 offset, u3
     }
 
     const auto [buffer, base] =
-        buffer_cache.ObtainBuffer(arg_address + offset, stride * max_count, false);
+        buffer_cache.ObtainBuffer(indirect.args, stride * max_count, false);
     needs_barrier |= runtime.IsBufferAccessed(buffer, base, stride * max_count);
 
     const VideoCore::Buffer* count_buffer;
@@ -1233,16 +1305,28 @@ void Rasterizer::DispatchRecord(const ComputePipeline* pipeline) {
 }
 
 void Rasterizer::DispatchIndirect(VAddr address, u32 offset, u32 size) {
-    DrainDrawPipe();
     RENDERER_TRACE;
-
-    scheduler.PopPendingOperations();
-
-    const auto& cs_program = CsRegs();
+    // bbport: handed to the recording thread like direct dispatches.
+    const bool pipelined = UseDrawPipe() && !BbToggle::Disabled(BbToggle::PipelinedIndirectDraws);
+    if (!pipelined) {
+        DrainDrawPipe();
+    }
     const ComputePipeline* pipeline = pipeline_cache.GetComputePipeline();
     if (!pipeline) {
         return;
     }
+    if (pipelined) {
+        const IndirectDraw indirect = {address + offset, 0, size, 1};
+        PostDraw(pipeline, nullptr, false, 0, &CsRegs(), &indirect);
+        return;
+    }
+    DispatchIndirectRecord(pipeline, address + offset, size);
+}
+
+void Rasterizer::DispatchIndirectRecord(const ComputePipeline* pipeline, VAddr address,
+                                        u32 size) {
+    scheduler.PopPendingOperations();
+    const u32 offset = 0;
 
     if (!BindResources(pipeline)) {
         return;

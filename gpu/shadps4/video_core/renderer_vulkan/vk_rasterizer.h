@@ -94,7 +94,9 @@ public:
 
     /// bbport: GPU command thread: waits until the draw recording thread has recorded every
     /// draw handed to it (vk_draw_pipe.h); no-op on other threads.
-    void DrainDrawPipe(u32 reason = DrawPipe::ReasonRasterizer);
+    /// `line`/`function`: the caller, for the statistics of where stage A waits.
+    void DrainDrawPipe(u32 reason = DrawPipe::ReasonRasterizer, u32 line = __builtin_LINE(),
+                       const char* function = __builtin_FUNCTION());
     /// Runs `task(rasterizer, copy of data)` in order with the draws: on the draw recording
     /// thread while the draw pipeline is in use (PipelinedTasks), else here after a drain.
     using OrderedTask = void (*)(Rasterizer& rasterizer, const u8* data);
@@ -208,9 +210,22 @@ private:
     static bool DrawPipeWanted();
     bool UseDrawPipe() const;
     bool OnStageA() const;
+    /// Arguments of an indirect draw: `args` holds `max_count` commands `stride` apart.
+    struct IndirectDraw {
+        VAddr args;
+        VAddr count; ///< the draw count, or 0 for max_count draws
+        u32 stride;
+        u32 max_count;
+    };
+    /// Everything of an indirect draw after the pipeline selection (GPU thread or stage B).
+    void DrawIndirectRecord(const GraphicsPipeline* pipeline, bool is_indexed,
+                            const IndirectDraw& indirect);
+    /// Everything of an indirect dispatch after the pipeline selection.
+    void DispatchIndirectRecord(const ComputePipeline* pipeline, VAddr args, u32 size);
     /// Hands a draw (or, with `cs`, a dispatch) to the recording thread.
     void PostDraw(const Pipeline* pipeline, const PreparedDraw* used_prepared, bool is_indexed,
-                  u32 index_offset, const AmdGpu::ComputeProgram* cs = nullptr);
+                  u32 index_offset, const AmdGpu::ComputeProgram* cs = nullptr,
+                  const IndirectDraw* indirect = nullptr);
     /// Everything of a direct dispatch after the pipeline selection (GPU thread or stage B).
     void DispatchRecord(const ComputePipeline* pipeline);
     /// The compute registers of the dispatch being recorded.

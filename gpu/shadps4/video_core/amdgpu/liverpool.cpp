@@ -201,7 +201,13 @@ bool PipelinedOpcode(PM4ItOpcode opcode) {
     case PM4ItOpcode::EventWriteEos:
     case PM4ItOpcode::WaitRegMem:     // waits for the recording thread only while unmet
     case PM4ItOpcode::DispatchDirect: // handed over like draws (PipelinedDispatch)
-    case PM4ItOpcode::WriteData:      // run in order on the recording thread (RunInOrder)
+    case PM4ItOpcode::DrawIndirect:   // likewise (PipelinedIndirectDraws; else drains itself)
+    case PM4ItOpcode::DrawIndirectMulti:
+    case PM4ItOpcode::DrawIndexIndirect:
+    case PM4ItOpcode::DrawIndexIndirectMulti:
+    case PM4ItOpcode::DrawIndexIndirectCountMulti:
+    case PM4ItOpcode::DispatchIndirect:
+    case PM4ItOpcode::WriteData:     // run in order on the recording thread (RunInOrder)
     case PM4ItOpcode::DmaData:
         return true;
     default:

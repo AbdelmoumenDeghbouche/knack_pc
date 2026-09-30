@@ -47,6 +47,7 @@ enum : std::uint64_t {
     MultiCopyShader = 1ull << 43,
     RenderStateMemo = 1ull << 44,
     TextureSetMemo = 1ull << 45,
+    PipelinedIndirectDraws = 1ull << 46,
     UpdateImageFastPath = 1u << 30,
     // Bits 20-29 are used as raw debug toggles by the camera/object motion and the upscaler.
 };

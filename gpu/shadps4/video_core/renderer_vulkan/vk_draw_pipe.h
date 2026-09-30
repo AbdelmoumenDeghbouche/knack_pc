@@ -96,6 +96,7 @@ public:
         NumReasons,
     };
     std::array<u64, NumReasons> drains_by_reason{};
+    std::array<u64, NumReasons> cycles_by_reason{};
 
     /// Stage A: waits until stage B has run every committed packet.
     void Drain(u32 reason = ReasonRasterizer) {
@@ -103,7 +104,8 @@ public:
             return;
         }
         ++drains;
-        ++drains_by_reason[reason < NumReasons ? reason : ReasonRasterizer];
+        const u32 slot = reason < NumReasons ? reason : ReasonRasterizer;
+        ++drains_by_reason[slot];
         const u64 start = __rdtsc();
         for (u32 spins = 0; consumed.load(std::memory_order_acquire) != head; ++spins) {
             if (spins < 4096) {
@@ -112,7 +114,9 @@ public:
                 std::this_thread::yield();
             }
         }
-        drain_cycles += __rdtsc() - start;
+        const u64 waited = __rdtsc() - start;
+        drain_cycles += waited;
+        cycles_by_reason[slot] += waited;
     }
 
     /// Stage A: position after the last committed packet; Reached(position) once B ran it.
