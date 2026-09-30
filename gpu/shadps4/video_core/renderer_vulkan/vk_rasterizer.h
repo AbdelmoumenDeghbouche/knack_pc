@@ -464,7 +464,8 @@ private:
         VAddr end;
         u64 position;
     };
-    std::deque<PendingWrite> pending_writes;
+    std::vector<PendingWrite> pending_writes;
+    VAddr pending_min = ~VAddr{0}, pending_max = 0; ///< bounds of pending_writes
     bool PendingWriteOverlaps(VAddr address, u64 size);
     /// Stage B: the ring bindings of the stages of the packet being recorded.
     struct RingStage {

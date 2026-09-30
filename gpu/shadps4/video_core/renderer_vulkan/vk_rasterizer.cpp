@@ -417,21 +417,43 @@ bool Rasterizer::IsGpuSideThreadId(u32 tid) const {
 }
 
 void Rasterizer::NotePendingGpuWrite(VAddr address, u64 size) {
-    if (draw_pipe && size) {
-        pending_writes.push_back({address, address + size, draw_pipe->Head()});
+    if (!draw_pipe || !size) {
+        return;
     }
+    // Draws write the same buffers over and over: an entry for the range only moves on.
+    const u64 position = draw_pipe->Head();
+    const VAddr end = address + size;
+    for (auto& write : pending_writes) {
+        if (address <= write.end && write.begin <= end) {
+            write.begin = std::min(write.begin, address);
+            write.end = std::max(write.end, end);
+            write.position = position;
+            pending_min = std::min(pending_min, address);
+            pending_max = std::max(pending_max, end);
+            return;
+        }
+    }
+    pending_writes.push_back({address, end, position});
+    pending_min = std::min(pending_min, address);
+    pending_max = std::max(pending_max, end);
 }
 
 bool Rasterizer::PendingWriteOverlaps(VAddr address, u64 size) {
-    while (!pending_writes.empty() && draw_pipe->Reached(pending_writes.front().position)) {
-        pending_writes.pop_front();
+    if (pending_writes.empty() || address >= pending_max || address + size <= pending_min) {
+        return false;
     }
+    // Entries whose writes the recording thread has done; the bounds shrink with them.
+    std::erase_if(pending_writes,
+                  [&](const PendingWrite& write) { return draw_pipe->Reached(write.position); });
+    pending_min = ~VAddr{0};
+    pending_max = 0;
+    bool overlaps = false;
     for (const auto& write : pending_writes) {
-        if (address < write.end && write.begin < address + size) {
-            return true;
-        }
+        pending_min = std::min(pending_min, write.begin);
+        pending_max = std::max(pending_max, write.end);
+        overlaps |= address < write.end && write.begin < address + size;
     }
-    return false;
+    return overlaps;
 }
 
 void Rasterizer::CollectRingBindings(const Shader::Info& stage, const PreparedDraw* prepared,
