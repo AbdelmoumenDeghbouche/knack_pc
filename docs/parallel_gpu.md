@@ -545,3 +545,24 @@ G-buffer target; two 960x540 targets): 8 dispatches, and each needs the image do
 the buffer, the proxy resolved and the destination image uploaded again. Recognizing copies
 whose source is an image and turning them into image copies (or a proxy-sized copy) would remove
 most of that. Skipping the dispatches blacks out the scene, so the copies are needed.
+
+### Open issue: guest heap corruption with the draw pipeline (2026-09-30)
+
+After ~2-15 min at the level (camera turning, nobody moving) the guest faults at guest offset
+`0x263b8e7`: a free-list pop in a guest allocator reads the next pointer `0x0000005300000000`
+from a freed block, so something wrote into memory the game had already freed. Soak runs of
+15-20 min: with the draw pipeline 3 of 4 crashed (at 863, 844 s and one earlier), with
+`BB_DRAW_PIPE=0` 0 of 2. With `BB_WRITE_LOG=1` (slower downloads) one run survived 20 min.
+
+Ruled out / done so far:
+- guest-visible writes overtaking deferred fences (now ordered: `WaitDeferredSignals`, toggle
+  1 << 49) — the crash remains;
+- the scene-proxy and texture-set changes: the crash also happened before them.
+
+Candidates: late writes into guest memory that the pipeline delays further — asynchronous image
+downloads (`TextureCache::DownloadImageMemory`, deferred until the GPU finishes, whole image),
+buffer downloads on page faults, and fault handling when the GPU command thread (stage A), which
+now reads guest memory for the constant ring, is not treated as a GPU-side thread
+(`IsGpuSideThreadId` accepts only stage B). Next: a run with `BB_WRITE_LOG=1` that crashes
+prints which logged write landed near the corrupted block; bisect the pipeline toggles
+(38 tasks, 39 pending fence waits, 41 recorder fences, 42 memory writes, 36 constant ring).
