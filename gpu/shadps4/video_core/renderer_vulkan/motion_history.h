@@ -7,6 +7,8 @@
 #include <limits>
 #include <span>
 #include <unordered_map>
+#include <utility>
+#include <vector>
 
 namespace Vulkan::Motion {
 
@@ -111,6 +113,96 @@ private:
     std::unordered_map<Key, Entry, KeyHash> entries;
 };
 
+// Open-addressing map for the per-frame tables of History: entries are keyed per draw and
+// the tables are cleared every frame. std::unordered_map allocated a node per insert (four
+// per draw) and freed them all at the frame end; here clear() only starts a new generation.
+template <class Key, class Value, class Hash>
+class FlatMap {
+public:
+    FlatMap() : slots(64) {}
+
+    Value& operator[](const Key& key) {
+        return Insert(key).first->value;
+    }
+    /// Inserts `value` when `key` is absent (like std::unordered_map::emplace).
+    void emplace(const Key& key, const Value& value) {
+        const auto [slot, inserted] = Insert(key);
+        if (inserted) {
+            slot->value = value;
+        }
+    }
+    const Value* find(const Key& key) const {
+        const size_t mask = slots.size() - 1;
+        for (size_t i = Start(key) & mask;; i = (i + 1) & mask) {
+            const Slot& slot = slots[i];
+            if (slot.generation != generation) {
+                return nullptr;
+            }
+            if (slot.key == key) {
+                return &slot.value;
+            }
+        }
+    }
+    void clear() {
+        size = 0;
+        if (++generation == 0) { // wrapped: stale slots could look current
+            for (auto& slot : slots) {
+                slot.generation = 0;
+            }
+            generation = 1;
+        }
+    }
+    void swap(FlatMap& other) noexcept {
+        slots.swap(other.slots);
+        std::swap(size, other.size);
+        std::swap(generation, other.generation);
+    }
+
+private:
+    struct Slot {
+        Key key{};
+        Value value{};
+        uint32_t generation = 0;
+    };
+    static size_t Start(const Key& key) {
+        const uint64_t h = uint64_t(Hash{}(key)) * 0x9e3779b97f4a7c15ULL;
+        return size_t(h ^ (h >> 29));
+    }
+    std::pair<Slot*, bool> Insert(const Key& key) {
+        if ((size + 1) * 2 > slots.size()) {
+            Grow();
+        }
+        const size_t mask = slots.size() - 1;
+        for (size_t i = Start(key) & mask;; i = (i + 1) & mask) {
+            Slot& slot = slots[i];
+            if (slot.generation != generation) {
+                slot = {key, Value{}, generation};
+                ++size;
+                return {&slot, true};
+            }
+            if (slot.key == key) {
+                return {&slot, false};
+            }
+        }
+    }
+    void Grow() {
+        std::vector<Slot> old(slots.size() * 2);
+        old.swap(slots);
+        const uint32_t live = generation;
+        generation = 1;
+        size = 0;
+        for (const auto& slot : old) {
+            if (slot.generation == live) {
+                *Insert(slot.key).first = {slot.key, slot.value, generation};
+            }
+        }
+    }
+
+    std::vector<Slot> slots;
+    size_t size = 0;
+    uint32_t generation = 1;
+};
+
 inline uint32_t JitterPhases(uint32_t render_width, uint32_t output_width) {
     if (!render_width || !output_width) {
         return 8;
@@ -151,8 +243,8 @@ public:
     bool Moving(GateKey key, uint64_t palette) {
         key.occurrence = 0;
         key.occurrence = gate_occurrences[key]++;
-        const auto prev = gate_previous.find(key);
-        const bool moving = prev != gate_previous.end() && prev->second != palette;
+        const auto* prev = gate_previous.find(key);
+        const bool moving = prev && *prev != palette;
         gate_current.emplace(key, palette);
         stats.still += moving ? 0 : 1;
         return moving;
@@ -179,11 +271,11 @@ public:
             ++stats.invalid;
             return {};
         }
-        const auto prev = previous.find(key);
+        const auto* prev = previous.find(key);
         Allocation result{0, 0, draw.vertices.count, draw.instances,
                           draw.vertices.first, draw.first_instance};
-        if (prev != previous.end()) {
-            result.load = prev->second;
+        if (prev) {
+            result.load = *prev;
             ++stats.loaded;
         } else {
             ++stats.unmatched;
@@ -220,7 +312,7 @@ private:
     };
     uint32_t capacity{}, used{};
     uint64_t frame{};
-    std::unordered_map<Key, uint32_t, Hash> previous, current, occurrences;
+    FlatMap<Key, uint32_t, Hash> previous, current, occurrences;
     struct GateHash {
         size_t operator()(const GateKey& key) const {
             uint64_t h = 0;
@@ -230,8 +322,8 @@ private:
             return size_t(h);
         }
     };
-    std::unordered_map<GateKey, uint64_t, GateHash> gate_previous, gate_current;
-    std::unordered_map<GateKey, uint32_t, GateHash> gate_occurrences;
+    FlatMap<GateKey, uint64_t, GateHash> gate_previous, gate_current;
+    FlatMap<GateKey, uint32_t, GateHash> gate_occurrences;
 };
 
 } // namespace Vulkan::Motion
