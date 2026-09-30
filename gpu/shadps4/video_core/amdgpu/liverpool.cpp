@@ -167,6 +167,15 @@ void Liverpool::Process(std::stop_token stoken) {
             submit_done = false;
         }
 
+        // bbport: the guest takes GPU idle (sceGnmSubmitDone) as its work being done and frees
+        // the objects that hold its fence labels. The labels must be written before: the draw
+        // recording thread and the fences it deferred to the Vulkan recording thread
+        // (RecorderFences). Else a late fence write lands in freed memory (a corrupted guest
+        // heap free list after minutes of play).
+        if (rasterizer) {
+            rasterizer->DrainDrawPipe(Vulkan::DrawPipe::ReasonSubmissionEnd);
+            rasterizer->WaitDeferredSignals();
+        }
         Platform::IrqC::Instance()->Signal(Platform::InterruptId::GpuIdle);
     }
 }
@@ -334,7 +343,10 @@ void Liverpool::NotePendingFences(const auto& event) {
     while (!pending_fences.empty() && rasterizer->DrawPipeReached(pending_fences.front().position)) {
         pending_fences.pop_front();
     }
+    constexpr bool is_eop = requires { event.SignalFence([](void*, u64, u32) {}, [] {}); };
     const auto note = [&](void* address, u64 data, u32 num_bytes) {
+        BbWriteLog::NoteIntent(reinterpret_cast<u64>(address), &data, num_bytes,
+                               is_eop ? BbWriteLog::FenceIntent : BbWriteLog::EosIntent);
         pending_fences.push_back({reinterpret_cast<VAddr>(address), data, num_bytes, position});
         rasterizer->NotePendingGpuWrite(reinterpret_cast<VAddr>(address), num_bytes);
     };
@@ -730,6 +742,8 @@ Liverpool::Task Liverpool::ProcessGraphics(std::span<const u32> dcb, std::span<c
                 !(opcode == PM4ItOpcode::DmaData &&
                   reinterpret_cast<const PM4DmaData*>(header)->dst_addr_lo == 0x3022C)) {
                 rasterizer->DrainDrawPipe(static_cast<u32>(opcode));
+                // They may write guest memory: not before fences deferred earlier.
+                rasterizer->WaitDeferredSignals();
             }
             switch (opcode) {
             case PM4ItOpcode::Nop: {
@@ -1137,6 +1151,9 @@ Liverpool::Task Liverpool::ProcessGraphics(std::span<const u32> dcb, std::span<c
                 ASSERT(!write_data->wr_one_addr.Value());
                 if (rasterizer) {
                     // In order with the draws (on the draw recording thread when in use).
+                    BbWriteLog::NoteIntent(write_data->Address<u64>(), write_data->data,
+                                           (count - 2) * sizeof(u32),
+                                           BbWriteLog::WriteDataIntent);
                     if (rasterizer->RunInOrder(&RunWriteData, header, (count + 1) * sizeof(u32),
                                                BbToggle::PipelinedMemoryWrites)) {
                         NotePendingWrite(*write_data, (count - 2) * sizeof(u32));
@@ -1523,9 +1540,11 @@ Liverpool::Task Liverpool::ProcessCompute(std::span<const u32> acb, u32 vqid) {
             break;
         }
         case PM4ItOpcode::WriteData: {
-            // bbport: copies deferred to the recording thread precede writes the guest sees.
+            // bbport: copies deferred to the recording thread precede writes the guest sees, and
+            // so do graphics fences deferred to it (the pipe was drained before this packet).
             if (rasterizer) {
                 rasterizer->WaitHostCopies();
+                rasterizer->WaitDeferredSignals();
             }
             const auto* write_data = reinterpret_cast<const PM4CmdWriteData*>(header);
             ASSERT(write_data->dst_sel.Value() == 2 || write_data->dst_sel.Value() == 5);
@@ -1558,9 +1577,11 @@ Liverpool::Task Liverpool::ProcessCompute(std::span<const u32> acb, u32 vqid) {
             break;
         }
         case PM4ItOpcode::ReleaseMem: {
-            // bbport: copies deferred to the recording thread precede writes the guest sees.
+            // bbport: copies deferred to the recording thread precede writes the guest sees, and
+            // so do graphics fences deferred to it (the pipe was drained before this packet).
             if (rasterizer) {
                 rasterizer->WaitHostCopies();
+                rasterizer->WaitDeferredSignals();
             }
             const auto* release_mem = reinterpret_cast<const PM4CmdReleaseMem*>(header);
             if (rasterizer) {

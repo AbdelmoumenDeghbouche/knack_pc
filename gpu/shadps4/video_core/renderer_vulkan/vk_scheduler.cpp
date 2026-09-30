@@ -179,7 +179,7 @@ void Scheduler::SignalAfterHostCopies(std::function<void()> signal) {
         return;
     }
     BbCopy::FlushBatch();
-    ++deferred_signals_issued;
+    deferred_signals_issued.fetch_add(1, std::memory_order_relaxed);
     Record([signal = std::move(signal), done = deferred_signals_done](vk::CommandBuffer) mutable {
         BbCopy::AfterCopies([signal = std::move(signal), done = std::move(done)] {
             signal();
@@ -190,13 +190,14 @@ void Scheduler::SignalAfterHostCopies(std::function<void()> signal) {
 }
 
 void Scheduler::WaitDeferredSignals() {
-    if (deferred_signals_done->load(std::memory_order_acquire) >= deferred_signals_issued ||
+    const u64 issued = deferred_signals_issued.load(std::memory_order_relaxed);
+    if (deferred_signals_done->load(std::memory_order_acquire) >= issued ||
         BbToggle::Disabled(BbToggle::OrderedGuestWrites)) {
         return;
     }
     BbStats::WaitTimer timer{BbStats::host_copies_wait_ns};
     KickRecording(true);
-    while (deferred_signals_done->load(std::memory_order_acquire) < deferred_signals_issued) {
+    while (deferred_signals_done->load(std::memory_order_acquire) < issued) {
         // Helps the copy threads the signals wait for.
         BbCopy::WaitAsync();
         std::this_thread::yield();

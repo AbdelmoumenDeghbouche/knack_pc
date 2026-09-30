@@ -16,7 +16,7 @@ struct Entry {
     std::uint64_t address, size, first, tsc;
     std::uint32_t source, tid;
 };
-constexpr std::size_t Size = 1 << 16;
+constexpr std::size_t Size = 1 << 20;
 std::array<Entry, Size> ring;
 std::atomic<std::uint64_t> head{0};
 // Writes that contained the suspicious qword (see Note), with the exact address.
@@ -29,21 +29,42 @@ void Push(std::array<Entry, Size>& r, std::atomic<std::uint64_t>& h, const Entry
 }
 } // namespace
 
-bool Enabled() {
-    static const bool enabled = [] {
+void Record(std::uint64_t address, const void* data, std::uint64_t size, Source source);
+
+int Mode() {
+    static const int mode = [] {
         const char* env = std::getenv("BB_WRITE_LOG");
-        return env && env[0] == '1';
+        return env ? std::atoi(env) : 0;
     }();
-    return enabled;
+    return mode;
+}
+
+bool Enabled() {
+    return Mode() == 1;
+}
+
+void NoteIntent(std::uint64_t address, const void* data, std::uint64_t size, Source source) {
+    if (Mode() == 2) {
+        Record(address, data, size, source);
+    }
 }
 
 void Note(std::uint64_t address, const void* data, std::uint64_t size, Source source) {
-    if (!Enabled()) {
-        return;
+    if (Enabled()) {
+        Record(address, data, size, source);
     }
-    Entry e{address, size, 0, __rdtsc(), source, static_cast<std::uint32_t>(gettid())};
+}
+
+void Record(std::uint64_t address, const void* data, std::uint64_t size, Source source) {
+    static thread_local const std::uint32_t tid = static_cast<std::uint32_t>(gettid());
+    Entry e{address, size, 0, __rdtsc(), source, tid};
     std::memcpy(&e.first, data, size < 8 ? size : 8);
     Push(ring, head, e);
+    // Only small writes are scanned: scanning downloads of megabytes delays them enough to hide
+    // the race this log is for.
+    if (size > 64) {
+        return;
+    }
     const auto* bytes = static_cast<const unsigned char*>(data);
     for (std::uint64_t at = (8 - (address & 7)) & 7; at + 8 <= size; at += 8) {
         std::uint64_t v;
@@ -60,7 +81,7 @@ void Note(std::uint64_t address, const void* data, std::uint64_t size, Source so
 
 extern "C" void bbgpu_dump_guest_writes(void* ucontext) {
     using namespace BbWriteLog;
-    if (!Enabled()) {
+    if (Mode() == 0) {
         return;
     }
     const auto* uc = static_cast<const ucontext_t*>(ucontext);
@@ -73,18 +94,46 @@ extern "C" void bbgpu_dump_guest_writes(void* ucontext) {
     for (int i = 0; i < 8; ++i) {
         std::fprintf(stderr, "Write log: %s=%#llx\n", names[i], (unsigned long long)regs[i]);
     }
-    const char* sources[] = {"backing", "WriteData", "fence"};
+    const char* sources[] = {"backing",      "WriteData",           "fence",
+                             "EOP (decoded)", "WriteData (decoded)", "EOS (decoded)"};
     const std::uint64_t now = __rdtsc();
     const auto print = [&](const Entry& e, const char* what) {
         std::fprintf(stderr,
                      "Write log: %s %s %#llx +%llu first %#llx tid %u, %.3f s before the fault\n",
-                     what, e.source < 3 ? sources[e.source] : "?", (unsigned long long)e.address,
+                     what, e.source < 6 ? sources[e.source] : "?", (unsigned long long)e.address,
                      (unsigned long long)e.size, (unsigned long long)e.first, e.tid,
                      double(now - e.tsc) / 3.0e9);
     };
     const std::uint64_t nh = hits_head.load();
     for (std::uint64_t i = nh > hits.size() ? nh - hits.size() : 0; i < nh; ++i) {
         print(hits[i % hits.size()], "pattern");
+    }
+    // The block the guest read (rax) and all logged writes into it or its neighbours.
+    const std::uint64_t block = regs[0];
+    for (std::uint64_t at = block - 0x30; at < block + 0x60; at += 8) {
+        std::uint64_t value = 0;
+        std::memcpy(&value, reinterpret_cast<const void*>(at), 8);
+        std::fprintf(stderr, "Write log: [%#llx] = %#llx\n", (unsigned long long)at,
+                     (unsigned long long)value);
+    }
+    {
+        const std::uint64_t n = head.load();
+        int shown = 0;
+        for (std::uint64_t i = n; i-- > (n > Size ? n - Size : 0) && shown < 200;) {
+            const Entry& e = ring[i % Size];
+            if (e.address + e.size > block - 0x30 && e.address < block + 0x60) {
+                print(e, "in block");
+                ++shown;
+            }
+        }
+        shown = 0;
+        for (std::uint64_t i = n; i-- > (n > Size ? n - Size : 0) && shown < 40;) {
+            const Entry& e = ring[i % Size];
+            if ((e.first & 0xffffffffull) == 0x53 || (e.first >> 32) == 0x53) {
+                print(e, "value 0x53");
+                ++shown;
+            }
+        }
     }
     // Writes that cover the chunk header the guest read (rax..rax+0x40) or the registers.
     const std::uint64_t n = head.load();
@@ -93,7 +142,7 @@ extern "C" void bbgpu_dump_guest_writes(void* ucontext) {
         const Entry& e = ring[i % Size];
         bool near = false;
         for (const auto r : regs) {
-            near |= r + 0x40 > e.address && r < e.address + e.size + 0x40;
+            near |= r + 0x1000 > e.address && r < e.address + e.size + 0x1000;
         }
         if (near) {
             print(e, "near");
