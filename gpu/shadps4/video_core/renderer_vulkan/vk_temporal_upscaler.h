@@ -173,6 +173,7 @@ private:
     u64 trigger_hash = 0x9a9cf8a9;
     VideoCore::ImageId scene_color{};
     bool done_this_frame = false;
+    u32 preset_file_frames = 0; ///< BB_PRESET_FILE polling
     bool snapshot_taken = false;
     bool opaque_valid = false;
     bool mask_ready = false;

@@ -151,6 +151,19 @@ bool TemporalUpscaler::RasterScaling() const {
 }
 
 bool TemporalUpscaler::OnFrameStart() {
+    // bbport: BB_PRESET_FILE=<file> holding a preset number, read about once a second: switches
+    // the preset like the menu does (scripted tests of live preset changes).
+    static const char* preset_file = std::getenv("BB_PRESET_FILE");
+    if (preset_file && ++preset_file_frames % 64 == 0) {
+        if (FILE* f = std::fopen(preset_file, "r")) {
+            int value = 0;
+            if (std::fscanf(f, "%d", &value) == 1 && value >= 0 &&
+                value < BbSettings::PresetCount) {
+                BbSettings::Get().preset.store(value);
+            }
+            std::fclose(f);
+        }
+    }
     const auto& settings = BbSettings::Get();
     const int preset = settings.preset.load();
     if (applied_preset != preset || settings.upscaler == BbSettings::UpscalerOff) failed = false;
