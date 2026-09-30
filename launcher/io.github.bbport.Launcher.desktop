@@ -1,0 +1,7 @@
+[Desktop Entry]
+Type=Application
+Name=Bloodborne
+Comment=Native Bloodborne port launcher
+Exec=/home/deadinside/Games/bloodborne/game_files/native_probe/launcher/bb-launcher.sh
+Icon=applications-games
+Categories=Game;

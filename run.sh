@@ -24,10 +24,13 @@ if [[ -z ${PYTHON:-} ]]; then
     fi
 fi
 if [[ -z ${PYTHON:-} ]]; then echo 'Install Python 3 or set PYTHON.' >&2; exit 1; fi
-"$PYTHON" prepare.py ../CUSA03173
-"$PYTHON" link_libc.py ../CUSA03173
-"$PYTHON" link_modules.py ../CUSA03173
-"$PYTHON" content_profile.py ../CUSA03173 --sku "${BB_CONTENT_SKU:-full}"
+# BB_GAME_DIR: the game's folder (eboot.bin, sce_module, ...); default next to this directory.
+game=${BB_GAME_DIR:-../CUSA03173}
+if [[ ! -f $game/eboot.bin ]]; then echo "No eboot.bin in $game (set BB_GAME_DIR)." >&2; exit 1; fi
+"$PYTHON" prepare.py "$game"
+"$PYTHON" link_libc.py "$game"
+"$PYTHON" link_modules.py "$game"
+"$PYTHON" content_profile.py "$game" --sku "${BB_CONTENT_SKU:-full}"
 # Dynamic scene resolution scaling now works on all GPUs (fallback: clear UI depth
 # instead of blit when D32S8 blit unsupported). The old startup resolution patch
 # is kept as BB_RENDER_RES for explicit overrides and compatibility testing.
@@ -46,4 +49,4 @@ if [[ -z ${BB_VBLANK_HZ:-} ]]; then
     case $fps in uncap) export BB_VBLANK_HZ=0 ;; 90) export BB_VBLANK_HZ=90 ;; *) export BB_VBLANK_HZ=60 ;; esac
 fi
 bash build.sh
-exec out/bb-probe out/boot-linked.bin --content-profile out/content.bin --patches out/patches.bin --app0 ../CUSA03173 --user "${BB_USER_DIR:-user}" --timeout "${BB_TIMEOUT:-0}" "$@"
+exec out/bb-probe out/boot-linked.bin --content-profile out/content.bin --patches out/patches.bin --app0 "$game" --user "${BB_USER_DIR:-user}" --timeout "${BB_TIMEOUT:-0}" "$@"
