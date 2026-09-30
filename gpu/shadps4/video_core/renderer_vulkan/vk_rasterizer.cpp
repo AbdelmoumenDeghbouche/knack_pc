@@ -457,18 +457,25 @@ bool Rasterizer::PendingWriteOverlaps(VAddr address, u64 size) {
     if (pending_writes.empty() || address >= pending_max || address + size <= pending_min) {
         return false;
     }
-    // Entries whose writes the recording thread has done; the bounds shrink with them.
-    std::erase_if(pending_writes,
-                  [&](const PendingWrite& write) { return draw_pipe->Reached(write.position); });
-    pending_min = ~VAddr{0};
-    pending_max = 0;
-    bool overlaps = false;
-    for (const auto& write : pending_writes) {
-        pending_min = std::min(pending_min, write.begin);
-        pending_max = std::max(pending_max, write.end);
-        overlaps |= address < write.end && write.begin < address + size;
+    // Now and then drop entries whose writes the recording thread has done: the bounds shrink.
+    if ((++pending_checks & 63) == 0) {
+        std::erase_if(pending_writes, [&](const PendingWrite& write) {
+            return draw_pipe->Reached(write.position);
+        });
+        pending_min = ~VAddr{0};
+        pending_max = 0;
+        for (const auto& write : pending_writes) {
+            pending_min = std::min(pending_min, write.begin);
+            pending_max = std::max(pending_max, write.end);
+        }
     }
-    return overlaps;
+    const VAddr end = address + size;
+    for (const auto& write : pending_writes) {
+        if (address < write.end && write.begin < end && !draw_pipe->Reached(write.position)) {
+            return true;
+        }
+    }
+    return false;
 }
 
 void Rasterizer::CollectRingBindings(const Shader::Info& stage, const PreparedDraw* prepared,
