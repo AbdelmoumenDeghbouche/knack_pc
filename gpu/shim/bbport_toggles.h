@@ -33,6 +33,10 @@ enum : std::uint32_t {
     ParallelCopies = 131072,
     AsyncFences = 262144,
     PoolSmallCopies = 524288,
+    RecordPrefetch = 1u << 20,
+    TextureViewMemo = 1u << 21,
+    TextureBindHelper = 1u << 22,
+    EarlyDrawInputs = 1u << 23,
     UpdateImageFastPath = 1u << 30,
 };
 inline bool Disabled(std::uint32_t bit) {
@@ -72,6 +76,21 @@ struct Timer {
         total.fetch_add(std::chrono::duration_cast<std::chrono::nanoseconds>(
                             std::chrono::steady_clock::now() - start)
                             .count(),
+                        std::memory_order_relaxed);
+    }
+};
+/// Wall time the GPU command thread waited for guest submissions (ns).
+inline std::atomic<std::uint64_t> gpu_idle_ns{0};
+/// Wall time spent blocked in the scheduler (ns): waiting for the recording thread to drain,
+/// for host copies before a submission or fence, and for GPU ticks.
+inline std::atomic<std::uint64_t> sync_recording_ns{0}, host_copies_wait_ns{0}, tick_wait_ns{0},
+    copy_threads_wait_ns{0}, host_copy_waits{0};
+struct WaitTimer {
+    std::atomic<std::uint64_t>& total;
+    std::chrono::steady_clock::time_point start = std::chrono::steady_clock::now();
+    ~WaitTimer() {
+        total.fetch_add(std::chrono::duration_cast<std::chrono::nanoseconds>(
+                            std::chrono::steady_clock::now() - start).count(),
                         std::memory_order_relaxed);
     }
 };

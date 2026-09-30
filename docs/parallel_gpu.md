@@ -250,3 +250,79 @@ tolerates small scene differences better than FPS):
 | no LTO, no PGO | 73.2 | 7.72 |
 | LTO | 74.4 | 7.58 (−1.8%) |
 | LTO + PGO | 76.3 | 7.35 (−4.8%) |
+
+## Second pass: where the GPU thread's time goes, and a texture helper (2026-09-30)
+
+Standing in Hunter's Nightmare, FSR 4, `BB_FPS_LIMIT=0`, ~85 FPS, ~1610 draws/frame.
+
+**On-CPU profile** (perf, direct children): `Draw` 74% — `BindResources` 32% (textures 16%,
+buffers 13%), `BeginRendering` 8%, `GetGraphicsPipeline` 5%, `BindVertexBuffers` 4.5%,
+`ResetBindings` 4%, dynamic state 2%; `DispatchDirect` 6%; PM4 decode and register hashing ~9%.
+No function above ~5% self time: the cost is cache misses spread over the texture, buffer and
+barrier structures (`slot_images[id]`, image descriptions, backing state, set writes).
+
+**Wall time** (new `Frame stats` fields): the GPU thread is on the CPU 91% of the time and
+waits for guest submissions 0.5%. About 9% is blocked in `Scheduler::WaitHostCopies`: ~130
+times per frame (EOP/EOS events, `WriteData`, submissions) it waits for the small guest
+copies queued in the recording stream, i.e. until the recording thread has recorded every
+command before them, plus ~4% for the copy threads (`BbCopy::WaitAsync`). The recording thread
+itself works ~40% (the rest is its spin); it is not the limit.
+
+### Texture binding on a helper thread (opt-in: `BB_TEXTURE_HELPER=1`, toggle 1 << 22)
+
+`bb:TexBind` binds a draw's textures while the GPU thread binds its buffers and resolves its
+vertex/index buffers (split into Resolve/Emit, toggle 1 << 23); the GPU thread joins before
+`BeginRendering`. The helper takes only the memoized path (FindImage memo valid, image clean,
+no scene-target proxy, no upscaler redirect, no storage images, no mip arrays, no storage
+buffers in the pipeline); anything else is bound after the join. The GPU thread joins before
+it changes image state (`Runtime::BeforeImageAccess` in `Transit`, `FlushBarriers`,
+`SetBackingSamples`, and in `SynchronizeMemoryFromImage` once a texel buffer aliases an image).
+68% of draws were bound in parallel, the image was unchanged — and the frame rate too:
+85.9 FPS with the helper vs 85.8 without (A/B, 6 × 16 s).
+
+Instrumented with `rdtsc`: the helper's task took ~6200 cycles per fork where the same work
+cost ~4600 on the GPU thread, and the GPU thread still waited ~2500 cycles per fork in the
+join. The descriptor infos, image states and binding flags the helper writes are read by the
+GPU thread right after, so each draw moves them between cores; the GPU thread's own work got
+slower by about what it handed over. Per-draw fork/join over ~7 µs of cache-bound work does
+not pay on this CPU; the helper stays opt-in for other CPUs.
+
+### Other attempts
+
+| change | A/B | kept |
+|---|---|---|
+| FindView memo in the image description cache (1 << 21) + write prefetch in record chunks (1 << 20) | 81.5 vs 80.8 FPS | yes |
+| format check by table instead of `magic_enum::enum_contains` (a linear scan per texture per draw); hot `Image` fields (flags, binding, tracking range, backing, ticks) moved in front of `ImageInfo` | within noise | yes (no downside) |
+| host copy queue: small copies in a lock-free MPMC queue, run by the idle recording thread, the rest by the GPU thread at the wait | blocked 9.5% → 4.8%, but 86.5 vs 87.2 FPS: the copying moved onto the GPU thread | no |
+| no barrier tracking for read-only stream buffer ranges | 85.9 vs 87.4 FPS, both phase orders (cause not found) | no |
+| small host copies batched, one recorded command per 32 | 86.4 vs 86.2 FPS | no |
+
+Fixed on the way: a draw-preparation worker could stop the process with
+`SurfaceFormat: Unknown data_format=15` — it read a V# the guest was still writing and
+`SurfaceFormat` asserts. Workers now use `TrySurfaceFormat` and leave such draws to the GPU
+thread. It showed up with the slower PGO-instrumented build.
+
+PGO profile regenerated for the changed code (camera rotation only, merged with the old one).
+Before/after, as a user builds them (37c8eac with its profile vs this state with the new one),
+three alternating restarts × 50 s: 86.9 vs 86.4 FPS, 6.47 vs 6.51 µs/draw — no change beyond
+the run-to-run spread (±1.5 FPS).
+
+### What would scale
+
+Moving work to another core per draw costs about what it saves, because the data is shared.
+Scaling needs splits where each thread owns its data for long stretches:
+
+1. **Two-stage pipeline.** A second thread owns the texture cache and image state
+   (`PrepareRenderState`, `BindTextures`, `BeginRendering`, barriers, descriptor writes, dynamic
+   state, draw recording) and runs a draw behind the GPU thread, which keeps decode, pipelines
+   and the buffer cache. The second thread cannot read `liverpool->regs` (the GPU thread is
+   already on later packets): it keeps its own register copy from the per-buffer deltas the
+   draw scanner already records (`AmdGpu::RegDelta`). Packets that touch memory or images
+   outside draws (DMA, `WriteData`, EOP/EOS, dispatches, fast clears) drain the pipeline.
+   Estimate: the second stage takes ~30% of today's GPU thread work, less the drains. Large,
+   delicate refactor.
+2. **Less work per draw.** A frame-to-frame memo of a stage's resolved textures (image ids,
+   views, samplers) keyed by the prepared T#/S# hashes and validated by the registry
+   generation, image cleanliness and layouts, instead of per-texture lookups.
+3. **The copies before fences** (~9% blocked): keep them off the GPU thread's critical path,
+   e.g. by letting the idle draw-preparation workers drain a copy queue.

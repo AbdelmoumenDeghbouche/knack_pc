@@ -78,7 +78,21 @@ public:
 
     void FlushBarriers();
 
+    /// bbport: runs before this thread changes image state (layouts, pending image
+    /// barriers): the rasterizer joins its texture binding helper there (BindHelper).
+    void SetImageAccessHook(void (*hook)(void*), void* context) {
+        image_access_hook = hook;
+        image_access_context = context;
+    }
+    void BeforeImageAccess() {
+        if (image_access_hook) {
+            image_access_hook(image_access_context);
+        }
+    }
+
 private:
+    void (*image_access_hook)(void*) = nullptr;
+    void* image_access_context = nullptr;
     const Instance& instance;
     Scheduler& scheduler;
     std::unique_ptr<VideoCore::BlitHelper> blit_helper;

@@ -17,6 +17,7 @@
 #include "video_core/renderer_vulkan/vk_instance.h"
 #include "video_core/renderer_vulkan/vk_pipeline_cache.h"
 #include "video_core/renderer_vulkan/vk_rasterizer.h"
+#include "bbport_threads.h"
 #include "video_core/renderer_vulkan/vk_runtime.h"
 #include "video_core/renderer_vulkan/vk_scheduler.h"
 #include "video_core/renderer_vulkan/vk_shader_hle.h"
@@ -59,6 +60,8 @@ Rasterizer::Rasterizer(const Instance& instance_, Scheduler& scheduler_, Runtime
     }
     memory->SetRasterizer(this);
 
+    // bbport: this thread joins the texture binding helper before it changes image state.
+    runtime.SetImageAccessHook(&JoinBindHelper, this);
     scheduler.SetSubmitCallback([this](Vulkan::SubmitInfo& info) {
         runtime.FlushBarriers();
         buffer_cache.SubmitPendingArenaBinds(info);
@@ -66,6 +69,28 @@ Rasterizer::Rasterizer(const Instance& instance_, Scheduler& scheduler_, Runtime
 }
 
 Rasterizer::~Rasterizer() = default;
+
+namespace {
+/// magic_enum::enum_contains, from a table: it scans every enumerator (per texture per draw).
+bool IsKnownFormat(AmdGpu::DataFormat data_fmt, AmdGpu::NumberFormat num_fmt) {
+    static const auto tables = [] {
+        std::pair<std::array<bool, 256>, std::array<bool, 256>> t{};
+        for (const auto value : magic_enum::enum_values<AmdGpu::DataFormat>()) {
+            if (static_cast<u32>(value) < 256) {
+                t.first[static_cast<u32>(value)] = true;
+            }
+        }
+        for (const auto value : magic_enum::enum_values<AmdGpu::NumberFormat>()) {
+            if (static_cast<u32>(value) < 256) {
+                t.second[static_cast<u32>(value)] = true;
+            }
+        }
+        return t;
+    }();
+    const u32 d = static_cast<u32>(data_fmt), n = static_cast<u32>(num_fmt);
+    return d < 256 && n < 256 && tables.first[d] && tables.second[n];
+}
+} // namespace
 
 bool Rasterizer::FilterDraw() {
     const auto& regs = liverpool->regs;
@@ -333,16 +358,27 @@ void Rasterizer::Draw(bool is_indexed, u32 index_offset, const PreparedDraw* pre
                          UiComposition::NativeViewport(viewport.xscale * 2, viewport.yscale * 2));
     }
     const PreparedDraw* draw_prepared = bind_prepared;
+    // bbport: vertex and index buffers are resolved while the helper binds textures (their
+    // commands are recorded after BeginRendering, as before).
+    draw_inputs = {pipeline, draw_prepared, index_offset, is_indexed, true, false};
     const bool bound = BindResources(pipeline);
     bind_prepared = nullptr; // indirect draws and dispatches bind without prepared sharps
+    const bool inputs_resolved = draw_inputs.resolved;
+    draw_inputs.pending = false;
     if (!bound) {
         return;
     }
     const auto state = BeginRendering(pipeline);
 
-    BindVertexBuffers(pipeline, draw_prepared);
+    if (!inputs_resolved) {
+        ResolveVertexBuffers(pipeline, draw_prepared);
+        if (is_indexed) {
+            ResolveIndexBuffer(index_offset);
+        }
+    }
+    EmitVertexBuffers();
     if (is_indexed) {
-        BindIndexBuffer(index_offset);
+        EmitIndexBuffer();
     }
 
     if (needs_barrier) {
@@ -686,6 +722,119 @@ void Rasterizer::OnSubmit() {
     runtime.TickFrame();
 }
 
+const PreparedStage* Rasterizer::FindPreparedStage(const Shader::Info& stage) const {
+    // Sharps a draw-preparation worker read from the same flattened user data.
+    if (!bind_prepared || BbToggle::Disabled(BbToggle::PreparedResources)) {
+        return nullptr;
+    }
+    for (u32 i = 0; i < bind_prepared->num_stages; ++i) {
+        const auto& candidate = bind_prepared->stages[i];
+        if (&candidate.program->info == &stage &&
+            candidate.num_images == stage.images.size() &&
+            candidate.num_samplers == stage.samplers.size() &&
+            candidate.num_buffers == stage.buffers.size()) {
+            return &candidate;
+        }
+    }
+    return nullptr;
+}
+
+bool Rasterizer::BindHelperWanted() {
+    // A spinning helper pays off only with cores to spare (the recording thread spins too).
+    const char* env = std::getenv("BB_TEXTURE_HELPER");
+    if (env && env[0]) {
+        return env[0] == '1';
+    }
+    // Measured neutral on 16 threads (docs/parallel_gpu.md): opt-in.
+    return false;
+}
+
+bool Rasterizer::HelperEligible(const Pipeline* pipeline) const {
+    if (pipeline->IsCompute() || !bind_helper.Available() || FrameCapture::Active() ||
+        BbToggle::Disabled(BbToggle::TextureBindHelper) ||
+        BbToggle::Disabled(BbToggle::TextureBindingMemo) ||
+        BbToggle::Disabled(BbToggle::UpdateImageFastPath)) {
+        return false;
+    }
+    for (const auto* stage : pipeline->GetStages()) {
+        if (!stage) {
+            continue;
+        }
+        // Mip arrays make the descriptor layout depend on the T#s.
+        for (const auto& image : stage->images) {
+            if (image.mip_fallback_mode != Shader::MipStorageFallbackMode::None) {
+                return false;
+            }
+        }
+        // Storage writes invalidate cached images from the buffer side.
+        for (const auto& buffer : stage->buffers) {
+            if (!buffer.IsSpecial() && buffer.is_written) {
+                return false;
+            }
+        }
+    }
+    return true;
+}
+
+bool Rasterizer::TexturesBindableOnHelper(const Shader::Info& stage,
+                                          const PreparedStage* prepared) {
+    const u64 generation = texture_cache.RegistryGeneration();
+    for (u32 image_index = 0; image_index < stage.images.size(); ++image_index) {
+        const auto& image_desc = stage.images[image_index];
+        if (image_desc.is_written) {
+            return false;
+        }
+        const auto tsharp =
+            prepared ? prepared->image_sharps[image_index] : image_desc.GetSharp(stage);
+        const auto data_fmt = tsharp.GetDataFmt();
+        const auto num_fmt = tsharp.GetNumberFmt();
+        if (tsharp.Address() == 0 || data_fmt == AmdGpu::DataFormat::FormatInvalid ||
+            !memory->IsValidGpuMapping(tsharp.Address(), 0) ||
+            !IsKnownFormat(data_fmt, num_fmt)) {
+            continue; // null descriptor
+        }
+        const auto& entry =
+            prepared ? CachedImageDescEntry(tsharp, image_desc, prepared->image_hashes[image_index])
+                     : CachedImageDescEntry(tsharp, image_desc);
+        if (entry.found_generation != generation) {
+            return false;
+        }
+        VideoCore::ImageId image_id = entry.found_id;
+        auto* image = &texture_cache.GetImage(image_id);
+        if (const auto depth_image_id = texture_cache.GetAssociatedDepth(*image)) {
+            image_id = depth_image_id;
+            image = &texture_cache.GetImage(image_id);
+        }
+        if (image->binding.needs_rebind || !texture_cache.IsUpToDate(image_id) ||
+            scene_targets->Tracks(image->image_uid) ||
+            (upscaler->Enabled() && upscaler->RedirectsSampled(image_id))) {
+            return false;
+        }
+    }
+    return true;
+}
+
+void Rasterizer::RunTextureTask(void* context) {
+    auto& self = *static_cast<Rasterizer*>(context);
+    auto& task = self.texture_task;
+    for (u32 i = 0; i < task.count; ++i) {
+        auto& stage = task.stages[i];
+        if (!self.TexturesBindableOnHelper(*stage.info, stage.prepared)) {
+            return;
+        }
+        auto binding = stage.binding;
+        u32 write_index = stage.write_index;
+        self.BindTextures(*stage.info, stage.prepared, binding, write_index, task.barrier, true);
+        task.completed = i + 1;
+    }
+}
+
+void Rasterizer::JoinBindHelper(void* context) {
+    if (!BindHelper::OnHelper()) {
+        static_cast<Rasterizer*>(context)->bind_helper.Join();
+    }
+}
+
 bool Rasterizer::BindResources(const Pipeline* pipeline) {
     if (IsComputeImageCopy(pipeline) || IsComputeMetaClear(pipeline) ||
         IsComputeImageClear(pipeline)) {
@@ -699,33 +848,101 @@ bool Rasterizer::BindResources(const Pipeline* pipeline) {
 
     bool uses_dma = false;
 
+    static const bool stats = std::getenv("BB_FRAME_STATS") != nullptr;
+    if (stats && ((helper_full + helper_partial + helper_serial) & 1023) == 0) {
+        static auto window = std::chrono::steady_clock::now();
+        const auto now = std::chrono::steady_clock::now();
+        if (now - window >= std::chrono::seconds(5)) {
+            window = now;
+            const double forks = std::max<double>(1, helper_full + helper_partial);
+            std::printf("Texture helper: %llu binds in parallel, %llu partly, %llu serial; "
+                        "per fork %.0f cycles helper task, %.0f cycles GPU thread wait\n",
+                        static_cast<unsigned long long>(helper_full),
+                        static_cast<unsigned long long>(helper_partial),
+                        static_cast<unsigned long long>(helper_serial),
+                        bind_helper.task_cycles.exchange(0) / forks,
+                        bind_helper.wait_cycles / forks);
+            bind_helper.wait_cycles = 0;
+            helper_full = helper_partial = helper_serial = 0;
+        }
+    }
+
     // Bind resource buffers and textures.
     Shader::Backend::Bindings binding{};
     push_data = MakeUserData(liverpool->regs);
-    for (const auto* stage : pipeline->GetStages()) {
-        if (!stage) {
-            continue;
-        }
-        set_writes.resize(set_writes.size() + stage->buffers.size() + stage->images.size() +
-                          stage->samplers.size());
-        stage->PushUd(binding, push_data);
-        // Sharps a draw-preparation worker read from the same flattened user data.
-        const PreparedStage* prepared = nullptr;
-        if (bind_prepared && !BbToggle::Disabled(BbToggle::PreparedResources)) {
-            for (u32 i = 0; i < bind_prepared->num_stages; ++i) {
-                const auto& candidate = bind_prepared->stages[i];
-                if (&candidate.program->info == stage &&
-                    candidate.num_images == stage->images.size() &&
-                    candidate.num_samplers == stage->samplers.size() &&
-                    candidate.num_buffers == stage->buffers.size()) {
-                    prepared = &candidate;
-                    break;
-                }
+    if (!HelperEligible(pipeline)) {
+        ++helper_serial;
+        for (const auto* stage : pipeline->GetStages()) {
+            if (!stage) {
+                continue;
             }
+            set_writes.resize(set_writes.size() + stage->buffers.size() + stage->images.size() +
+                              stage->samplers.size());
+            stage->PushUd(binding, push_data);
+            const PreparedStage* prepared = FindPreparedStage(*stage);
+            BindBuffers(*stage, prepared, binding, push_data, set_write_index);
+            BindTextures(*stage, prepared, binding, set_write_index, needs_barrier);
+            uses_dma |= stage->uses_dma;
         }
-        BindBuffers(*stage, prepared, binding, push_data);
-        BindTextures(*stage, prepared, binding);
-        uses_dma |= stage->uses_dma;
+    } else {
+        // bbport: textures on the helper, buffers here. Without mip arrays every stage's
+        // descriptors are [buffers][images][samplers], one each, so both sides know their
+        // binding numbers and descriptor write slots up front.
+        struct BufferStage {
+            const Shader::Info* info;
+            const PreparedStage* prepared;
+            Shader::Backend::Bindings binding;
+            u32 write_index;
+        };
+        std::array<BufferStage, Shader::MaxStageTypes> buffer_stages;
+        auto& task = texture_task;
+        task.count = 0;
+        task.completed = 0;
+        task.barrier = false;
+        for (const auto* stage : pipeline->GetStages()) {
+            if (!stage) {
+                continue;
+            }
+            const u32 num_buffers = static_cast<u32>(stage->buffers.size());
+            const u32 num_descriptors =
+                num_buffers + static_cast<u32>(stage->images.size() + stage->samplers.size());
+            set_writes.resize(set_writes.size() + num_descriptors);
+            stage->PushUd(binding, push_data);
+            const PreparedStage* prepared = FindPreparedStage(*stage);
+            buffer_stages[task.count] = {stage, prepared, binding, set_write_index};
+            auto texture_binding = binding;
+            texture_binding.buffer += num_buffers;
+            texture_binding.unified += num_buffers;
+            task.stages[task.count] = {stage, prepared, texture_binding,
+                                       set_write_index + num_buffers};
+            ++task.count;
+            binding.buffer += num_buffers;
+            binding.unified += num_descriptors;
+            set_write_index += num_descriptors;
+            uses_dma |= stage->uses_dma;
+        }
+        bind_helper.Fork(&RunTextureTask, this);
+        for (u32 i = 0; i < task.count; ++i) {
+            auto& stage = buffer_stages[i];
+            BindBuffers(*stage.info, stage.prepared, stage.binding, push_data, stage.write_index);
+        }
+        if (draw_inputs.pending && !BbToggle::Disabled(BbToggle::EarlyDrawInputs)) {
+            ResolveVertexBuffers(draw_inputs.pipeline, draw_inputs.prepared);
+            if (draw_inputs.is_indexed) {
+                ResolveIndexBuffer(draw_inputs.index_offset);
+            }
+            draw_inputs.resolved = true;
+        }
+        bind_helper.Join();
+        needs_barrier |= task.barrier;
+        ++(task.completed == task.count ? helper_full
+                                        : task.completed ? helper_partial : helper_serial);
+        // Stages the helper left (an image needing work that records commands).
+        for (u32 i = task.completed; i < task.count; ++i) {
+            auto& stage = task.stages[i];
+            u32 write_index = stage.write_index;
+            BindTextures(*stage.info, stage.prepared, stage.binding, write_index, needs_barrier);
+        }
     }
 
     if (uses_dma) {
@@ -737,9 +954,48 @@ bool Rasterizer::BindResources(const Pipeline* pipeline) {
 }
 
 void Rasterizer::BindVertexBuffers(const GraphicsPipeline* pipeline, const PreparedDraw* prepared) {
+    ResolveVertexBuffers(pipeline, prepared);
+    EmitVertexBuffers();
+}
+
+void Rasterizer::EmitVertexBuffers() {
+    auto& v = vertex_binds;
+    if (instance.IsVertexInputDynamicState()) {
+        // Update current vertex inputs.
+        scheduler.Record([bindings = v.bindings, attributes = v.attributes](vk::CommandBuffer cmdbuf) {
+            cmdbuf.setVertexInputEXT(bindings, attributes);
+        });
+    }
+    if (v.num_buffers == 0) {
+        return;
+    }
+    const u32 num_buffers = v.num_buffers;
+    const bool dynamic_input = instance.IsVertexInputDynamicState();
+    scheduler.Record([num_buffers, dynamic_input, host_buffers = v.host_buffers,
+                      host_offsets = v.host_offsets, host_sizes = v.host_sizes,
+                      host_strides = v.host_strides](vk::CommandBuffer cmdbuf) {
+        if (dynamic_input) {
+            cmdbuf.bindVertexBuffers(0, num_buffers, host_buffers.data(), host_offsets.data());
+        } else {
+            cmdbuf.bindVertexBuffers2(0, num_buffers, host_buffers.data(), host_offsets.data(),
+                                      host_sizes.data(), host_strides.data());
+        }
+    });
+}
+
+void Rasterizer::ResolveVertexBuffers(const GraphicsPipeline* pipeline,
+                                      const PreparedDraw* prepared) {
     const auto& regs = liverpool->regs;
-    VertexInputs<vk::VertexInputAttributeDescription2EXT> attributes;
-    VertexInputs<vk::VertexInputBindingDescription2EXT> bindings;
+    auto& v = vertex_binds;
+    v.num_buffers = 0;
+    v.host_buffers.clear();
+    v.host_offsets.clear();
+    v.host_sizes.clear();
+    v.host_strides.clear();
+    auto& attributes = v.attributes;
+    auto& bindings = v.bindings;
+    attributes.clear();
+    bindings.clear();
     VertexInputs<vk::VertexInputBindingDivisorDescriptionEXT> divisors;
     VertexInputs<AmdGpu::Buffer> guest_buffers;
     // Inputs a draw-preparation worker read from the same registers and (verified) user data.
@@ -757,13 +1013,6 @@ void Rasterizer::BindVertexBuffers(const GraphicsPipeline* pipeline, const Prepa
     } else {
         pipeline->GetVertexInputs(attributes, bindings, divisors, guest_buffers,
                                   regs.vgt_instance_step_rate_0, regs.vgt_instance_step_rate_1);
-    }
-
-    if (instance.IsVertexInputDynamicState()) {
-        // Update current vertex inputs.
-        scheduler.Record([bindings, attributes](vk::CommandBuffer cmdbuf) {
-            cmdbuf.setVertexInputEXT(bindings, attributes);
-        });
     }
 
     if (bindings.empty()) {
@@ -839,10 +1088,10 @@ void Rasterizer::BindVertexBuffers(const GraphicsPipeline* pipeline, const Prepa
     }
 
     // Bind vertex buffers
-    VertexInputs<vk::Buffer> host_buffers;
-    VertexInputs<vk::DeviceSize> host_offsets;
-    VertexInputs<vk::DeviceSize> host_sizes;
-    VertexInputs<vk::DeviceSize> host_strides;
+    auto& host_buffers = v.host_buffers;
+    auto& host_offsets = v.host_offsets;
+    auto& host_sizes = v.host_sizes;
+    auto& host_strides = v.host_strides;
     u32 stream_with_memory = 0;
     for (const auto& buffer : guest_buffers) {
         if (buffer.base_address != 0 && buffer.GetSize() > 0) {
@@ -864,19 +1113,22 @@ void Rasterizer::BindVertexBuffers(const GraphicsPipeline* pipeline, const Prepa
         host_strides.push_back(buffer.GetStride());
     }
 
-    const u32 num_buffers = static_cast<u32>(guest_buffers.size());
-    const bool dynamic_input = instance.IsVertexInputDynamicState();
-    scheduler.Record([=](vk::CommandBuffer cmdbuf) {
-        if (dynamic_input) {
-            cmdbuf.bindVertexBuffers(0, num_buffers, host_buffers.data(), host_offsets.data());
-        } else {
-            cmdbuf.bindVertexBuffers2(0, num_buffers, host_buffers.data(), host_offsets.data(),
-                                      host_sizes.data(), host_strides.data());
-        }
-    });
+    v.num_buffers = static_cast<u32>(guest_buffers.size());
 }
 
 void Rasterizer::BindIndexBuffer(u32 index_offset) {
+    ResolveIndexBuffer(index_offset);
+    EmitIndexBuffer();
+}
+
+void Rasterizer::EmitIndexBuffer() {
+    scheduler.Record([handle = index_bind.handle, offset = index_bind.offset,
+                      type = index_bind.type](vk::CommandBuffer cmdbuf) {
+        cmdbuf.bindIndexBuffer(handle, offset, type);
+    });
+}
+
+void Rasterizer::ResolveIndexBuffer(u32 index_offset) {
     const auto& regs = liverpool->regs;
 
     // Figure out index type and size.
@@ -891,11 +1143,7 @@ void Rasterizer::BindIndexBuffer(u32 index_offset) {
     const auto [buffer, offset] =
         buffer_cache.ObtainBuffer(index_address, index_buffer_size, false);
     needs_barrier |= runtime.IsBufferAccessed(buffer, offset, index_buffer_size);
-    const vk::Buffer handle = buffer->Handle();
-    const u64 handle_offset = offset;
-    scheduler.Record([=](vk::CommandBuffer cmdbuf) {
-        cmdbuf.bindIndexBuffer(handle, handle_offset, index_type);
-    });
+    index_bind = {buffer->Handle(), offset, index_type};
 }
 
 void Rasterizer::ResetBindings(bool is_compute) {
@@ -1065,7 +1313,7 @@ bool Rasterizer::IsComputeImageClear(const Pipeline* pipeline) {
 
 void Rasterizer::BindBuffers(const Shader::Info& stage, const PreparedStage* prepared,
                              Shader::Backend::Bindings& binding,
-                             Shader::PushData& push_data) {
+                             Shader::PushData& push_data, u32& write_index) {
     const u64 alignment = instance.StorageMinAlignment();
     for (u32 buffer_index = 0; buffer_index < stage.buffers.size(); ++buffer_index) {
         const auto& desc = stage.buffers[buffer_index];
@@ -1172,7 +1420,7 @@ void Rasterizer::BindBuffers(const Shader::Info& stage, const PreparedStage* pre
             }
         }
 
-        auto& set_write = set_writes[set_write_index++];
+        auto& set_write = set_writes[write_index++];
         set_write.dstSet = VK_NULL_HANDLE;
         set_write.dstBinding = binding.unified++;
         set_write.dstArrayElement = 0;
@@ -1218,13 +1466,16 @@ Rasterizer::ImageDescCacheEntry& Rasterizer::CachedImageDescEntry(const AmdGpu::
         entry.sharp = key;
         entry.flags = flags;
         entry.found_generation = ~0ULL;
+        entry.view_memo = {};
     }
     return entry;
 }
 
 void Rasterizer::BindTextures(const Shader::Info& stage, const PreparedStage* prepared,
-                              Shader::Backend::Bindings& binding) {
+                              Shader::Backend::Bindings& binding, u32& write_index,
+                              bool& barrier, bool on_helper) {
     image_bindings.clear();
+    image_binding_entries.clear();
     image_desc_overflow.clear();
     image_desc_storage.clear();
     ++bind_epoch;
@@ -1246,18 +1497,20 @@ void Rasterizer::BindTextures(const Shader::Info& stage, const PreparedStage* pr
         const auto num_fmt = tsharp.GetNumberFmt();
         if (tsharp.Address() == 0 || data_fmt == AmdGpu::DataFormat::FormatInvalid) {
             image_bindings.emplace_back(VideoCore::ImageId{}, &image_desc_storage.emplace_back());
+            image_binding_entries.push_back(nullptr);
             image_descriptor_array_sizes.push_back(1);
             continue;
         }
 
         if (!memory->IsValidGpuMapping(tsharp.Address(), 0) ||
-            !magic_enum::enum_contains(data_fmt) || !magic_enum::enum_contains(num_fmt)) {
+            !IsKnownFormat(data_fmt, num_fmt)) {
             LOG_WARNING(Render_Vulkan,
                         "Rejecting invalid T# address={:#x}, pitch={}, width={}, "
                         "data_format={}, num_format={}",
                         tsharp.Address(), tsharp.pitch, tsharp.width, static_cast<u32>(data_fmt),
                         static_cast<u32>(num_fmt));
             image_bindings.emplace_back(VideoCore::ImageId{}, &image_desc_storage.emplace_back());
+            image_binding_entries.push_back(nullptr);
             image_descriptor_array_sizes.push_back(1);
             continue;
         }
@@ -1281,6 +1534,7 @@ void Rasterizer::BindTextures(const Shader::Info& stage, const PreparedStage* pr
                 desc_entry.pinned = bind_epoch;
                 auto& [image_id, _] =
                     image_bindings.emplace_back(desc_entry.found_id, &desc_entry.found_desc);
+                image_binding_entries.push_back(&desc_entry);
                 texture_cache.MarkFound(image_id);
                 auto* image = &texture_cache.GetImage(image_id);
                 if (auto depth_image_id = texture_cache.GetAssociatedDepth(*image)) {
@@ -1295,6 +1549,7 @@ void Rasterizer::BindTextures(const Shader::Info& stage, const PreparedStage* pr
             }
             auto& desc = image_desc_storage.emplace_back(desc_entry.desc);
             auto& [image_id, _] = image_bindings.emplace_back(VideoCore::ImageId{}, &desc);
+            image_binding_entries.push_back(nullptr);
 
             if (mip_fallback_mode == Shader::MipStorageFallbackMode::ConstantIndex) {
                 ASSERT(num_bindings == 1);
@@ -1313,6 +1568,7 @@ void Rasterizer::BindTextures(const Shader::Info& stage, const PreparedStage* pr
                 desc_entry.found_generation = generation;
                 desc_entry.found_id = image_id;
                 desc_entry.found_desc = desc;
+                desc_entry.view_memo = {};
             }
             auto* image = &texture_cache.GetImage(image_id);
             if (auto depth_image_id = texture_cache.GetAssociatedDepth(*image)) {
@@ -1333,7 +1589,9 @@ void Rasterizer::BindTextures(const Shader::Info& stage, const PreparedStage* pr
     }
 
     // Second pass to re-bind images that were updated after binding
-    for (auto& [image_id, desc_ptr] : image_bindings) {
+    for (u32 binding_index = 0; binding_index < image_bindings.size(); ++binding_index) {
+        auto& [image_id, desc_ptr] = image_bindings[binding_index];
+        auto* memo_entry = image_binding_entries[binding_index];
         const auto& desc = *desc_ptr;
         bool is_storage = desc.type == VideoCore::TextureCache::BindingType::Storage;
         if (!image_id) {
@@ -1345,12 +1603,14 @@ void Rasterizer::BindTextures(const Shader::Info& stage, const PreparedStage* pr
                 auto& rebind_desc = image_desc_storage.emplace_back(desc);
                 desc_ptr = &rebind_desc;
                 image_id = texture_cache.FindImage(rebind_desc);
+                memo_entry = nullptr;
             }
 
             bound_images.emplace_back(image_id);
 
             auto& image = texture_cache.GetImage(image_id);
-            auto& image_view = texture_cache.FindTexture(image_id, desc);
+            auto& image_view = texture_cache.FindTexture(
+                image_id, desc, memo_entry ? &memo_entry->view_memo : nullptr, !on_helper);
             const auto binding = image.binding;
 
             // The image is either bound as storage in a separate descriptor or bound as render
@@ -1358,17 +1618,17 @@ void Rasterizer::BindTextures(const Shader::Info& stage, const PreparedStage* pr
             // storage and feedback loop doesn't make sense for them
             if ((binding.force_general || binding.is_target) && !image.info.props.is_depth) {
                 if (instance.IsAttachmentFeedbackLoopLayoutSupported() && image.binding.is_target) {
-                    needs_barrier |= runtime.Transit(
+                    barrier |= runtime.Transit(
                         &image, vk::ImageLayout::eAttachmentFeedbackLoopOptimalEXT,
                         vk::PipelineStageFlagBits2::eAllGraphics, vk::AccessFlagBits2::eShaderRead);
                 } else {
-                    needs_barrier |= runtime.Transit(
+                    barrier |= runtime.Transit(
                         &image, vk::ImageLayout::eGeneral, vk::PipelineStageFlagBits2::eAllCommands,
                         vk::AccessFlagBits2::eShaderRead | vk::AccessFlagBits2::eShaderWrite);
                 }
             } else {
                 if (is_storage) {
-                    needs_barrier |= runtime.Transit(
+                    barrier |= runtime.Transit(
                         &image, vk::ImageLayout::eGeneral, vk::PipelineStageFlagBits2::eAllCommands,
                         vk::AccessFlagBits2::eShaderRead | vk::AccessFlagBits2::eShaderWrite,
                         desc.view_info.range);
@@ -1376,7 +1636,7 @@ void Rasterizer::BindTextures(const Shader::Info& stage, const PreparedStage* pr
                     const auto new_layout = image.info.props.is_depth
                                                 ? vk::ImageLayout::eDepthStencilReadOnlyOptimal
                                                 : vk::ImageLayout::eShaderReadOnlyOptimal;
-                    needs_barrier |= runtime.Transit(
+                    barrier |= runtime.Transit(
                         &image, new_layout, vk::PipelineStageFlagBits2::eAllCommands,
                         vk::AccessFlagBits2::eShaderRead, desc.view_info.range);
                 }
@@ -1402,7 +1662,7 @@ void Rasterizer::BindTextures(const Shader::Info& stage, const PreparedStage* pr
     for (u32 array_size : image_descriptor_array_sizes) {
         const auto& desc = *image_bindings[image_binding_idx].second;
         const bool is_storage = desc.type == VideoCore::TextureCache::BindingType::Storage;
-        auto& set_write = set_writes[set_write_index++];
+        auto& set_write = set_writes[write_index++];
         set_write.dstSet = VK_NULL_HANDLE;
         set_write.dstBinding = binding.unified;
         set_write.dstArrayElement = 0;
@@ -1423,7 +1683,7 @@ void Rasterizer::BindTextures(const Shader::Info& stage, const PreparedStage* pr
         const auto vk_sampler =
             texture_cache.GetSampler(ssharp, liverpool->regs.ta_bc_base, sampler.is_depth);
         image_infos.emplace_back(vk_sampler, VK_NULL_HANDLE, vk::ImageLayout::eGeneral);
-        auto& set_write = set_writes[set_write_index++];
+        auto& set_write = set_writes[write_index++];
         set_write.dstSet = VK_NULL_HANDLE;
         set_write.dstBinding = binding.unified++;
         set_write.dstArrayElement = 0;

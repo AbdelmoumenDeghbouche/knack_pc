@@ -598,6 +598,7 @@ public:
         }
         last = command;
         used = offset + sizeof(Command);
+        PrefetchAhead();
         return true;
     }
 
@@ -608,6 +609,7 @@ public:
             return nullptr;
         }
         used = offset + bytes;
+        PrefetchAhead();
         return storage + offset;
     }
 
@@ -631,6 +633,16 @@ public:
     }
 
 private:
+    /// The recording thread last read these cache lines: the first write to each has to take
+    /// it back from that core. Requesting ownership a few lines ahead overlaps those
+    /// transfers instead of stalling on each (RecordPrefetch).
+    void PrefetchAhead() const {
+        if (!BbToggle::Disabled(BbToggle::RecordPrefetch)) {
+            __builtin_prefetch(storage + used + 384, 1, 3);
+            __builtin_prefetch(storage + used + 448, 1, 3);
+        }
+    }
+
     struct CommandBase {
         virtual ~CommandBase() = default;
         virtual void Execute(vk::CommandBuffer cmdbuf) = 0;

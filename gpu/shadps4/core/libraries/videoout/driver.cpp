@@ -392,11 +392,18 @@ void VideoOutDriver::Flip(const Request& req) {
             std::printf("Frame stats: %.1f FPS, worst frame %.1f ms (vblank %u Hz); "
                         "%u shader/pipeline compiles, %.1f ms; %llu recorder syncs; "
                         "%.0f write faults/s, %lld hot pages; GPU thread %.2f us/draw, "
-                        "%.0f draws/frame\n",
+                        "%.0f draws/frame, idle %.1f%%; blocked: recorder %.1f%%, host copies "
+                        "%.1f%% (%.0f/frame), copy threads %.1f%%, GPU ticks %.1f%%\n",
                         frames / window, worst_ms, EmulatorSettings.GetVblankFrequency(), compiles,
                         compile_ns / 1e6, static_cast<unsigned long long>(direct),
                         faults / window, static_cast<long long>(BbStats::hot_pages.load()),
-                        us_per_draw, draws_per_frame);
+                        us_per_draw, draws_per_frame,
+                        BbStats::gpu_idle_ns.exchange(0) / (window * 1e7),
+                        BbStats::sync_recording_ns.exchange(0) / (window * 1e7),
+                        BbStats::host_copies_wait_ns.exchange(0) / (window * 1e7),
+                        frames ? double(BbStats::host_copy_waits.exchange(0)) / frames : 0.0,
+                        BbStats::copy_threads_wait_ns.exchange(0) / (window * 1e7),
+                        BbStats::tick_wait_ns.exchange(0) / (window * 1e7));
             window_start = now;
             frames = 0;
             worst_ms = 0;

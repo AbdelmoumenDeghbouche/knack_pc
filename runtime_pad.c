@@ -14,6 +14,7 @@
 #include <pthread.h>
 #include <time.h>
 #include <SDL3/SDL.h>
+#include <sys/stat.h>
 
 #define ERR_INVALID_ARG ((int32_t)0x80920001)
 #define ERR_INVALID_HANDLE ((int32_t)0x80920003)
@@ -76,7 +77,7 @@ static SDL_Gamepad *current_gamepad(void) {
     }
     return gamepad;
 }
-static void sample(PadData *d) {
+static void sample_host(PadData *d) {
     memset(d,0,sizeof(*d));
     d->left_x=d->left_y=d->right_x=d->right_y=128;
     d->orientation[3]=1.0f;
@@ -120,6 +121,53 @@ static void sample(PadData *d) {
     d->left_y=(uint8_t)(128-(k[SDL_SCANCODE_W] ? 128 : 0)+(k[SDL_SCANCODE_S] ? 127 : 0));
     d->right_x=(uint8_t)(128-(k[SDL_SCANCODE_LEFT] ? 128 : 0)+(k[SDL_SCANCODE_RIGHT] ? 127 : 0));
     d->right_y=(uint8_t)(128-(k[SDL_SCANCODE_UP] ? 128 : 0)+(k[SDL_SCANCODE_DOWN] ? 127 : 0));
+}
+
+/* BB_PAD_FILE=<file>: scripted input for automated runs. The file holds whitespace-separated
+ * tokens, re-read when it changes: button names (cross circle square triangle l1 r1 l2 r2 l3 r3
+ * options touchpad up down left right) are held while listed; lx= ly= rx= ry= (0..255) override
+ * the sticks. An empty file releases everything. */
+static struct { uint32_t buttons; int stick[4]; } injected={0,{-1,-1,-1,-1}};
+static void read_inject(void) {
+    static const char *path; static int checked; static uint64_t last_check; static struct timespec mtime;
+    if (!checked) { path=getenv("BB_PAD_FILE"); checked=1; }
+    if (!path || !*path) return;
+    uint64_t now=now_us();
+    if (now-last_check<20000) return;
+    last_check=now;
+    struct stat st;
+    if (stat(path,&st)!=0) return;
+    if (st.st_mtim.tv_sec==mtime.tv_sec && st.st_mtim.tv_nsec==mtime.tv_nsec) return;
+    mtime=st.st_mtim;
+    FILE *f=fopen(path,"r");
+    if (!f) return;
+    static const struct { const char *name; uint32_t ps; } names[]={
+        {"cross",BTN_CROSS}, {"circle",BTN_CIRCLE}, {"square",BTN_SQUARE}, {"triangle",BTN_TRIANGLE},
+        {"l1",BTN_L1}, {"r1",BTN_R1}, {"l2",BTN_L2}, {"r2",BTN_R2}, {"l3",BTN_L3}, {"r3",BTN_R3},
+        {"options",BTN_OPTIONS}, {"touchpad",BTN_TOUCHPAD},
+        {"up",BTN_UP}, {"down",BTN_DOWN}, {"left",BTN_LEFT}, {"right",BTN_RIGHT},
+    };
+    static const char *sticks[]={"lx=","ly=","rx=","ry="};
+    injected.buttons=0;
+    for (int i=0;i<4;++i) injected.stick[i]=-1;
+    char token[64];
+    while (fscanf(f,"%63s",token)==1) {
+        for (size_t i=0;i<sizeof(names)/sizeof(*names);++i) if (!strcmp(token,names[i].name)) injected.buttons|=names[i].ps;
+        for (int i=0;i<4;++i) if (!strncmp(token,sticks[i],3)) { int v=atoi(token+3); injected.stick[i]=v<0 ? 0 : v>255 ? 255 : v; }
+    }
+    fclose(f);
+    printf("Runtime: pad file: buttons 0x%x sticks %d %d %d %d\n",injected.buttons,
+           injected.stick[0],injected.stick[1],injected.stick[2],injected.stick[3]);
+}
+static void sample(PadData *d) {
+    sample_host(d);
+    if (bbgpu_overlay_captures_input()) return;
+    read_inject();
+    d->buttons|=injected.buttons;
+    if (injected.buttons & BTN_L2) d->l2=255;
+    if (injected.buttons & BTN_R2) d->r2=255;
+    uint8_t *axes[4]={&d->left_x,&d->left_y,&d->right_x,&d->right_y};
+    for (int i=0;i<4;++i) if (injected.stick[i]>=0) *axes[i]=(uint8_t)injected.stick[i];
 }
 
 static ABI int32_t pad_init(void) { pthread_mutex_lock(&lock); initialized=1; pthread_mutex_unlock(&lock); return 0; }

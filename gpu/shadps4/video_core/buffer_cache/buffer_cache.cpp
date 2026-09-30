@@ -624,6 +624,9 @@ bool BufferCache::SynchronizeMemoryFromImage(const Buffer* arena, VAddr device_a
         miss = {device_addr, size, generation};
         return false;
     }
+    // bbport: the lookups above only read what the texture binding helper leaves alone; the
+    // copy below changes image state, so the helper finishes first.
+    runtime.BeforeImageAccess();
     Image& image = texture_cache.GetImage(image_id);
     ASSERT_MSG(device_addr == image.info.guest_address,
                "Texel buffer aliases image subresources {:x} : {:x}", device_addr,

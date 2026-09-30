@@ -173,11 +173,14 @@ std::unique_ptr<RecordChunk> Scheduler::AcquireChunk() {
 
 void Scheduler::WaitHostCopies() {
     if (host_copies_done.load(std::memory_order_acquire) < host_copies_issued) {
+        BbStats::WaitTimer timer{BbStats::host_copies_wait_ns};
+        BbStats::host_copy_waits.fetch_add(1, std::memory_order_relaxed);
         KickRecording(true);
         while (host_copies_done.load(std::memory_order_acquire) < host_copies_issued) {
             std::this_thread::yield();
         }
     }
+    BbStats::WaitTimer timer{BbStats::copy_threads_wait_ns};
     BbCopy::WaitAsync();
 }
 
@@ -221,6 +224,7 @@ void Scheduler::SyncRecording() {
         return;
     }
     KickRecording(true);
+    BbStats::WaitTimer timer{BbStats::sync_recording_ns};
     std::unique_lock lk{recorder_mutex};
     recorder_idle_cv.wait(lk, [this] { return recorder_queue.empty() && !recorder_busy; });
 }
@@ -293,6 +297,7 @@ void Scheduler::Wait(u64 tick) {
         SubmitInfo info{};
         Flush(info);
     }
+    BbStats::WaitTimer timer{BbStats::tick_wait_ns};
     work_semaphore.Wait(tick);
 }
 

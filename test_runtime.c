@@ -1,5 +1,9 @@
 #define _GNU_SOURCE
 #include "runtime.h"
+#include <stdlib.h>
+
+/* The settings menu of the GPU library restarts through probe.c, which tests do not link. */
+void runtime_restart(void) { abort(); }
 #include <assert.h>
 #include <stdio.h>
 #include <string.h>

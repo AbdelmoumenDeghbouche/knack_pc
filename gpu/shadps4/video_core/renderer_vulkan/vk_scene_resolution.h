@@ -36,6 +36,10 @@ public:
                 vk::PipelineStageFlags2 = vk::PipelineStageFlagBits2::eComputeShader,
                 vk::AccessFlags2 = vk::AccessFlagBits2::eShaderRead);
     void NativeAccess(VideoCore::Image&, vk::AccessFlags2);
+    /// Whether NativeAccess has work for this image (a reduced-size proxy exists).
+    [[nodiscard]] bool Tracks(u64 image_uid) const {
+        return !copying && entries.contains(image_uid);
+    }
     void ResolveAll();
 private:
     struct Entry {

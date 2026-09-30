@@ -665,7 +665,8 @@ ImageId TextureCache::FindImageFromRange(VAddr address, size_t size, bool ensure
     return {};
 }
 
-ImageView& TextureCache::FindTexture(ImageId image_id, const ImageDesc& desc) {
+ImageView& TextureCache::FindTexture(ImageId image_id, const ImageDesc& desc, ViewMemo* memo,
+                                     bool refresh) {
     Image& image = slot_images[image_id];
     if (desc.type == BindingType::Storage) {
         image.flags |= ImageFlagBits::GpuModified;
@@ -675,7 +676,22 @@ ImageView& TextureCache::FindTexture(ImageId image_id, const ImageDesc& desc) {
             download_images.emplace(image_id);
         }
     }
-    UpdateImage(image_id);
+    if (refresh) {
+        UpdateImage(image_id);
+    }
+    if (memo && !BbToggle::Disabled(BbToggle::TextureViewMemo)) {
+        if (memo->image_id == image_id && memo->backing == image.backing && memo->view_id) {
+            return slot_image_views[memo->view_id];
+        }
+        ImageView& view = image.FindView(desc.view_info);
+        const auto& ids = image.backing->image_view_ids;
+        const u32 last = image.backing->last_view;
+        memo->image_id = image_id;
+        memo->backing = image.backing;
+        memo->view_id = last < ids.size() && &slot_image_views[ids[last]] == &view ? ids[last]
+                                                                                    : ids.back();
+        return view;
+    }
     return image.FindView(desc.view_info);
 }
 

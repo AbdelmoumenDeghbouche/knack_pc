@@ -99,6 +99,10 @@ public:
     /// A sampled image replaced by the upscaled frame (the display pass).
     bool RedirectSampled(VideoCore::ImageId image, const VideoCore::ImageViewInfo& info,
                          vk::ImageView& view, vk::ImageLayout& layout);
+    /// Whether RedirectSampled would replace `image` (it may record a barrier then).
+    [[nodiscard]] bool RedirectsSampled(VideoCore::ImageId image) const {
+        return display_redirect && image == ui_color;
+    }
 
     /// Presenter: the output-size display buffer standing in for the guest one at `address`.
     struct Display {

@@ -135,10 +135,20 @@ void PrepareVertexInputs(const Shader::Info& vs, const Shader::Gcn::FetchShaderD
     for (const auto& attrib : fetch.attributes) {
         const auto step_rate = attrib.GetStepRate();
         const auto buffer = attrib.GetSharp(vs);
+        // The V# may come from user data the guest is still writing: an unknown format leaves
+        // the inputs to the GPU thread, which reads them once the draw is submitted (the
+        // assertion in SurfaceFormat stopped the process here).
+        const vk::Format format =
+            LiverpoolToVK::TrySurfaceFormat(buffer.GetDataFmt(), buffer.GetNumberFmt());
+        if (format == vk::Format::eUndefined &&
+            buffer.GetDataFmt() != AmdGpu::DataFormat::FormatInvalid) {
+            out.valid = false;
+            return;
+        }
         attributes.push_back({
             .location = attrib.semantic,
             .binding = attrib.semantic,
-            .format = LiverpoolToVK::SurfaceFormat(buffer.GetDataFmt(), buffer.GetNumberFmt()),
+            .format = format,
             .offset = 0,
         });
         bindings.push_back({

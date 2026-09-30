@@ -780,6 +780,10 @@ static auto surface_format_table = []() constexpr {
     return result;
 }();
 
+vk::Format TrySurfaceFormat(AmdGpu::DataFormat data_format, AmdGpu::NumberFormat num_format) {
+    return surface_format_table[GetSurfaceFormatTableIndex(data_format, num_format)];
+}
+
 vk::Format SurfaceFormat(AmdGpu::DataFormat data_format, AmdGpu::NumberFormat num_format) {
     vk::Format result = surface_format_table[GetSurfaceFormatTableIndex(data_format, num_format)];
     bool found =

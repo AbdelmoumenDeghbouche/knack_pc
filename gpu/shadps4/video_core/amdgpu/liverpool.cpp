@@ -108,9 +108,14 @@ void Liverpool::Process(std::stop_token stoken) {
 
     while (!stoken.stop_requested()) {
         {
+            const auto idle_start = std::chrono::steady_clock::now();
             std::unique_lock lk{submit_mutex};
             Common::CondvarWait(submit_cv, lk, stoken,
                                 [this] { return num_commands || num_submits || submit_done; });
+            BbStats::gpu_idle_ns.fetch_add(
+                std::chrono::duration_cast<std::chrono::nanoseconds>(
+                    std::chrono::steady_clock::now() - idle_start).count(),
+                std::memory_order_relaxed);
         }
         if (stoken.stop_requested()) {
             break;

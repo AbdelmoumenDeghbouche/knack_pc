@@ -121,14 +121,36 @@ public:
     /// Retrieves image whose address matches provided
     [[nodiscard]] ImageId FindImageFromRange(VAddr address, size_t size, bool ensure_valid = true);
 
+    /// bbport: a FindView result remembered by the caller for the same image and view info.
+    struct ViewMemo {
+        ImageId image_id{};
+        const void* backing = nullptr;
+        ImageViewId view_id{};
+    };
+
     /// Retrieves an image view with the properties of the specified image id.
-    [[nodiscard]] ImageView& FindTexture(ImageId image_id, const ImageDesc& desc);
+    /// `refresh` false: an image found out of date is used as is (the texture binding helper
+    /// checked it beforehand; only a guest write racing with the draw can make it so).
+    [[nodiscard]] ImageView& FindTexture(ImageId image_id, const ImageDesc& desc,
+                                         ViewMemo* memo = nullptr, bool refresh = true);
 
     /// Retrieves the render target with specified properties
     [[nodiscard]] ImageView& FindRenderTarget(ImageId image_id, const ImageDesc& desc);
 
     /// Retrieves the depth target with specified properties
     [[nodiscard]] ImageView& FindDepthTarget(ImageId image_id, const ImageDesc& desc);
+
+    /// bbport: whether UpdateImage has nothing to do for this image (its fast path).
+    [[nodiscard]] bool IsUpToDate(ImageId image_id) const {
+        const Image& image = slot_images[image_id];
+        const u32 flags = std::atomic_ref<const u32>(reinterpret_cast<const u32&>(image.flags))
+                              .load(std::memory_order_acquire);
+        constexpr u32 Dirty = static_cast<u32>(ImageFlagBits::Dirty);
+        constexpr u32 Registered = static_cast<u32>(ImageFlagBits::Registered);
+        return (flags & (Dirty | Registered)) == Registered &&
+               image.track_addr == image.guest_begin && image.track_addr_end == image.guest_end &&
+               image.lru_touched_tick == gc_tick;
+    }
 
     /// Updates image contents if it was modified by CPU.
     void UpdateImage(ImageId image_id) {
@@ -143,8 +165,7 @@ public:
             constexpr u32 Dirty = static_cast<u32>(ImageFlagBits::Dirty);
             constexpr u32 Registered = static_cast<u32>(ImageFlagBits::Registered);
             if ((flags & (Dirty | Registered)) == Registered &&
-                image.track_addr == image.info.guest_address &&
-                image.track_addr_end == image.info.guest_address + image.info.guest_size &&
+                image.track_addr == image.guest_begin && image.track_addr_end == image.guest_end &&
                 image.lru_touched_tick == gc_tick) {
                 return;
             }

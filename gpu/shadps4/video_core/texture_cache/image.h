@@ -134,16 +134,40 @@ struct Image {
                      std::optional<SubresourceRange> subres_range = {});
 
 public:
-    Vulkan::Runtime* runtime;
-    Common::SlotVector<ImageView>* slot_image_views;
-    ImageInfo info;
-    vk::ImageAspectFlags aspect_mask = vk::ImageAspectFlagBits::eColor;
-    vk::SampleCountFlags supported_samples = vk::SampleCountFlagBits::e1;
+    struct BackingImage;
+    // bbport: fields every binding of the image reads, together ahead of the large ImageInfo
+    // (they were spread over several cache lines: one miss each per texture per draw).
     ImageFlagBits flags = ImageFlagBits::Dirty;
+    struct {
+        u32 is_bound : 1;
+        u32 is_target : 1;
+        u32 needs_rebind : 1;
+        u32 force_general : 1;
+    } binding{};
+    struct {
+        u32 texture : 1;
+        u32 storage : 1;
+        u32 render_target : 1;
+        u32 depth_target : 1;
+        u32 vo_surface : 1;
+    } usage{};
     VAddr track_addr = 0;
     VAddr track_addr_end = 0;
+    VAddr guest_begin = 0; ///< info.guest_address
+    VAddr guest_end = 0;   ///< info.guest_address + info.guest_size
+    BackingImage* backing{};
+    /// bbport: gc tick of the last LRU touch; skips the LRU list (a cache miss) when current.
+    mutable u64 lru_touched_tick = ~0ULL;
+    u64 tick_accessed_last{};
     ImageId depth_id{};
     u64 depth_uid{};
+    u64 image_uid{};
+
+    ImageInfo info;
+    Vulkan::Runtime* runtime;
+    Common::SlotVector<ImageView>* slot_image_views;
+    vk::ImageAspectFlags aspect_mask = vk::ImageAspectFlagBits::eColor;
+    vk::SampleCountFlags supported_samples = vk::SampleCountFlagBits::e1;
 
     vk::ImageUsageFlags usage_flags;
     vk::FormatFeatureFlags2 format_features;
@@ -162,29 +186,9 @@ public:
         u32 num_samples;
     };
     std::deque<BackingImage> backing_images;
-    BackingImage* backing{};
     boost::container::static_vector<u64, 16> mip_hashes{};
-    u64 image_uid{};
     u64 lru_id{};
-    /// bbport: gc tick of the last LRU touch; skips the LRU list (a cache miss) when current.
-    mutable u64 lru_touched_tick = ~0ULL;
-    u64 tick_accessed_last{};
     u64 hash{};
-
-    struct {
-        u32 texture : 1;
-        u32 storage : 1;
-        u32 render_target : 1;
-        u32 depth_target : 1;
-        u32 vo_surface : 1;
-    } usage{};
-
-    struct {
-        u32 is_bound : 1;
-        u32 is_target : 1;
-        u32 needs_rebind : 1;
-        u32 force_general : 1;
-    } binding{};
 
 private:
     static Common::IncrementalIdProvider<u64> global_image_uid;
