@@ -85,8 +85,9 @@ def output_size(settings):
 
 
 def scaled_sizes(settings):
-    """(render, output) for an output above 1080p: the game renders at output / preset scale
-    (or at the output size without upscaler) and the upscaler fills the output. None at 1080p."""
+    """(render, output) for an output other than 1080p (above it, or 720p for the Steam Deck):
+    the game renders at output / preset scale (or at the output size without upscaler) and the
+    upscaler fills the output. None at 1080p."""
     out=output_size(settings)
     if out==OUTPUT_SIZE: return None
     scale=1.0
@@ -173,7 +174,7 @@ def main():
     p.add_argument('--print-preset-size',action='store_true',help='print the selected preset size, if reduced')
     p.add_argument('--output-res',default='',help='output resolution WxH (the upscaler\'s; the UI stays 1920x1080)')
     p.add_argument('--print-scaled',action='store_true',
-                   help='print "RENDER OUTPUT" (WxH) when bbport.ini selects an output above 1080p')
+                   help='print "RENDER OUTPUT" (WxH) when bbport.ini selects an output other than 1080p')
     a=p.parse_args()
     if a.print_scaled:
         sizes=scaled_sizes(read_settings(a.settings))

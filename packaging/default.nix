@@ -26,12 +26,28 @@ let
   # Mesa's own drivers: the host's (e.g. SteamOS /usr/lib) cannot load into this closure's glibc.
   icds = lib.concatMapStringsSep ":" (name: "${pkgs.mesa}/share/vulkan/icd.d/${name}")
     [ "radeon_icd.x86_64.json" "intel_icd.x86_64.json" ];
-  # Environment the closure needs on any host: icon themes, SVG icon loader, fonts (the host's
-  # font directories through fontconfig's default config) and a UTF-8 locale built into glibc.
+  # Fonts: bundled DejaVu and Adwaita plus the host's usual font directories, but not the host's
+  # /etc/fonts: on NixOS it names fonts in the host's /nix/store, which the AppImage hides behind
+  # its own store in some environments (Steam's FHS sandbox), and the launcher showed boxes.
+  fontsConf = pkgs.writeText "bbport-fonts.conf" ''
+    <?xml version="1.0"?>
+    <!DOCTYPE fontconfig SYSTEM "urn:fontconfig:fonts.dtd">
+    <fontconfig>
+      <dir>${pkgs.dejavu_fonts}/share/fonts</dir>
+      <dir>${pkgs.adwaita-fonts}/share/fonts</dir>
+      <dir>/usr/share/fonts</dir>
+      <dir>/usr/local/share/fonts</dir>
+      <dir prefix="xdg">fonts</dir>
+      <cachedir prefix="xdg">bbport/fontconfig</cachedir>
+      <include ignore_missing="yes">${pkgs.fontconfig.out}/etc/fonts/conf.d</include>
+    </fontconfig>
+  '';
+  # Environment the closure needs on any host: icon themes, SVG icon loader, fonts (above) and
+  # a UTF-8 locale built into glibc.
   common = ''
       --prefix XDG_DATA_DIRS : ${pkgs.adwaita-icon-theme}/share:${pkgs.hicolor-icon-theme}/share:${pkgs.gtk4}/share/gsettings-schemas/${pkgs.gtk4.name} \
       --set-default GDK_PIXBUF_MODULE_FILE ${pkgs.librsvg}/${pkgs.gdk-pixbuf.moduleDir}.cache \
-      --set-default FONTCONFIG_FILE ${pkgs.fontconfig.out}/etc/fonts/fonts.conf \
+      --set-default FONTCONFIG_FILE ${fontsConf} \
       --set-default LC_ALL C.UTF-8 \
   '';
 in

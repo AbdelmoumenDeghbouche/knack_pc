@@ -54,7 +54,7 @@ fi
 # Frame rate: BB_FPS=uncap (default; delta-time patch, vblank follows the display),
 # 60/90 (fixed-timestep patches) or 30 (unpatched). BB_PATCHES adds patch names ("a;b").
 fps=${BB_FPS:-uncap}
-# bbport.ini output_res above 1080p (menu, launcher): the game renders at the preset's size of it
+# bbport.ini output_res other than 1080p (menu, launcher; 720p for the Steam Deck): the game renders at the preset's size of it
 # (a patch), the upscaler fills the output, the UI is drawn at the output size.
 if [[ -z ${BB_RENDER_RES:-} ]]; then
     read -r scaled_render scaled_output < <("$PYTHON" scripts/patches.py --print-scaled --settings "$BB_CONFIG") || true

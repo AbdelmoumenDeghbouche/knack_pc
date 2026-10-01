@@ -36,9 +36,10 @@ inline constexpr Effect Effects[] = {
 };
 inline constexpr int EffectCount = int(sizeof(Effects) / sizeof(Effects[0]));
 /// Output resolutions: the upscaler's output and the UI (patched at start).
-inline constexpr int OutputWidths[] = {1920, 2560, 3840};
-inline constexpr int OutputHeights[] = {1080, 1440, 2160};
-inline constexpr int OutputCount = 3;
+inline constexpr int OutputWidths[] = {1280, 1920, 2560, 3840};
+inline constexpr int OutputHeights[] = {720, 1080, 1440, 2160};
+inline constexpr int OutputCount = 4;
+inline constexpr int OutputDefault = 1; ///< 1920x1080, the game's own size
 
 struct Values {
     std::atomic<int> upscaler{UpscalerFsr3};
@@ -60,7 +61,7 @@ struct Values {
     /// Applied at start (patches.py); the menu shows when a restart is needed.
     std::atomic<bool> effects[EffectCount]{};
     std::atomic<int> model_lod{0}; ///< -2 highest .. 2 lowest, 0 the game's
-    std::atomic<int> output_res{0}; ///< index into OutputWidths
+    std::atomic<int> output_res{OutputDefault}; ///< index into OutputWidths
     /// Why FSR 4 cannot run (assets, device features), or null. Set by the renderer.
     std::atomic<const char*> fsr4_problem{nullptr};
 
@@ -71,7 +72,7 @@ struct Values {
     bool startup_object_motion = true;
     bool startup_effects[EffectCount]{};
     int startup_model_lod = 0;
-    int startup_output_res = 0;
+    int startup_output_res = OutputDefault;
 };
 
 Values& Get();

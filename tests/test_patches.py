@@ -7,7 +7,7 @@ from pathlib import Path
 
 from patches import (EBOOT_BASE, OUTPUT_SIZE, RESOLUTION_TEMPLATE, SCENE_HEIGHT,
                      SCENE_WIDTH, UI_HEIGHT, UI_WIDTH, compile_patches,
-                     render_size, resolution_writes)
+                     render_size, resolution_writes, scaled_sizes)
 
 XML = ROOT / 'patches/Bloodborne.xml'
 SEGMENTS = [(0, 0x6000000)]
@@ -71,6 +71,16 @@ class NativeUiTests(unittest.TestCase):
     def test_native_and_disabled_upscaler_need_no_resolution_patch(self):
         self.assertIsNone(render_size({'preset': '0'}))
         self.assertIsNone(render_size({'upscaler': 'off', 'preset': '3'}))
+
+    def test_output_other_than_1080p_scales_the_scene(self):
+        self.assertIsNone(scaled_sizes({'output_res': '1920x1080', 'preset': '2'}))
+        # Steam Deck: below 1080p the scene is still the preset's fraction of the output.
+        for preset, expected in [(0, (1280, 720)), (2, (752, 424)), (4, (426, 240))]:
+            with self.subTest(preset=preset):
+                self.assertEqual(scaled_sizes({'output_res': '1280x720', 'preset': str(preset)}),
+                                 (expected, (1280, 720)))
+        self.assertEqual(scaled_sizes({'output_res': '3840x2160', 'preset': '3'}),
+                         ((1916, 1078), (3840, 2160)))
 
 
 if __name__ == '__main__':

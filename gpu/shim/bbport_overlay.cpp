@@ -256,7 +256,7 @@ void Menu() {
     ImGui::EndDisabled(); // upscaler off
 
     ImGui::SeparatorText("Разрешение и эффекты (после перезапуска)");
-    static const char* outputs[] = {"1920 x 1080", "2560 x 1440", "3840 x 2160"};
+    static const char* outputs[] = {"1280 x 720", "1920 x 1080", "2560 x 1440", "3840 x 2160"};
     int output = s.output_res;
     if (ImGui::BeginCombo("Разрешение вывода", outputs[output])) {
         for (int i = 0; i < BbSettings::OutputCount; ++i) {
@@ -266,9 +266,10 @@ void Menu() {
         }
         ImGui::EndCombo();
     }
-    Hint("Размер готового кадра и интерфейса. Выше 1080p игра рисует сцену в разрешении "
+    Hint("Размер готового кадра и интерфейса. Кроме 1080p игра рисует сцену в разрешении "
          "пресета от выбранного (например, 4K Performance = 1920x1080), а апскейлер "
-         "дорисовывает кадр до 4K. Пресет тогда тоже меняется только с перезапуском.");
+         "дорисовывает кадр до 4K. Пресет тогда тоже меняется только с перезапуском. "
+         "1280x720 — для Steam Deck: в 1080p игра рисовала бы больше, чем экран.");
     static const char* lods[] = {"Максимальная (-2)", "Как в игре", "Ниже (1)", "Минимальная (2)"};
     static constexpr int lod_values[] = {-2, 0, 1, 2};
     int lod_index = 1;

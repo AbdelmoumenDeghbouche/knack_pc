@@ -29,7 +29,7 @@ Mesa/RADV) has been tested thoroughly.
   computes motion vectors itself: camera motion from depth and the scene matrices, and object
   motion (characters, cloth, weapons) from the vertex positions of the previous frame. The
   scene is jittered sub-pixel (Halton) and rendered at a reduced resolution; the upscaler fills
-  the output (1080p, 1440p or 2160p) and the UI is drawn natively at the output resolution.
+  the output (720p for the Steam Deck, 1080p, 1440p or 2160p) and the UI is drawn natively at the output resolution.
   - **FSR 3.1** (FireBurn/FSR-Vulkan).
   - **FSR 4 (INT8, model v07)** on any GPU with integer dot products — RDNA2/3 included.
   - **FSR 4.1.1 (INT8)**: AMD's 4.1.1 DLL is recorded once under vkd3d-proton and its passes
@@ -98,7 +98,21 @@ bash tools/fsr4cap/build_assets.sh <amd_fidelityfx_upscaler_dx12.dll> <amd_fidel
 
 **AppImage** (Steam Deck): `bash build.sh && bash packaging/appimage.sh` →
 `dist/Bloodborne-bbport-x86_64.AppImage`; data in `~/.local/share/bbport`, `--play` starts the
-game without the launcher window (Game Mode).
+game without the launcher window (Game Mode). On the Steam Deck pick the 1280×720 output (the
+game is 16:9; on the 1280×800 screen it gets thin bars).
+
+**Adding the AppImage to Steam** (*Add a Non-Steam Game*): leave *Compatibility* off. Where Steam
+runs games without FUSE (NixOS: Steam's FHS sandbox; the AppImage then exits with *Cannot mount
+AppImage*), set the launch options to
+
+```
+TMPDIR=$HOME/.cache APPIMAGE_EXTRACT_AND_RUN=1 NO_CLEANUP=1 %command%
+```
+
+The AppImage then unpacks itself (~2 GB, `~/.cache/appimage_extracted_*`) on the first start
+(~10 s) and reuses that copy afterwards; a new AppImage version gets a new copy, the old one can
+be deleted. Without `TMPDIR` it would unpack into Steam's `/tmp`, which is in RAM there. Add
+` --play` after `%command%` to skip the launcher.
 
 Useful variables: `BB_FRAME_STATS=1` (frame statistics), `BB_GPU_PROFILE=1` (GPU time per
 pass), `BB_FSR4_PROFILE=1` (GPU time per FSR 4 pass), `BB_UPSCALER=fsr3|fsr4|fsr411|none`.
