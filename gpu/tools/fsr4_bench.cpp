@@ -101,6 +101,9 @@ Gpu CreateGpu(bool stats) {
         VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PIPELINE_EXECUTABLE_PROPERTIES_FEATURES_KHR};
     VkPhysicalDeviceComputeShaderDerivativesFeaturesKHR derivatives{
         VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_COMPUTE_SHADER_DERIVATIVES_FEATURES_KHR};
+    // Cooperative matrix (WMMA) for experimental model passes, when the device has it.
+    VkPhysicalDeviceCooperativeMatrixFeaturesKHR coopmat{
+        VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_COOPERATIVE_MATRIX_FEATURES_KHR};
     VkPhysicalDeviceVulkan13Features f13{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES};
     VkPhysicalDeviceVulkan12Features f12{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES};
     VkPhysicalDeviceVulkan11Features f11{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_1_FEATURES};
@@ -109,13 +112,17 @@ Gpu CreateGpu(bool stats) {
     f11.pNext = &f12;
     f12.pNext = &f13;
     f13.pNext = &derivatives;
+    derivatives.pNext = &coopmat;
     if (stats) {
-        derivatives.pNext = &executable;
+        coopmat.pNext = &executable;
     }
     vkGetPhysicalDeviceFeatures2(gpu.physical, &features);
     features.features.robustBufferAccess = VK_FALSE; // as the game: no robustness cost
     f13.robustImageAccess = VK_FALSE;
     std::vector<const char*> extensions{VK_KHR_COMPUTE_SHADER_DERIVATIVES_EXTENSION_NAME};
+    if (coopmat.cooperativeMatrix) {
+        extensions.push_back(VK_KHR_COOPERATIVE_MATRIX_EXTENSION_NAME);
+    }
     if (stats) {
         extensions.push_back(VK_KHR_PIPELINE_EXECUTABLE_PROPERTIES_EXTENSION_NAME);
     }
