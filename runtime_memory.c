@@ -17,7 +17,19 @@
 #include <fcntl.h>
 #include <sys/mman.h>
 #include <unistd.h>
-#define POOL_SIZE (UINT64_C(5056) * 1024 * 1024) /* sceKernelGetDirectMemorySize on retail PS4 */
+/* sceKernelGetDirectMemorySize on retail PS4: 5056 MiB. BB_DMEM_MB raises it (the resolution
+ * patches above 1080p need about 4 GiB more; run.sh sets it). */
+static uint64_t pool_size_bytes(void) {
+    static uint64_t size;
+    if (!size) {
+        const char *env = getenv("BB_DMEM_MB");
+        uint64_t mb = env ? strtoull(env, NULL, 10) : 0;
+        if (mb < 5056 || mb > 16384) mb = 5056;
+        size = mb * 1024 * 1024;
+    }
+    return size;
+}
+#define POOL_SIZE pool_size_bytes()
 #define FLEXIBLE_SIZE (UINT64_C(448) * 1024 * 1024)
 #define PAGE UINT64_C(16384)
 #define USER_MIN UINT64_C(0x1000000000)

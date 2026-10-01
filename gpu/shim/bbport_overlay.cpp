@@ -249,9 +249,48 @@ void Menu() {
          "неподвижным, отсюда шлейф.");
     ImGui::EndDisabled(); // upscaler off
 
-    if (s.object_motion != s.startup_object_motion) {
+    ImGui::SeparatorText("Разрешение и эффекты (после перезапуска)");
+    static const char* outputs[] = {"1920 x 1080", "2560 x 1440", "3840 x 2160"};
+    int output = s.output_res;
+    if (ImGui::BeginCombo("Разрешение вывода", outputs[output])) {
+        for (int i = 0; i < BbSettings::OutputCount; ++i) {
+            if (ImGui::Selectable(outputs[i], i == output)) {
+                Store(s.output_res, i, true);
+            }
+        }
+        ImGui::EndCombo();
+    }
+    Hint("Размер готового кадра и интерфейса. Выше 1080p игра рисует сцену в разрешении "
+         "пресета от выбранного (например, 4K Performance = 1920x1080), а апскейлер "
+         "дорисовывает кадр до 4K. Пресет тогда тоже меняется только с перезапуском.");
+    static const char* lods[] = {"Максимальная (-2)", "Как в игре", "Ниже (1)", "Минимальная (2)"};
+    static constexpr int lod_values[] = {-2, 0, 1, 2};
+    int lod_index = 1;
+    for (int i = 0; i < 4; ++i) {
+        if (lod_values[i] == s.model_lod) lod_index = i;
+    }
+    if (ImGui::BeginCombo("Детализация моделей", lods[lod_index])) {
+        for (int i = 0; i < 4; ++i) {
+            if (ImGui::Selectable(lods[i], i == lod_index)) {
+                Store(s.model_lod, lod_values[i], true);
+            }
+        }
+        ImGui::EndCombo();
+    }
+    for (int e = 0; e < BbSettings::EffectCount; ++e) {
+        Checkbox(BbSettings::Effects[e].label, s.effects[e]);
+    }
+    Hint("Эффекты включаются и выключаются патчами игры при запуске (patches/Bloodborne.xml). "
+         "Размытие в движении и тени от динамических источников заметно нагружают GPU.");
+
+    bool restart = s.object_motion != s.startup_object_motion ||
+                   s.model_lod != s.startup_model_lod || s.output_res != s.startup_output_res;
+    for (int e = 0; e < BbSettings::EffectCount; ++e) {
+        restart |= s.effects[e] != s.startup_effects[e];
+    }
+    if (restart) {
         ImGui::TextColored(ImVec4(1.0f, 0.75f, 0.3f, 1.0f),
-                           "Векторы движения объектов требуют перезапуск");
+                           "Изменения применятся после перезапуска игры");
         if (ImGui::Button("Применить и перезапустить игру")) {
             BbSettings::Save();
             runtime_restart();

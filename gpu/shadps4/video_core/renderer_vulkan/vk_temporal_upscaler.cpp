@@ -1159,6 +1159,58 @@ void TemporalUpscaler::RunScaled() {
     }
     last_frame = now;
 
+    // bbport: FSR 4 writes its HDR-format output, copied into the output-size UI image.
+    if (UseFsr4()) {
+        const auto color_view = Check(device.createImageView({
+            .image = vk::Image(color.backing->image),
+            .viewType = vk::ImageViewType::e2D,
+            .format = color.info.pixel_format,
+            .subresourceRange = {vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1},
+        }));
+        barrier(vk::Image(output_image), vk::ImageAspectFlagBits::eColor,
+                vk::ImageLayout::eUndefined, all, vk::AccessFlagBits2::eNone,
+                vk::ImageLayout::eGeneral, all, rw);
+        const bool ok4 = RecordFsr4(cmdbuf, {vk::Image(color.backing->image), color_view, w, h},
+                                    {vk::Image(depth.backing->image), depth_view, w, h}, w, h, ow,
+                                    oh, frame_ms);
+        if (ok4) {
+            barrier(vk::Image(output_image), vk::ImageAspectFlagBits::eColor,
+                    vk::ImageLayout::eGeneral, all, rw, vk::ImageLayout::eGeneral,
+                    vk::PipelineStageFlagBits2::eBlit, vk::AccessFlagBits2::eTransferRead);
+            barrier(vk::Image(ui_image), vk::ImageAspectFlagBits::eColor,
+                    vk::ImageLayout::eGeneral, all, rw, vk::ImageLayout::eGeneral,
+                    vk::PipelineStageFlagBits2::eBlit, vk::AccessFlagBits2::eTransferWrite);
+            const vk::ImageBlit region{
+                .srcSubresource = {vk::ImageAspectFlagBits::eColor, 0, 0, 1},
+                .srcOffsets = std::array{vk::Offset3D{0, 0, 0},
+                                         vk::Offset3D{s32(ow), s32(oh), 1}},
+                .dstSubresource = {vk::ImageAspectFlagBits::eColor, 0, 0, 1},
+                .dstOffsets = std::array{vk::Offset3D{0, 0, 0},
+                                         vk::Offset3D{s32(ow), s32(oh), 1}},
+            };
+            cmdbuf.blitImage(vk::Image(output_image), vk::ImageLayout::eGeneral,
+                             vk::Image(ui_image), vk::ImageLayout::eGeneral, region,
+                             vk::Filter::eNearest);
+            barrier(vk::Image(ui_image), vk::ImageAspectFlagBits::eColor,
+                    vk::ImageLayout::eGeneral, vk::PipelineStageFlagBits2::eBlit,
+                    vk::AccessFlagBits2::eTransferWrite, vk::ImageLayout::eGeneral,
+                    vk::PipelineStageFlagBits2::eColorAttachmentOutput, color_access);
+            reset = false;
+            dispatched_last_frame = true;
+        }
+        scheduler.DeferOperation([device, depth_view, color_view] {
+            device.destroyImageView(depth_view);
+            device.destroyImageView(color_view);
+        });
+        done_this_frame = true;
+        if (ok4) {
+            ui_phase = true;
+            ui_color = ldr_target;
+            ui_depth = camera_motion.Depth();
+        }
+        return;
+    }
+
     const auto& settings = BbSettings::Get();
     FfxVkPortableUpscaleDispatchInfo info{};
     info.structSize = sizeof(info);
@@ -1369,8 +1421,7 @@ bool TemporalUpscaler::DisplayOverride(VAddr address, Display& display) {
 namespace Vulkan {
 
 bool TemporalUpscaler::UseFsr4() const {
-    return BbSettings::Get().upscaler == BbSettings::UpscalerFsr4 && !scaled_session &&
-           !fsr4_failed;
+    return BbSettings::Get().upscaler == BbSettings::UpscalerFsr4 && !fsr4_failed;
 }
 
 bool TemporalUpscaler::RecordFsr4(vk::CommandBuffer cmdbuf, Fsr4Upscaler::Image color,

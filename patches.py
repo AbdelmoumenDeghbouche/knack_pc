@@ -21,6 +21,31 @@ PRESET_SCALES=[1.0,1.5,1.7,2.0,3.0]
 # and the UI movie viewport. Keep the latter at native size so glyph rasterisation and
 # vector tessellation do not inherit the scene's FSR resolution.
 RESOLUTION_TEMPLATE='Resolution Patch 1280x720 (16:9)'
+# Effect switches (bbport.ini, in-game menu, launcher): key -> (patch when the key is 0, patch
+# when it is 1). The game reads these at start; a change applies after a restart.
+EFFECTS={
+    'effect_chromatic_aberration':('Disable Chromatic Aberration',None),
+    'effect_dof':('Disable DoF',None),
+    'effect_motion_blur':('Disable Motion Blur (perf increase)',None),
+    'effect_ssao':('Disable SSAO',None),
+    'effect_game_aa':('Disable AA',None),
+    'effect_dynamic_shadows':('Disable Dynamic Light Shadows (perf increase)',None),
+    'effect_ssr':(None,'Enable Screen Space Reflections (READ NOTE)'),
+    'skip_intro':(None,'Skip Intro'),
+}
+# model_lod: -2 highest, 0 the game's, 1 lower, 2 lowest.
+MODEL_LOD={'-2':'Model LOD -2 (Highest)','1':'Model LOD 1 (Lower)','2':'Model LOD 2 (Lowest)'}
+
+
+def effect_patches(settings):
+    names=[]
+    for key,(off,on) in EFFECTS.items():
+        if key not in settings: continue
+        name=on if settings[key]=='1' else off
+        if name: names.append(name)
+    lod=MODEL_LOD.get(settings.get('model_lod','0'))
+    if lod: names.append(lod)
+    return names
 SCENE_WIDTH=0x02196A6B-EBOOT_BASE
 SCENE_HEIGHT=0x02196A7A-EBOOT_BASE
 UI_WIDTH=0x02358554-EBOOT_BASE
@@ -49,12 +74,38 @@ def render_size(settings,override=''):
     return tuple(max(2,round(v/scale/2)*2) for v in OUTPUT_SIZE)
 
 
-def resolution_writes(xml,size,app_version,segments):
+def output_size(settings):
+    """Output (UI) size from bbport.ini output_res, e.g. 3840x2160; 1920x1080 by default."""
+    try:
+        w,h=(int(v) for v in settings.get('output_res','').lower().split('x'))
+        if w>0 and h>0: return (w,h)
+    except ValueError:
+        pass
+    return OUTPUT_SIZE
+
+
+def scaled_sizes(settings):
+    """(render, output) for an output above 1080p: the game renders at output / preset scale
+    (or at the output size without upscaler) and the upscaler fills the output. None at 1080p."""
+    out=output_size(settings)
+    if out==OUTPUT_SIZE: return None
+    scale=1.0
+    if settings.get('upscaler','fsr3')!='off':
+        preset=int(settings.get('preset','0') or 0)
+        scale=PRESET_SCALES[max(0,min(preset,len(PRESET_SCALES)-1))]
+    render=tuple(max(2,round(v/scale/2)*2) for v in out)
+    # A scene of exactly 1920x1080 (4K Performance) is indistinguishable from the game's UI
+    # coordinate space, which the port's UI composition recognizes by that size.
+    if render==OUTPUT_SIZE: render=(1916,1078)
+    return render,out
+
+
+def resolution_writes(xml,size,app_version,segments,ui=OUTPUT_SIZE):
     writes=compile_patches(xml,[RESOLUTION_TEMPLATE],app_version,segments)
     replacements={SCENE_WIDTH:(0xB8,0x500,size[0]),
                   SCENE_HEIGHT:(0xB8,0x2D0,size[1]),
-                  UI_WIDTH:(0xB8,0x500,OUTPUT_SIZE[0]),
-                  UI_HEIGHT:(0xB9,0x2D0,OUTPUT_SIZE[1])}
+                  UI_WIDTH:(0xB8,0x500,ui[0]),
+                  UI_HEIGHT:(0xB9,0x2D0,ui[1])}
     out=[]
     seen=set()
     for offset,data in writes:
@@ -120,7 +171,14 @@ def main():
     p.add_argument('--settings',type=Path,default=Path(__file__).parent/'bbport.ini')
     p.add_argument('--render-res',default='',help='render resolution WxH (overrides the preset)')
     p.add_argument('--print-preset-size',action='store_true',help='print the selected preset size, if reduced')
+    p.add_argument('--output-res',default='',help='output resolution WxH (the upscaler\'s; the UI stays 1920x1080)')
+    p.add_argument('--print-scaled',action='store_true',
+                   help='print "RENDER OUTPUT" (WxH) when bbport.ini selects an output above 1080p')
     a=p.parse_args()
+    if a.print_scaled:
+        sizes=scaled_sizes(read_settings(a.settings))
+        if sizes: print(f'{sizes[0][0]}x{sizes[0][1]} {sizes[1][0]}x{sizes[1][1]}')
+        return
     if a.print_preset_size:
         settings=read_settings(a.settings)
         if 'BB_UPSCALER' in os.environ:
@@ -131,12 +189,21 @@ def main():
         if size: print(f'{size[0]}x{size[1]}')
         return
     names=FPS_PRESETS[a.fps]+[n.strip() for n in a.extra.split(';') if n.strip()]
+    names+=[n for n in effect_patches(read_settings(a.settings)) if n not in names]
     segments=eboot_segments((a.out/'eboot.elf').read_bytes())
     writes=compile_patches(a.xml,names,a.app_version,segments)
     size=render_size(read_settings(a.settings),a.render_res) if a.render_res else None
+    # The UI keeps the game's 1920x1080 coordinates even for a larger output: the port draws
+    # it into the output-size image with a viewport scaled by output / 1920
+    # (UiComposition::NativeViewport), so it is rasterized at the output resolution.
+    ui=OUTPUT_SIZE
     if size:
-        writes+=resolution_writes(a.xml,size,a.app_version,segments)
-        print(f'Patches: scene {size[0]}x{size[1]}; native UI {OUTPUT_SIZE[0]}x{OUTPUT_SIZE[1]}')
+        writes+=resolution_writes(a.xml,size,a.app_version,segments,ui)
+        if size[0]*size[1]>OUTPUT_SIZE[0]*OUTPUT_SIZE[1]:
+            heap='Increased Graphics Heap Sizes'
+            writes+=compile_patches(a.xml,[heap],a.app_version,segments)
+            names.append(heap)
+        print(f'Patches: scene {size[0]}x{size[1]}; UI {ui[0]}x{ui[1]}')
     blob=struct.pack('<8sQ',b'BBPATCH1',len(writes))
     for offset,data in writes: blob+=struct.pack('<QQ',offset,len(data))+data
     (a.out/'patches.bin').write_bytes(blob)
