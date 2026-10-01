@@ -7,10 +7,11 @@
 set -euo pipefail
 cd -- "$(dirname -- "$0")/.."
 [[ -f out/bb-probe && -f out/gpu/libbbgpu.so ]] || { echo 'Build first: bash build.sh' >&2; exit 1; }
+root=$PWD
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
 (cd "$work" && nix bundle --impure --bundler github:ralismark/nix-appimage \
-    --expr "import $PWD/packaging {}")
+    --expr "import $root/packaging {}")
 mkdir -p dist
 install -m755 "$work/bbport.AppImage" dist/Bloodborne-bbport-x86_64.AppImage
 ls -lh dist/Bloodborne-bbport-x86_64.AppImage
