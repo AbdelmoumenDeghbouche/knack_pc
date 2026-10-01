@@ -154,3 +154,7 @@ target_compile_options(scene-resolution-test PRIVATE -UNDEBUG -fPIC)
 set_source_files_properties(../test_scene_resolution.cpp PROPERTIES
     COMPILE_OPTIONS "-fvisibility=hidden;-fvisibility-inlines-hidden")
 target_link_libraries(scene-resolution-test PRIVATE bbgpu)
+
+# bbport: FSR 4 benchmark outside the game (tools/fsr4_bench.cpp): ninja -C out/gpu fsr4-bench.
+add_executable(fsr4-bench EXCLUDE_FROM_ALL tools/fsr4_bench.cpp)
+target_link_libraries(fsr4-bench PRIVATE ffx-vulkan::fsr4-v07-vulkan ffx-vulkan::fsr4-v07-assets Vulkan::Vulkan)

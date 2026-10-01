@@ -66,6 +66,10 @@ fi
 if [[ -z ${BB_VBLANK_HZ:-} ]]; then
     case $fps in uncap) export BB_VBLANK_HZ=0 ;; 90) export BB_VBLANK_HZ=90 ;; *) export BB_VBLANK_HZ=60 ;; esac
 fi
+# FSR 4: faster post passes next to the downloaded ones (incremental; tools/fsr4_optimize.sh).
+if [[ -z ${BB_PREBUILT:-} && -d fsr4_shaders ]] && command -v spirv-cross >/dev/null; then
+    bash tools/fsr4_optimize.sh || echo 'FSR 4: optimized post passes not built' >&2
+fi
 if [[ -n ${BB_PREBUILT:-} ]]; then
     probe=${BB_PROBE:-bin/bb-probe}
 else

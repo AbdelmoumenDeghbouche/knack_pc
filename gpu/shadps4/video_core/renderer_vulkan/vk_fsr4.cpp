@@ -119,7 +119,15 @@ struct Fsr4Upscaler::Impl {
         for (u32 pass = 0; pass < FFX_FSR4_MODEL_PASS_COUNT; ++pass) {
             if (!load(assets.model[pass], code[1 + pass])) return false;
         }
-        if (!load(assets.post, code[13]) || !load(assets.rcas, code[14]) ||
+        // bbport: tools/fsr4_optimize.sh puts a faster, bit-exact post pass into opt/ (stores
+        // through shared memory); BB_FSR4_OPT=0 keeps the original.
+        const char* opt_env = std::getenv("BB_FSR4_OPT");
+        const bool opt = !(opt_env && opt_env[0] == '0') &&
+                         ReadFile(dir + "opt/" + assets.post, code[13]);
+        if (opt) {
+            std::printf("Upscaler: FSR 4 optimized post pass (%s)\n", assets.post);
+        }
+        if (!(opt || load(assets.post, code[13])) || !load(assets.rcas, code[14]) ||
             !load(assets.spdAutoExposure, code[15]) || !load(assets.initializer, initializer) ||
             !load(assets.prePassWeights, weights)) {
             return false;
