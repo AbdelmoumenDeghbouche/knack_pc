@@ -10,8 +10,7 @@
 # from shared memory would become a 16-bit store, which rounds differently), so the result is
 # bit-exact with the original pass.
 #
-# spirv-cross also translates OpBitcast uint -> i8vec4 + OpSConvert as unpack8(uint), which is
-# unsigned; the residual input of the pass is signed. unpack8(int(x)) restores that.
+# spirv-cross mistranslates the signed int8 unpacks; Fsr4SpirvCrossFixes.pm corrects them.
 use strict;
 use warnings;
 local $/;
@@ -19,8 +18,10 @@ my $src = <STDIN>;
 die "unexpected local size\n"
     unless $src =~ /layout\(local_size_x = 8, local_size_y = 8, local_size_z = 1\) in;/;
 
-my $signed = ($src =~ s/ivec4\(unpack8\((_\d+)\)\)/ivec4(unpack8(int($1)))/g);
-die "expected the signed residual unpacks\n" unless $signed;
+use FindBin;
+use lib $FindBin::Bin;
+use Fsr4SpirvCrossFixes;
+$src = Fsr4SpirvCrossFixes::signed_unpack($src);
 
 my %slot = (rw_recurrent_0 => ['bb_rec', 'vec4'], rw_history_color => ['bb_hist', 'vec4'],
             rw_mlsr_output_color => ['bb_out', 'vec4']);

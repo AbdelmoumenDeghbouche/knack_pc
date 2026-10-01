@@ -275,7 +275,15 @@ int main(int argc, char** argv) {
     const std::string dir = std::string{dir_env && dir_env[0] ? dir_env : "fsr4_shaders"} + "/";
     std::array<std::vector<unsigned char>, FFX_FSR4_VK_PASS_COUNT> code;
     std::vector<unsigned char> initializer, weights;
+    // As vk_fsr4.cpp: passes from opt/ (tools/fsr4_optimize.sh) unless BB_FSR4_OPT=0.
+    const char* opt_env = std::getenv("BB_FSR4_OPT");
+    const bool use_opt = !(opt_env && opt_env[0] == '0');
+    int optimized = 0;
     const auto load = [&](const char* name, std::vector<unsigned char>& data) {
+        if (use_opt && ReadFile(dir + "opt/" + name, data)) {
+            ++optimized;
+            return;
+        }
         if (!ReadFile(dir + name, data)) {
             std::fprintf(stderr, "missing %s%s\n", dir.c_str(), name);
             std::exit(1);
@@ -285,17 +293,12 @@ int main(int argc, char** argv) {
     for (uint32_t pass = 0; pass < FFX_FSR4_MODEL_PASS_COUNT; ++pass) {
         load(assets.model[pass], code[1 + pass]);
     }
-    // As vk_fsr4.cpp: the optimized post pass from opt/ unless BB_FSR4_OPT=0.
-    const char* opt_env = std::getenv("BB_FSR4_OPT");
-    if (!(opt_env && opt_env[0] == '0') && ReadFile(dir + "opt/" + assets.post, code[13])) {
-        std::printf("optimized post pass\n");
-    } else {
-        load(assets.post, code[13]);
-    }
+    load(assets.post, code[13]);
     load(assets.rcas, code[14]);
     load(assets.spdAutoExposure, code[15]);
     load(assets.initializer, initializer);
     load(assets.prePassWeights, weights);
+    std::printf("%d passes from %sopt/\n", optimized, dir.c_str());
     std::array<std::string, FFX_FSR4_VK_PASS_COUNT> entries;
     entries.fill("main");
     for (uint32_t pass = 1; pass <= FFX_FSR4_MODEL_PASS_COUNT; ++pass) {

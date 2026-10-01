@@ -1,41 +1,50 @@
 #!/usr/bin/env bash
 # tools/fsr4_verify.sh [frames]: runs the FSR 4 benchmark (out/gpu/fsr4-bench, pseudo-random
-# inputs) for every preset and output size with the original and the optimized post pass
-# (tools/fsr4_optimize.sh), checks that the outputs are bit-exact and prints both times.
+# inputs) for every preset and output size with the original passes and with fsr4_shaders/opt
+# (tools/fsr4_optimize.sh) and prints the post pass times.
+#   1440p, 2160p: the outputs must be bit-exact (the pass 11 guard never triggers there).
+#   1080p: the original races at the left edge (pass 11); the fixed passes must give the same
+#          output on every run, and after one frame differ from the original only at that edge.
 set -euo pipefail
 cd -- "$(dirname -- "$0")/.."
 frames=${1:-12}
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
 fail=0
-time_of() { grep -E '^ +[0-9.]+ ms/frame  post$' "$1" | tail -1 | awk '{print $1}'; }
+bench() { # bench <opt> <render> <out> <preset> <frames> <dump>
+    BB_FSR4_OPT=$1 BENCH_NOISE=1 BENCH_DUMP=$6 out/gpu/fsr4-bench "$2" "$3" "$4" "$5" >/dev/null 2>&1
+}
+post_ms() {
+    BB_FSR4_OPT=$1 out/gpu/fsr4-bench "$2" "$3" "$4" 300 2>&1 |
+        grep -E '^ +[0-9.]+ ms/frame  post$' | tail -1 | awk '{print $1}'
+}
 for out in 1920x1080 2560x1440 3840x2160; do
     ow=${out%x*}; oh=${out#*x}
     preset=0
     for ratio in 1.0 1.5 1.7 2.0 3.0; do
         render=$(awk -v w="$ow" -v h="$oh" -v r="$ratio" 'BEGIN { printf "%dx%d", int(w / r + 0.5), int(h / r + 0.5) }')
-        for run in 0 0b 1; do
-            BB_FSR4_OPT=${run%b} BENCH_NOISE=1 BENCH_DUMP=$tmp/$run.raw \
-                out/gpu/fsr4-bench "$render" "$out" $preset "$frames" > "$tmp/$run.log" 2>&1
-        done
-        for opt in 0 1; do
-            BB_FSR4_OPT=$opt out/gpu/fsr4-bench "$render" "$out" $preset 300 > "$tmp/t$opt.log" 2>&1
-        done
-        # The original is not deterministic at some sizes (1080 tier: a strip at the left edge);
-        # then the optimized pass may differ from it by no more than it differs from itself.
-        if cmp -s "$tmp/0.raw" "$tmp/1.raw"; then
-            result=bit-exact
-        else
-            self=$(cmp -l "$tmp/0.raw" "$tmp/0b.raw" | wc -l || true)
-            other=$(cmp -l "$tmp/0.raw" "$tmp/1.raw" | wc -l || true)
-            if (( self > 0 && other <= self * 3 / 2 )); then
-                result="original nondeterministic ($self bytes differ between its runs, $other vs optimized)"
+        if ((oh <= 1080)); then
+            bench 1 "$render" "$out" $preset "$frames" "$tmp/a.raw"
+            bench 1 "$render" "$out" $preset "$frames" "$tmp/b.raw"
+            bench 0 "$render" "$out" $preset 1 "$tmp/o1.raw"
+            bench 1 "$render" "$out" $preset 1 "$tmp/f1.raw"
+            # Columns of the bytes that differ after one frame (8 bytes per pixel).
+            far=$( (cmp -l "$tmp/o1.raw" "$tmp/f1.raw" || true) |
+                awk -v w="$ow" '{ if (int(($1 - 1) / 8) % w >= 200) n++ } END { print n + 0 }')
+            if ! cmp -s "$tmp/a.raw" "$tmp/b.raw"; then
+                result="NOT DETERMINISTIC"; fail=1
+            elif ((far)); then
+                result="DIFFERS beyond the left edge ($far bytes)"; fail=1
             else
-                result="DIFFERS ($other bytes; original vs itself $self)"; fail=1
+                result="deterministic, differs from the original only at the left edge"
             fi
+        else
+            bench 0 "$render" "$out" $preset "$frames" "$tmp/o.raw"
+            bench 1 "$render" "$out" $preset "$frames" "$tmp/f.raw"
+            if cmp -s "$tmp/o.raw" "$tmp/f.raw"; then result=bit-exact; else result=DIFFERS; fail=1; fi
         fi
         printf '%-9s preset %d %-9s post %s -> %s ms  %s\n' "$out" $preset "$render" \
-            "$(time_of "$tmp/t0.log")" "$(time_of "$tmp/t1.log")" "$result"
+            "$(post_ms 0 "$render" "$out" $preset)" "$(post_ms 1 "$render" "$out" $preset)" "$result"
         preset=$((preset + 1))
     done
 done

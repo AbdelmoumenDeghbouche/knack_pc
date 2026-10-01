@@ -108,7 +108,16 @@ struct Fsr4Upscaler::Impl {
         const std::string dir = AssetDir() + "/";
         std::array<std::vector<u8>, FFX_FSR4_VK_PASS_COUNT> code;
         std::vector<u8> initializer, weights;
+        // bbport: tools/fsr4_optimize.sh puts fixed or faster passes into opt/ (post through
+        // shared memory, pass 11 without out-of-bounds writes); BB_FSR4_OPT=0 keeps the originals.
+        const char* opt_env = std::getenv("BB_FSR4_OPT");
+        const bool use_opt = !(opt_env && opt_env[0] == '0');
+        u32 optimized = 0;
         const auto load = [&](const char* name, std::vector<u8>& data) {
+            if (use_opt && ReadFile(dir + "opt/" + name, data)) {
+                ++optimized;
+                return true;
+            }
             if (ReadFile(dir + name, data)) {
                 return true;
             }
@@ -119,15 +128,7 @@ struct Fsr4Upscaler::Impl {
         for (u32 pass = 0; pass < FFX_FSR4_MODEL_PASS_COUNT; ++pass) {
             if (!load(assets.model[pass], code[1 + pass])) return false;
         }
-        // bbport: tools/fsr4_optimize.sh puts a faster, bit-exact post pass into opt/ (stores
-        // through shared memory); BB_FSR4_OPT=0 keeps the original.
-        const char* opt_env = std::getenv("BB_FSR4_OPT");
-        const bool opt = !(opt_env && opt_env[0] == '0') &&
-                         ReadFile(dir + "opt/" + assets.post, code[13]);
-        if (opt) {
-            std::printf("Upscaler: FSR 4 optimized post pass (%s)\n", assets.post);
-        }
-        if (!(opt || load(assets.post, code[13])) || !load(assets.rcas, code[14]) ||
+        if (!load(assets.post, code[13]) || !load(assets.rcas, code[14]) ||
             !load(assets.spdAutoExposure, code[15]) || !load(assets.initializer, initializer) ||
             !load(assets.prePassWeights, weights)) {
             return false;
@@ -136,6 +137,9 @@ struct Fsr4Upscaler::Impl {
             weights.size() != FFX_FSR4_V07_PRE_PASS_WEIGHTS_BYTES) {
             Fail("model weights have an unexpected size", true);
             return false;
+        }
+        if (optimized) {
+            std::printf("Upscaler: FSR 4, %u passes from %sopt/\n", optimized, dir.c_str());
         }
         static const std::array<std::string, FFX_FSR4_VK_PASS_COUNT> entries = [] {
             std::array<std::string, FFX_FSR4_VK_PASS_COUNT> names;
