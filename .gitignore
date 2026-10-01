@@ -9,3 +9,7 @@ pgo/
 last_run.log
 dist/
 packaging/runtime-paths.nix
+fsr4_411/
+vkd3d-proton.cache
+tools/fsr4cap/*.exe
+perf.data

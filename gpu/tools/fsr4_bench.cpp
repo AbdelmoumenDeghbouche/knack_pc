@@ -3,7 +3,9 @@
 // provider as vk_fsr4.cpp) on synthetic inputs and prints GPU time per pass (BB_FSR4_PROFILE)
 // and, with --stats, the driver's statistics of every pass (BB_FSR4_STATS).
 //
-//   fsr4-bench [render WxH] [output WxH] [preset 0-4] [frames] [--stats]
+//   fsr4-bench [render WxH] [output WxH] [preset 0-4] [frames] [--stats] [--fsr411]
+// --fsr411: FSR 4.1.1 replay (fsr411.cpp, assets in BB_FSR411_DIR or fsr4_411) instead of v07;
+// its frames match tools/fsr4cap (jitter phase, reset on the first frame).
 //   defaults: 2260x1272 3840x2160 2 (balanced) 900
 // BENCH_NOISE=1: pseudo-random inputs (a fixed seed); BENCH_DUMP=<file>: the output after the
 // last frame, raw RGBA16F, for comparing shader variants.
@@ -14,6 +16,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <fstream>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -21,6 +24,7 @@
 
 #include "ffx_vk_fsr4_v07.h"
 #include "ffx_vk_fsr4_v07_assets.h"
+#include "fsr411.h"
 
 namespace {
 
@@ -104,6 +108,9 @@ Gpu CreateGpu(bool stats) {
     // Cooperative matrix (WMMA) for experimental model passes, when the device has it.
     VkPhysicalDeviceCooperativeMatrixFeaturesKHR coopmat{
         VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_COOPERATIVE_MATRIX_FEATURES_KHR};
+    // FSR 4.1.1 passes use mixed float dot products (dot2 of halves into float), as vkd3d-proton.
+    VkPhysicalDeviceShaderMixedFloatDotProductFeaturesVALVE mixed_dot{
+        VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SHADER_MIXED_FLOAT_DOT_PRODUCT_FEATURES_VALVE};
     VkPhysicalDeviceVulkan13Features f13{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_3_FEATURES};
     VkPhysicalDeviceVulkan12Features f12{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES};
     VkPhysicalDeviceVulkan11Features f11{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_1_FEATURES};
@@ -113,13 +120,18 @@ Gpu CreateGpu(bool stats) {
     f12.pNext = &f13;
     f13.pNext = &derivatives;
     derivatives.pNext = &coopmat;
+    coopmat.pNext = &mixed_dot;
     if (stats) {
-        coopmat.pNext = &executable;
+        mixed_dot.pNext = &executable;
     }
     vkGetPhysicalDeviceFeatures2(gpu.physical, &features);
     features.features.robustBufferAccess = VK_FALSE; // as the game: no robustness cost
     f13.robustImageAccess = VK_FALSE;
     std::vector<const char*> extensions{VK_KHR_COMPUTE_SHADER_DERIVATIVES_EXTENSION_NAME};
+    extensions.push_back(VK_KHR_PUSH_DESCRIPTOR_EXTENSION_NAME);
+    if (mixed_dot.shaderMixedFloatDotProductFloat16AccFloat32) {
+        extensions.push_back(VK_VALVE_SHADER_MIXED_FLOAT_DOT_PRODUCT_EXTENSION_NAME);
+    }
     if (coopmat.cooperativeMatrix) {
         extensions.push_back(VK_KHR_COOPERATIVE_MATRIX_EXTENSION_NAME);
     }
@@ -238,8 +250,13 @@ int main(int argc, char** argv) {
     uint32_t rw = 2260, rh = 1272, ow = 3840, oh = 2160;
     int preset = 2, frames = 900;
     bool stats = false;
+    bool fsr411 = false;
     int positional = 0;
     for (int i = 1; i < argc; ++i) {
+        if (std::strcmp(argv[i], "--fsr411") == 0) {
+            fsr411 = true;
+            continue;
+        }
         if (std::strcmp(argv[i], "--stats") == 0) {
             stats = true;
             continue;
@@ -265,6 +282,10 @@ int main(int argc, char** argv) {
     }
     const Gpu gpu = CreateGpu(stats);
 
+    FfxInterface backend{};
+    ffxContext context{};
+    std::vector<unsigned char> scratch;
+    if (!fsr411) {
     // Assets, as vk_fsr4.cpp loads them.
     FfxFsr4V07AssetSet assets{};
     if (!ffxFsr4V07BuildAssetSet(ModelPreset(preset), ow, oh, &assets)) {
@@ -315,10 +336,9 @@ int main(int argc, char** argv) {
     ci.modelInitializerSize = initializer.size();
     ci.prePassWeights = weights.data();
     ci.prePassWeightsSize = weights.size();
-    std::vector<unsigned char> scratch(ffxFsr4VkGetScratchMemorySize());
+    scratch.assign(ffxFsr4VkGetScratchMemorySize(), 0);
     ci.scratchBuffer = scratch.data();
     ci.scratchBufferSize = scratch.size();
-    FfxInterface backend{};
     CHECK(ffxFsr4VkCreateContext(&ci, &backend));
 
     ffxCreateContextDescUpscale desc{};
@@ -327,7 +347,6 @@ int main(int argc, char** argv) {
     desc.maxRenderSize = {(ow + 7) & ~7u, (oh + 7) & ~7u};
     desc.maxUpscaleSize = {(ow + 7) & ~7u, (oh + 7) & ~7u};
     ffxFsr4V07SetBackendInterface(&backend);
-    ffxContext context{};
     if (ffxFsr4V07CreateContext(&context, &desc.header, nullptr) != FFX_API_RETURN_OK) {
         std::fprintf(stderr, "provider context creation failed\n");
         return 1;
@@ -335,6 +354,7 @@ int main(int argc, char** argv) {
     ffxFsr4V07SetBackendInterface(nullptr);
     std::printf("FSR 4 %s %ux%u -> %ux%u, %d frames\n",
                 ffxFsr4ModelPresetName(ModelPreset(preset)), rw, rh, ow, oh, frames);
+    }
 
     const VkImageUsageFlags rw_usage = VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_STORAGE_BIT |
                                        VK_IMAGE_USAGE_TRANSFER_DST_BIT;
@@ -469,7 +489,57 @@ int main(int argc, char** argv) {
             VK_IMAGE_LAYOUT_GENERAL, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, access};
         CHECK(ffxFsr4VkSetExternalImageState(&backend, &state));
     };
-    for (int frame = 1; frame <= frames; ++frame) {
+    std::unique_ptr<Fsr411::Upscaler> upscaler411;
+    VkQueryPool timestamps = VK_NULL_HANDLE;
+    double gpu_ms = 0.0;
+    float period_ns = 1.0f;
+    if (fsr411) {
+        const char* dir411 = std::getenv("BB_FSR411_DIR");
+        upscaler411 = std::make_unique<Fsr411::Upscaler>(gpu.physical, gpu.device,
+                                                         dir411 && dir411[0] ? dir411 : "fsr4_411");
+        VkQueryPoolCreateInfo qci{VK_STRUCTURE_TYPE_QUERY_POOL_CREATE_INFO};
+        qci.queryType = VK_QUERY_TYPE_TIMESTAMP;
+        qci.queryCount = 2;
+        CHECK(vkCreateQueryPool(gpu.device, &qci, nullptr, &timestamps));
+        VkPhysicalDeviceProperties props;
+        vkGetPhysicalDeviceProperties(gpu.physical, &props);
+        period_ns = props.limits.timestampPeriod;
+        std::printf("FSR 4.1.1 replay %ux%u -> %ux%u, %d frames\n", rw, rh, ow, oh, frames);
+    }
+    for (int frame = 1; fsr411 && frame <= frames; ++frame) {
+        CHECK(vkBeginCommandBuffer(cmd, &begin));
+        vkCmdResetQueryPool(cmd, timestamps, 0, 2);
+        vkCmdWriteTimestamp(cmd, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, timestamps, 0);
+        Fsr411::Frame f;
+        f.cmdbuf = cmd;
+        f.color = {color.image, color.view, rw, rh};
+        f.depth = {depth.image, depth.view, rw, rh};
+        f.motion = {motion.image, motion.view, rw, rh};
+        f.output = {output.image, output.view, ow, oh};
+        f.render_width = rw;
+        f.render_height = rh;
+        f.ultra_performance = preset >= 4;
+        f.jitter[0] = 0.25f * float((frame - 1) % 4) - 0.375f; // as fsr4cap
+        f.jitter[1] = 0.125f;
+        f.sharpen = true;
+        f.sharpness = 0.5f;
+        f.reset = frame == 1;
+        f.auto_exposure = true;
+        if (!upscaler411->Record(f)) {
+            std::fprintf(stderr, "FSR 4.1.1: %s\n", upscaler411->Error().c_str());
+            return 1;
+        }
+        vkCmdWriteTimestamp(cmd, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, timestamps, 1);
+        submit();
+        uint64_t ts[2];
+        CHECK(vkGetQueryPoolResults(gpu.device, timestamps, 0, 2, sizeof(ts), ts, 8, VK_QUERY_RESULT_64_BIT));
+        gpu_ms += double(ts[1] - ts[0]) * period_ns * 1e-6;
+        if (frame % 300 == 0) {
+            std::printf("FSR 4.1.1 replay: %.3f ms/frame (%s)\n", gpu_ms / 300.0, upscaler411->Describe().c_str());
+            gpu_ms = 0.0;
+        }
+    }
+    for (int frame = 1; !fsr411 && frame <= frames; ++frame) {
         CHECK(ffxFsr4VkBeginFrame(&backend, uint64_t(frame)));
         CHECK(vkBeginCommandBuffer(cmd, &begin));
         register_image(color, VK_ACCESS_SHADER_READ_BIT);
@@ -528,7 +598,10 @@ int main(int argc, char** argv) {
             std::fclose(f);
         }
     }
-    ffxFsr4V07DestroyContext(&context, nullptr);
-    ffxFsr4VkDestroyContext(reinterpret_cast<FfxFsr4VkContext*>(scratch.data()));
+    upscaler411.reset();
+    if (!fsr411) {
+        ffxFsr4V07DestroyContext(&context, nullptr);
+        ffxFsr4VkDestroyContext(reinterpret_cast<FfxFsr4VkContext*>(scratch.data()));
+    }
     return 0;
 }

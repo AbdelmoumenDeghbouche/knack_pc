@@ -156,5 +156,7 @@ set_source_files_properties(../test_scene_resolution.cpp PROPERTIES
 target_link_libraries(scene-resolution-test PRIVATE bbgpu)
 
 # bbport: FSR 4 benchmark outside the game (tools/fsr4_bench.cpp): ninja -C out/gpu fsr4-bench.
-add_executable(fsr4-bench EXCLUDE_FROM_ALL tools/fsr4_bench.cpp)
+add_executable(fsr4-bench EXCLUDE_FROM_ALL tools/fsr4_bench.cpp
+    shadps4/video_core/renderer_vulkan/fsr411/fsr411.cpp)
+target_include_directories(fsr4-bench PRIVATE shadps4/video_core/renderer_vulkan/fsr411)
 target_link_libraries(fsr4-bench PRIVATE ffx-vulkan::fsr4-v07-vulkan ffx-vulkan::fsr4-v07-assets Vulkan::Vulkan)
