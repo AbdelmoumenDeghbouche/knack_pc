@@ -19,7 +19,10 @@ gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
 from gi.repository import Adw, Gio, GLib, Gtk  # noqa: E402
 
-PORT_DIR = Path(__file__).resolve().parent.parent  # native_probe
+PORT_DIR = Path(__file__).resolve().parent.parent  # native_probe (or the package's copy)
+# Packaged (AppImage): generated files, saves and bbport.ini live in BB_DATA_DIR.
+PACKAGED = bool(os.environ.get("BB_PREBUILT"))
+DATA_DIR = Path(os.environ.get("BB_DATA_DIR", PORT_DIR))
 CONFIG_DIR = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config")) / "bbport-launcher"
 CONFIG_FILE = CONFIG_DIR / "settings.json"
 MAX_LOG_LINES = 5000
@@ -28,7 +31,20 @@ MAX_LOG_LINES = 5000
 UPSCALERS = [("FSR 4", "fsr4"), ("FSR 3", "fsr3"), ("Выключен", "off")]
 PRESETS = [("Native AA", 0), ("Quality (x1.5)", 1), ("Balanced (x1.7)", 2),
            ("Performance (x2)", 3), ("Ultra Performance (x3)", 4)]
-OUTPUT_RES = [("1920×1080", ""), ("2560×1440", "2560x1440"), ("3840×2160", "3840x2160")]
+OUTPUT_RES = [("1920×1080", "1920x1080"), ("2560×1440", "2560x1440"), ("3840×2160", "3840x2160")]
+# Game effects (patches applied at start): bbport.ini key, title, default.
+EFFECTS = [
+    ("effect_chromatic_aberration", "Хроматическая аберрация", True),
+    ("effect_dof", "Глубина резкости (DoF)", True),
+    ("effect_motion_blur", "Размытие в движении", True),
+    ("effect_ssao", "Затенение SSAO", True),
+    ("effect_game_aa", "Собственное сглаживание игры", True),
+    ("effect_dynamic_shadows", "Тени от динамических источников", True),
+    ("effect_ssr", "Отражения SSR (не было в игре)", False),
+    ("skip_intro", "Пропуск заставок при запуске", False),
+]
+MODEL_LOD = [("Как в игре", "0"), ("Максимальная (-2)", "-2"), ("Ниже (1)", "1"),
+             ("Минимальная (2)", "2")]
 FPS_MODES = [("Без ограничения (патч)", "uncap"), ("60", "60"), ("90", "90"),
              ("30 (как на PS4)", "30")]
 PRESENT_MODES = [("Mailbox", "Mailbox"), ("FIFO (VSync)", "Fifo"),
@@ -39,13 +55,12 @@ LANGUAGES = [("Английский", "1"), ("Русский", "8"), ("Япон�
 READBACKS = [("Relaxed (по умолчанию)", ""), ("Выключены", "0"), ("Precise", "2")]
 
 DEFAULTS = {
-    "game_dir": str(PORT_DIR.parent / "CUSA03173"),
+    "game_dir": "" if PACKAGED else str(PORT_DIR.parent / "CUSA03173"),
     "user_dir": "",
     "language": "1",
     "fullscreen": False,
     "hdr": False,
     "present_mode": "Mailbox",
-    "output_res": "",
     "fps_mode": "uncap",
     "fps_limit": 0,
     "draw_pipe": "",
@@ -65,6 +80,9 @@ INI_DEFAULTS = {
     "sharpness": "0.50",
     "object_motion": "1",
     "show_fps": "1",
+    "output_res": "1920x1080",
+    "model_lod": "0",
+    **{key: "1" if default else "0" for key, _, default in EFFECTS},
 }
 
 
@@ -83,7 +101,7 @@ def save_settings(settings):
 
 
 def ini_path():
-    return Path(os.environ.get("BB_CONFIG", PORT_DIR / "bbport.ini"))
+    return Path(os.environ.get("BB_CONFIG", DATA_DIR / "bbport.ini"))
 
 
 def load_ini():
@@ -118,6 +136,39 @@ def save_ini(values, lines):
         if key not in written:
             out.append(f"{key}={value}")
     ini_path().write_text("\n".join(out) + "\n")
+
+
+def game_environment(s):
+    """Environment for run.sh from the launcher settings."""
+    env = dict(os.environ)
+    env["BB_GAME_DIR"] = str(Path(s["game_dir"]).expanduser())
+    if s["user_dir"]:
+        env["BB_USER_DIR"] = s["user_dir"]
+    env["BB_LANGUAGE"] = s["language"]
+    env["BB_FULLSCREEN"] = "1" if s["fullscreen"] else "0"
+    env["BB_PRESENT_MODE"] = s["present_mode"]
+    if s["hdr"]:
+        env["BB_HDR"] = "1"
+    env["BB_FPS"] = s["fps_mode"]
+    if s["fps_limit"] > 0:
+        env["BB_FPS_LIMIT"] = str(s["fps_limit"])
+    if s["draw_pipe"]:
+        env["BB_DRAW_PIPE"] = s["draw_pipe"]
+    if s["readbacks"]:
+        env["BB_READBACKS"] = s["readbacks"]
+    if s["mangohud"]:
+        env["MANGOHUD"] = "1"
+    if s["frame_stats"]:
+        env["BB_FRAME_STATS"] = "1"
+    if s["gpu_profile"]:
+        env["BB_GPU_PROFILE"] = "1"
+    if s["vk_validation"]:
+        env["BB_VK_VALIDATION"] = "1"
+    for item in s["extra_env"].split():
+        if "=" in item:
+            key, value = item.split("=", 1)
+            env[key] = value
+    return env
 
 
 def combo_row(title, subtitle, choices, current):
@@ -181,7 +232,7 @@ class LauncherWindow(Adw.ApplicationWindow):
         self.game_row.add_suffix(self.game_status)
         self.game_row.add_suffix(choose)
         game.add(self.game_row)
-        self.user_row = Adw.EntryRow(title="Папка сохранений (пусто — native_probe/user)",
+        self.user_row = Adw.EntryRow(title=f"Папка сохранений (пусто — {DATA_DIR / 'user'})",
                                      text=self.settings["user_dir"])
         game.add(self.user_row)
         self.language_row = combo_row("Язык системы", None, LANGUAGES, self.settings["language"])
@@ -190,8 +241,9 @@ class LauncherWindow(Adw.ApplicationWindow):
 
         screen = Adw.PreferencesGroup(title="Экран")
         self.output_row = combo_row("Разрешение вывода",
-                                    "Апскейлер дорисовывает кадр до этого размера",
-                                    OUTPUT_RES, self.settings["output_res"])
+                                    "Выше 1080p сцена рисуется в разрешении пресета, "
+                                    "апскейлер дорисовывает кадр",
+                                    OUTPUT_RES, self.ini.get("output_res", "1920x1080"))
         screen.add(self.output_row)
         self.fullscreen_row = Adw.SwitchRow(title="Полноэкранный режим",
                                             active=self.settings["fullscreen"])
@@ -227,6 +279,19 @@ class LauncherWindow(Adw.ApplicationWindow):
                                           active=self.ini.get("show_fps") == "1")
         upscaler.add(self.show_fps_row)
         page.add(upscaler)
+
+        effects = Adw.PreferencesGroup(title="Эффекты игры",
+                                       description="Патчи игры, применяются при запуске")
+        self.lod_row = combo_row("Детализация моделей", None, MODEL_LOD,
+                                 self.ini.get("model_lod", "0"))
+        effects.add(self.lod_row)
+        self.effect_rows = {}
+        for key, title, default in EFFECTS:
+            row = Adw.SwitchRow(title=title,
+                                active=self.ini.get(key, "1" if default else "0") == "1")
+            self.effect_rows[key] = row
+            effects.add(row)
+        page.add(effects)
 
         frames = Adw.PreferencesGroup(title="Частота кадров")
         self.fps_row = combo_row("Режим", "Какой патч частоты кадров применить к игре",
@@ -276,8 +341,8 @@ class LauncherWindow(Adw.ApplicationWindow):
 
     def update_game_status(self):
         path = self.game_dir()
-        ok = (path / "eboot.bin").is_file()
-        self.game_row.set_subtitle(str(path))
+        ok = bool(self.settings["game_dir"]) and (path / "eboot.bin").is_file()
+        self.game_row.set_subtitle(str(path) if self.settings["game_dir"] else "не выбрана")
         self.game_status.set_from_icon_name("emblem-ok-symbolic" if ok else "dialog-warning-symbolic")
         self.game_status.set_tooltip_text("Найден eboot.bin" if ok else "Нет eboot.bin в папке")
         self.launch_button.set_sensitive(ok or self.process is not None)
@@ -302,7 +367,6 @@ class LauncherWindow(Adw.ApplicationWindow):
         s = self.settings
         s["user_dir"] = self.user_row.get_text().strip()
         s["language"] = combo_value(self.language_row)
-        s["output_res"] = combo_value(self.output_row)
         s["fullscreen"] = self.fullscreen_row.get_active()
         s["present_mode"] = combo_value(self.present_row)
         s["hdr"] = self.hdr_row.get_active()
@@ -323,43 +387,16 @@ class LauncherWindow(Adw.ApplicationWindow):
             "sharpness": f"{self.sharpness_row.get_value():.2f}",
             "object_motion": "1" if self.motion_row.get_active() else "0",
             "show_fps": "1" if self.show_fps_row.get_active() else "0",
+            "output_res": combo_value(self.output_row),
+            "model_lod": combo_value(self.lod_row),
+            **{key: "1" if row.get_active() else "0" for key, row in self.effect_rows.items()},
         })
         save_ini(self.ini, self.ini_lines)
         self.ini, self.ini_lines = load_ini()
 
     def environment(self):
-        s = self.settings
-        env = dict(os.environ)
-        env["BB_GAME_DIR"] = str(self.game_dir())
-        if s["user_dir"]:
-            env["BB_USER_DIR"] = s["user_dir"]
-        env["BB_LANGUAGE"] = s["language"]
-        if s["output_res"]:
-            env["BB_OUTPUT_RES"] = s["output_res"]
-        env["BB_FULLSCREEN"] = "1" if s["fullscreen"] else "0"
-        env["BB_PRESENT_MODE"] = s["present_mode"]
-        if s["hdr"]:
-            env["BB_HDR"] = "1"
-        env["BB_FPS"] = s["fps_mode"]
-        if s["fps_limit"] > 0:
-            env["BB_FPS_LIMIT"] = str(s["fps_limit"])
-        if s["draw_pipe"]:
-            env["BB_DRAW_PIPE"] = s["draw_pipe"]
-        if s["readbacks"]:
-            env["BB_READBACKS"] = s["readbacks"]
-        if s["mangohud"]:
-            env["MANGOHUD"] = "1"
-        if s["frame_stats"]:
-            env["BB_FRAME_STATS"] = "1"
-        if s["gpu_profile"]:
-            env["BB_GPU_PROFILE"] = "1"
-        if s["vk_validation"]:
-            env["BB_VK_VALIDATION"] = "1"
-        for item in s["extra_env"].split():
-            if "=" in item:
-                key, value = item.split("=", 1)
-                env[key] = value
-        return env
+        return game_environment(self.settings)
+
 
     # --- log page ------------------------------------------------------------------------
 
@@ -471,5 +508,17 @@ class LauncherApp(Adw.Application):
         window.present()
 
 
+def play():
+    """--play: the game with the saved settings, no window (Steam Deck game mode)."""
+    settings = load_settings()
+    if not (Path(settings["game_dir"]).expanduser() / "eboot.bin").is_file():
+        print("bbport: choose the game folder in the launcher first", file=sys.stderr)
+        return 1
+    os.chdir(PORT_DIR)
+    os.execvpe("bash", ["bash", str(PORT_DIR / "run.sh")], game_environment(settings))
+
+
 if __name__ == "__main__":
+    if "--play" in sys.argv[1:]:
+        sys.exit(play())
     sys.exit(LauncherApp().run(sys.argv))

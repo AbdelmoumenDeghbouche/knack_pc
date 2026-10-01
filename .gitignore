@@ -7,3 +7,4 @@ fsr4_shaders/
 pgo/
 *.png
 last_run.log
+dist/
