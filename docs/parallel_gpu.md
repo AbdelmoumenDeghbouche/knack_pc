@@ -546,7 +546,17 @@ the buffer, the proxy resolved and the destination image uploaded again. Recogni
 whose source is an image and turning them into image copies (or a proxy-sized copy) would remove
 most of that. Skipping the dispatches blacks out the scene, so the copies are needed.
 
-### Open issue: guest heap corruption with the draw pipeline (2026-09-30)
+### Fixed: guest heap corruption with the draw pipeline (2026-10-01)
+
+Cause: GPU idle (`IrqC GpuIdle`, which releases `sceGnmSubmitDone`) was signalled once stage A had
+decoded every submission, while end-of-pipe fences deferred to the Vulkan recording thread
+(RecorderFences) were still pending; the guest freed the objects holding those labels while
+another of its threads still updated them. Stage A now drains the pipe and waits for the
+deferred signals before GPU idle (and before compute-queue WriteData/ReleaseMem). Found with
+`BB_WRITE_LOG=2` (fence targets logged at decode time, off the racing path). The notes below
+are the investigation.
+
+#### Investigation notes
 
 After ~2-15 min at the level (camera turning, nobody moving) the guest faults at guest offset
 `0x263b8e7`: a free-list pop in a guest allocator reads the next pointer `0x0000005300000000`
