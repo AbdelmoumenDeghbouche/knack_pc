@@ -1,3 +1,4 @@
+from paths import ROOT
 import struct
 import unittest
 import tempfile

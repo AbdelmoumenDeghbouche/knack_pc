@@ -248,7 +248,7 @@ def prepare(game, out):
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('game', type=Path)
-    parser.add_argument('--out', type=Path, default=Path(__file__).parent / 'out')
+    parser.add_argument('--out', type=Path, default=Path(__file__).resolve().parent.parent / 'out')
     args = parser.parse_args()
     try:
         prepare(args.game, args.out)

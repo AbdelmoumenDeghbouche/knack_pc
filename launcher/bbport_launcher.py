@@ -171,6 +171,22 @@ def game_environment(s):
     return env
 
 
+def flat_button(icon, tooltip, handler):
+    button = Gtk.Button(icon_name=icon, valign=Gtk.Align.CENTER, tooltip_text=tooltip)
+    button.add_css_class("flat")
+    button.connect("clicked", handler)
+    return button
+
+
+def open_folder(window, path):
+    """Opens `path` in the file manager (created first, so that a new saves folder opens)."""
+    try:
+        Path(path).mkdir(parents=True, exist_ok=True)
+    except OSError:
+        return
+    Gtk.FileLauncher.new(Gio.File.new_for_path(str(path))).launch(window, None, None)
+
+
 def combo_row(title, subtitle, choices, current):
     model = Gtk.StringList.new([label for label, _ in choices])
     row = Adw.ComboRow(title=title, model=model)
@@ -216,6 +232,8 @@ class LauncherWindow(Adw.ApplicationWindow):
                                         "utilities-terminal-symbolic")
         self.connect("close-request", self.on_close)
         self.update_game_status()
+        self.update_user_status()
+        self.update_upscaler_status()
 
     # --- settings page -------------------------------------------------------------------
 
@@ -224,16 +242,26 @@ class LauncherWindow(Adw.ApplicationWindow):
 
         game = Adw.PreferencesGroup(title="Игра")
         self.game_row = Adw.ActionRow(title="Папка игры (CUSA03173)")
-        choose = Gtk.Button(icon_name="folder-open-symbolic", valign=Gtk.Align.CENTER,
-                            tooltip_text="Выбрать папку с eboot.bin")
-        choose.add_css_class("flat")
-        choose.connect("clicked", self.on_choose_game)
         self.game_status = Gtk.Image()
         self.game_row.add_suffix(self.game_status)
-        self.game_row.add_suffix(choose)
+        self.game_row.add_suffix(flat_button("folder-open-symbolic", "Выбрать папку с eboot.bin",
+                                             self.on_choose_game))
+        self.game_row.add_suffix(flat_button("system-file-manager-symbolic",
+                                             "Открыть в файловом менеджере",
+                                             lambda _b: open_folder(self, self.game_dir())))
         game.add(self.game_row)
-        self.user_row = Adw.EntryRow(title=f"Папка сохранений (пусто — {DATA_DIR / 'user'})",
-                                     text=self.settings["user_dir"])
+        # Saves and the shader cache: user/ in the data directory unless chosen.
+        self.user_row = Adw.ActionRow(title="Папка сохранений")
+        self.user_status = Gtk.Image()
+        self.user_row.add_suffix(self.user_status)
+        self.user_row.add_suffix(flat_button("folder-open-symbolic", "Выбрать папку сохранений",
+                                             self.on_choose_user))
+        self.user_row.add_suffix(flat_button("system-file-manager-symbolic",
+                                             "Открыть в файловом менеджере",
+                                             lambda _b: open_folder(self, self.user_dir())))
+        self.user_reset = flat_button("edit-undo-symbolic", "Вернуть папку по умолчанию",
+                                      self.on_reset_user)
+        self.user_row.add_suffix(self.user_reset)
         game.add(self.user_row)
         self.language_row = combo_row("Язык системы", None, LANGUAGES, self.settings["language"])
         game.add(self.language_row)
@@ -259,6 +287,7 @@ class LauncherWindow(Adw.ApplicationWindow):
             title="Апскейлер",
             description="Хранится в bbport.ini; в игре меняется через меню (Insert или L3+R3)")
         self.upscaler_row = combo_row("Апскейлер", None, UPSCALERS, self.ini["upscaler"])
+        self.upscaler_row.connect("notify::selected", lambda *_: self.update_upscaler_status())
         upscaler.add(self.upscaler_row)
         self.preset_row = combo_row("Пресет", None, PRESETS, int(self.ini.get("preset", "4")))
         upscaler.add(self.preset_row)
@@ -339,11 +368,60 @@ class LauncherWindow(Adw.ApplicationWindow):
     def game_dir(self):
         return Path(self.settings["game_dir"]).expanduser()
 
+    def user_dir(self):
+        return Path(self.settings["user_dir"]).expanduser() if self.settings["user_dir"] \
+            else DATA_DIR / "user"
+
+    def update_user_status(self):
+        path = self.user_dir()
+        custom = bool(self.settings["user_dir"])
+        self.user_row.set_subtitle(str(path) if custom else f"По умолчанию: {path}")
+        saves = path / "savedata"
+        found = saves.is_dir() and any(saves.iterdir())
+        self.user_status.set_from_icon_name("object-select-symbolic" if found else "document-new-symbolic")
+        self.user_status.set_tooltip_text("Найдены сохранения" if found
+                                          else "Сохранений пока нет: игра создаст их здесь")
+        self.user_reset.set_sensitive(custom)
+
+    def on_choose_user(self, _button):
+        dialog = Gtk.FileDialog(title="Папка сохранений")
+        if self.user_dir().is_dir():
+            dialog.set_initial_folder(Gio.File.new_for_path(str(self.user_dir())))
+        dialog.select_folder(self, None, self.on_user_chosen)
+
+    def on_user_chosen(self, dialog, result):
+        try:
+            folder = dialog.select_folder_finish(result)
+        except GLib.Error:
+            return
+        if folder:
+            self.settings["user_dir"] = folder.get_path()
+            self.update_user_status()
+            self.store()
+
+    def on_reset_user(self, _button):
+        self.settings["user_dir"] = ""
+        self.update_user_status()
+        self.store()
+
+    def update_upscaler_status(self):
+        value = combo_value(self.upscaler_row)
+        if value == "fsr4":
+            ok = (PORT_DIR / "fsr4_shaders").is_dir()
+            hint = "Ассеты найдены" if ok else "Нет ассетов: tools/fetch_fsr4_assets.sh"
+        elif value == "fsr411":
+            ok = (PORT_DIR / "fsr4_411").is_dir()
+            hint = ("Ассеты найдены" if ok else
+                    "Нет ассетов: tools/fsr4cap/build_assets.sh (из DLL AMD 4.1.x, нужен Proton)")
+        else:
+            hint = None
+        self.upscaler_row.set_subtitle(hint or "")
+
     def update_game_status(self):
         path = self.game_dir()
         ok = bool(self.settings["game_dir"]) and (path / "eboot.bin").is_file()
         self.game_row.set_subtitle(str(path) if self.settings["game_dir"] else "не выбрана")
-        self.game_status.set_from_icon_name("emblem-ok-symbolic" if ok else "dialog-warning-symbolic")
+        self.game_status.set_from_icon_name("object-select-symbolic" if ok else "dialog-warning-symbolic")
         self.game_status.set_tooltip_text("Найден eboot.bin" if ok else "Нет eboot.bin в папке")
         self.launch_button.set_sensitive(ok or self.process is not None)
 
@@ -365,7 +443,6 @@ class LauncherWindow(Adw.ApplicationWindow):
 
     def store(self):
         s = self.settings
-        s["user_dir"] = self.user_row.get_text().strip()
         s["language"] = combo_value(self.language_row)
         s["fullscreen"] = self.fullscreen_row.get_active()
         s["present_mode"] = combo_value(self.present_row)

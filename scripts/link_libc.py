@@ -207,6 +207,6 @@ def link(game, out):
 if __name__=='__main__':
     import argparse
     p=argparse.ArgumentParser(description=__doc__)
-    p.add_argument('game',type=Path);p.add_argument('--out',type=Path,default=Path(__file__).parent/'out')
+    p.add_argument('game',type=Path);p.add_argument('--out',type=Path,default=Path(__file__).resolve().parent.parent/'out')
     a=p.parse_args()
     link(a.game,a.out)

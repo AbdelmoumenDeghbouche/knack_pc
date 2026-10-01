@@ -1,4 +1,5 @@
 """Cross-module identity and TLS relocation tests without game binaries."""
+from paths import ROOT
 import json
 from pathlib import Path
 import struct

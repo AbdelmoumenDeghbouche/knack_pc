@@ -184,7 +184,7 @@ void Menu() {
         } else {
             Hint("FSR 4 в режиме INT8 (модель v07 из исходников AMD FidelityFX SDK). Качество выше, "
                  "чем у FSR 3.1, но проход тяжелее. Смена пресета пересобирает модель (короткая "
-                 "пауза). Ассеты: fetch_fsr4_assets.sh.");
+                 "пауза). Ассеты: tools/fetch_fsr4_assets.sh.");
         }
         Checkbox("FSR 4: авто-экспозиция", s.fsr4_auto_exposure);
         Checkbox("FSR 4: обратный знак jitter", s.fsr4_invert_jitter);

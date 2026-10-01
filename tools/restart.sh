@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # tools/restart.sh [run.sh args]: restarts the game with frame stats, BB_PAD_FILE and
 # BB_TOGGLE_FILE (out/pad, out/toggles) and enters the level (title: cross, cross).
-cd /home/deadinside/Games/bloodborne/game_files/native_probe
-T=$(dirname "$0")
+cd -- "$(dirname -- "$0")/.."
+T=tools
 pkill -x bb-probe; sleep 2; pkill -9 -x bb-probe; sleep 1
 : > out/pad; echo ${BASE_MASK:-0} > out/toggles
 BB_PAD_FILE=$PWD/out/pad BB_FRAME_STATS=1 BB_TOGGLE_FILE=$PWD/out/toggles BB_FPS_LIMIT=0 \

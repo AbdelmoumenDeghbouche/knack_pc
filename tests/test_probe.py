@@ -1,11 +1,12 @@
 """Boundary tests for the native loader; uses tiny synthetic x86-64 images."""
+from paths import ROOT
 from pathlib import Path
 import struct
 import subprocess
 import tempfile
 import unittest
 
-EXE = Path(__file__).parent / 'out/bb-probe'
+EXE = ROOT / 'out/bb-probe'
 
 
 def package(code, relocs=(), names=(), capabilities=None):
@@ -61,7 +62,7 @@ class LoaderTests(unittest.TestCase):
     def test_native_initializer_and_export_return(self):
         r=self.run_image(native_package())
         self.assertEqual(r.returncode,20,r.stdout+r.stderr)
-        self.assertIn('Native libc module initializer returned 0',r.stdout)
+        self.assertIn('Module 0 initializer returned 0',r.stdout)
         self.assertIn('first unsupported PS4 import: after-native',r.stdout)
 
     def test_host_contract_takes_priority_over_native_export(self):
@@ -81,8 +82,8 @@ class LoaderTests(unittest.TestCase):
             ({'binding_address':12288},'invalid native binding'),
             ({'binding_kind':2},'native export kind/range mismatch'),
             ({'lib_flags':4},'native function is not executable'),
-            ({'metadata':(4096,8192,4096,8192,32,33,1,256)},'invalid libc metadata'),
-            ({'metadata':(4096,8192,4096,8192,32,4,1,12280)},'unmapped libc metadata'),
+            ({'metadata':(4096,8192,4096,8192,32,33,1,256)},'invalid linked module metadata'),
+            ({'metadata':(4096,8192,4096,8192,32,4,1,12280)},'unmapped procparam'),
         ]:
             with self.subTest(kwargs=kwargs):
                 r=self.run_image(native_package(**kwargs))
@@ -92,7 +93,7 @@ class LoaderTests(unittest.TestCase):
     def test_failed_native_initializer_does_not_enter_game(self):
         r=self.run_image(native_package(init=b'\xb8\x01\0\0\0\xc3'))
         self.assertEqual(r.returncode,1,r.stdout+r.stderr)
-        self.assertIn('libc initializer failed',r.stderr)
+        self.assertIn('module initializer failed',r.stderr)
         self.assertNotIn('Entering original',r.stdout)
 
     def test_base_relative_address_is_relocated(self):
@@ -115,7 +116,7 @@ class LoaderTests(unittest.TestCase):
     def test_illegal_instruction_reports_guest_offset(self):
         r = self.run_image(package(b'\x0f\x0b'))
         self.assertEqual(r.returncode, 132)
-        self.assertIn('0x0000000000000000', r.stderr)
+        self.assertIn('at guest offset 0x0,', r.stderr)
 
     def test_runtime_returns_from_verified_init_env(self):
         # Align stack, call _init_env through +32, then tail-jump to unknown +40.

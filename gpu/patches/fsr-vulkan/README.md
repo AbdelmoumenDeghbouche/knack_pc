@@ -1,8 +1,7 @@
 # Local changes to gpu/third_party/fsr-vulkan
 
-The submodule points at commits on a local `bbport` branch that are not upstream
-(FireBurn/FSR-Vulkan). After a fresh clone, apply them on top of the upstream commit
-(`c64f093`):
+The submodule points at upstream FireBurn/FSR-Vulkan (`c64f093`). `build.sh` applies the
+patches here to its working tree when they are not applied yet:
 
-    git -C gpu/third_party/fsr-vulkan checkout -b bbport c64f093
-    git -C gpu/third_party/fsr-vulkan am ../../patches/fsr-vulkan/*.patch
+- `0001-...`: `BB_FSR4_PROFILE` (GPU time per FSR 4 pass) and `BB_FSR4_STATS` (driver
+  statistics of each pass) in the FSR 4 v07 provider.

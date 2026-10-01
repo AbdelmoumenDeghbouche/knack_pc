@@ -5,7 +5,7 @@
 # they are not part of this repository. Output 1920x1080 needs the 1080 tier, 1440p and 2160p
 # outputs (menu: output resolution) the 2160 tier; BB_FSR4_TIERS selects them.
 set -euo pipefail
-cd -- "$(dirname -- "$0")"
+cd -- "$(dirname -- "$0")/.."
 commit=ae8d628fae208813172446d1e49ed94150b04658
 base="https://raw.githubusercontent.com/FireBurn/Q2RTX/$commit/baseq2/fsr4_shaders"
 dest=fsr4_shaders

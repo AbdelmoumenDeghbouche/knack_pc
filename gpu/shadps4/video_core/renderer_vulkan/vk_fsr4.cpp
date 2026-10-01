@@ -127,7 +127,7 @@ struct Fsr4Upscaler::Impl {
             if (ReadFile(dir + name, data)) {
                 return true;
             }
-            Fail("missing " + dir + name + " (run fetch_fsr4_assets.sh)", true);
+            Fail("missing " + dir + name + " (run tools/fetch_fsr4_assets.sh)", true);
             return false;
         };
         if (!load(assets.pre, code[0])) return false;

@@ -2,6 +2,6 @@
 Type=Application
 Name=Bloodborne
 Comment=Native Bloodborne port launcher
-Exec=/home/deadinside/Games/bloodborne/game_files/native_probe/launcher/bb-launcher.sh
+Exec=@LAUNCHER@
 Icon=applications-games
 Categories=Game;

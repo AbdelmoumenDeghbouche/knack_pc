@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # tools/soak.sh <secs>: enters the level, rotates the camera now and then, reports survival.
-cd /home/deadinside/Games/bloodborne/game_files/native_probe
+cd -- "$(dirname -- "$0")/.."
 unset BB_GPU_PROFILE BB_PRESET_FILE BB_SCENE_DEBUG
 bash "$(dirname "$0")/restart.sh" > /dev/null
 end=$((SECONDS + $1))

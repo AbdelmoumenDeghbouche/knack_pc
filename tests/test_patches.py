@@ -1,3 +1,4 @@
+from paths import ROOT
 import struct
 import tempfile
 import unittest
@@ -8,7 +9,7 @@ from patches import (EBOOT_BASE, OUTPUT_SIZE, RESOLUTION_TEMPLATE, SCENE_HEIGHT,
                      SCENE_WIDTH, UI_HEIGHT, UI_WIDTH, compile_patches,
                      render_size, resolution_writes)
 
-XML = Path(__file__).parent / 'patches/Bloodborne.xml'
+XML = ROOT / 'patches/Bloodborne.xml'
 SEGMENTS = [(0, 0x6000000)]
 
 

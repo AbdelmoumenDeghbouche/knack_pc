@@ -35,10 +35,10 @@ if [[ -z ${PYTHON:-} ]]; then echo 'Install Python 3 or set PYTHON.' >&2; exit 1
 # BB_GAME_DIR: the game's folder (eboot.bin, sce_module, ...); default next to this directory.
 game=${BB_GAME_DIR:-../CUSA03173}
 if [[ ! -f $game/eboot.bin ]]; then echo "No eboot.bin in $game (set BB_GAME_DIR)." >&2; exit 1; fi
-"$PYTHON" prepare.py "$game" --out "$out"
-"$PYTHON" link_libc.py "$game" --out "$out"
-"$PYTHON" link_modules.py "$game" --out "$out"
-"$PYTHON" content_profile.py "$game" --out "$out" --sku "${BB_CONTENT_SKU:-full}"
+"$PYTHON" scripts/prepare.py "$game" --out "$out"
+"$PYTHON" scripts/link_libc.py "$game" --out "$out"
+"$PYTHON" scripts/link_modules.py "$game" --out "$out"
+"$PYTHON" scripts/content_profile.py "$game" --out "$out" --sku "${BB_CONTENT_SKU:-full}"
 # Dynamic scene resolution scaling now works on all GPUs (fallback: clear UI depth
 # instead of blit when D32S8 blit unsupported). The old startup resolution patch
 # is kept as BB_RENDER_RES for explicit overrides and compatibility testing.
@@ -53,7 +53,7 @@ fps=${BB_FPS:-uncap}
 # bbport.ini output_res above 1080p (menu, launcher): the game renders at the preset's size of it
 # (a patch), the upscaler fills the output, the UI is drawn at the output size.
 if [[ -z ${BB_RENDER_RES:-} ]]; then
-    read -r scaled_render scaled_output < <("$PYTHON" patches.py --print-scaled --settings "$BB_CONFIG") || true
+    read -r scaled_render scaled_output < <("$PYTHON" scripts/patches.py --print-scaled --settings "$BB_CONFIG") || true
     if [[ -n ${scaled_output:-} ]]; then
         export BB_RENDER_RES=$scaled_render BB_OUTPUT_RES=$scaled_output
         export BB_DMEM_MB=${BB_DMEM_MB:-9152}
@@ -62,7 +62,7 @@ if [[ -z ${BB_RENDER_RES:-} ]]; then
 fi
 # Supported GPUs scale renderer targets at run time. BB_RENDER_RES=WxH keeps the
 # explicit guest-resolution patch for compatibility and debugging.
-"$PYTHON" patches.py --out "$out" --fps "$fps" --extra "${BB_PATCHES:-}" --settings "$BB_CONFIG" --render-res "${BB_RENDER_RES:-}" --output-res "${BB_OUTPUT_RES:-}"
+"$PYTHON" scripts/patches.py --out "$out" --fps "$fps" --extra "${BB_PATCHES:-}" --settings "$BB_CONFIG" --render-res "${BB_RENDER_RES:-}" --output-res "${BB_OUTPUT_RES:-}"
 if [[ -z ${BB_VBLANK_HZ:-} ]]; then
     case $fps in uncap) export BB_VBLANK_HZ=0 ;; 90) export BB_VBLANK_HZ=90 ;; *) export BB_VBLANK_HZ=60 ;; esac
 fi

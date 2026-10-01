@@ -11,8 +11,8 @@ let
   root = ./..;
   # Only what the package needs (the tree also holds builds, profiles and captures).
   wanted = [
-    "run.sh" "prepare.py" "link_libc.py" "link_modules.py" "content_profile.py" "patches.py"
-    "patches" "fsr4_shaders" "launcher" "out" "out/bb-probe" "out/gpu" "out/gpu/libbbgpu.so"
+    "run.sh" "scripts" "patches" "fsr4_shaders" "fsr4_411" "launcher" "out" "out/bb-probe" "out/gpu"
+    "out/gpu/libbbgpu.so"
   ];
   src = builtins.path {
     name = "bbport-src";
@@ -20,7 +20,7 @@ let
     filter = path: type:
       let rel = lib.removePrefix (toString root + "/") (toString path);
       in builtins.elem rel wanted
-        || lib.any (dir: lib.hasPrefix (dir + "/") rel) [ "patches" "fsr4_shaders" "launcher" ];
+        || lib.any (dir: lib.hasPrefix (dir + "/") rel) [ "scripts" "patches" "fsr4_shaders" "fsr4_411" "launcher" ];
   };
   python = pkgs.python3.withPackages (ps: [ ps.pygobject3 ]);
   # Mesa's own drivers: the host's (e.g. SteamOS /usr/lib) cannot load into this closure's glibc.
@@ -55,8 +55,10 @@ pkgs.stdenv.mkDerivation {
     runHook preInstall
     d=$out/share/bbport
     mkdir -p $d/bin $out/bin
-    cp run.sh prepare.py link_libc.py link_modules.py content_profile.py patches.py $d/
-    cp -r patches fsr4_shaders launcher $d/
+    cp run.sh $d/
+    cp -r scripts patches fsr4_shaders launcher $d/
+    # FSR 4.1.1 assets exist only when built from the user's own DLLs (tools/fsr4cap).
+    if [ -d fsr4_411 ]; then cp -r fsr4_411 $d/; fi
     install -m755 out/bb-probe $d/bin/bb-probe
     install -Dm755 out/gpu/libbbgpu.so $d/bin/gpu/libbbgpu.so
     runHook postInstall

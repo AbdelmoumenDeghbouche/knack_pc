@@ -163,12 +163,12 @@ def compile_patches(xml, names, app_version, segments):
 
 def main():
     p=argparse.ArgumentParser(description=__doc__)
-    p.add_argument('--xml',type=Path,default=Path(__file__).parent/'patches/Bloodborne.xml')
+    p.add_argument('--xml',type=Path,default=Path(__file__).resolve().parent.parent/'patches/Bloodborne.xml')
     p.add_argument('--fps',choices=sorted(FPS_PRESETS),default='uncap')
     p.add_argument('--extra',default='',help='additional patch names, separated by ";"')
     p.add_argument('--app-version',default='01.09')
-    p.add_argument('--out',type=Path,default=Path(__file__).parent/'out')
-    p.add_argument('--settings',type=Path,default=Path(__file__).parent/'bbport.ini')
+    p.add_argument('--out',type=Path,default=Path(__file__).resolve().parent.parent/'out')
+    p.add_argument('--settings',type=Path,default=Path(__file__).resolve().parent.parent/'bbport.ini')
     p.add_argument('--render-res',default='',help='render resolution WxH (overrides the preset)')
     p.add_argument('--print-preset-size',action='store_true',help='print the selected preset size, if reduced')
     p.add_argument('--output-res',default='',help='output resolution WxH (the upscaler\'s; the UI stays 1920x1080)')
