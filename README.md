@@ -101,7 +101,9 @@ bash tools/fsr4cap/build_assets.sh <amd_fidelityfx_upscaler_dx12.dll> <amd_fidel
 game without the launcher window (Game Mode). On the Steam Deck pick the 1280×720 output (the
 game is 16:9; on the 1280×800 screen it gets thin bars).
 
-**Adding the AppImage to Steam** (*Add a Non-Steam Game*): leave *Compatibility* off. Where Steam
+**Adding the AppImage to Steam** (*Add a Non-Steam Game*) needs no options; the compatibility tool
+does not matter. (Steam preloads its overlay into every non-Steam game; the AppImage removes it
+before its own programs start, so the Steam overlay is not shown in the game.) Where Steam
 runs games without FUSE (NixOS: Steam's FHS sandbox; the AppImage then exits with *Cannot mount
 AppImage*), set the launch options to
 

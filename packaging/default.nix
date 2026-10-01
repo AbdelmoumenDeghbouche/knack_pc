@@ -80,7 +80,12 @@ pkgs.stdenv.mkDerivation {
     runHook postInstall
   '';
   postFixup = ''
-    makeShellWrapper ${python}/bin/python3 $out/bin/bbport \
+    # bin/bbport is a static program (bbport-entry.c) that clears the host's LD_PRELOAD (Steam's
+    # overlay) and similar before the wrapper's own dynamic programs start.
+    mkdir -p $out/libexec
+    gcc -O2 -Wall -Werror -static -L${pkgs.glibc.static}/lib -DTARGET="\"$out/libexec/bbport\"" \
+      ${./bbport-entry.c} -o $out/bin/bbport
+    makeShellWrapper ${python}/bin/python3 $out/libexec/bbport \
       "''${gappsWrapperArgs[@]}" \
       ${common}      --add-flags $out/share/bbport/launcher/bbport_launcher.py \
       --set BB_PREBUILT 1 \
