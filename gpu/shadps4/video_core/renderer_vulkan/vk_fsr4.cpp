@@ -12,6 +12,8 @@
 
 #include "ffx_vk_fsr4_v07.h"
 #include "ffx_vk_fsr4_v07_assets.h"
+#include "bbport_settings.h"
+#include "video_core/renderer_vulkan/fsr411/fsr411.h"
 #include "video_core/renderer_vulkan/vk_instance.h"
 #include "video_core/renderer_vulkan/vk_scheduler.h"
 
@@ -65,6 +67,10 @@ struct Fsr4Upscaler::Impl {
     bool fatal = false;
     u64 next_frame_id = 1;
     std::deque<std::pair<u64, u64>> in_flight; ///< provider frame id, scheduler tick
+    // bbport: FSR 4.1.1 (upscaler=fsr411): the replay of AMD's 4.1.1 DLL (fsr411/).
+    std::unique_ptr<Fsr411::Upscaler> fsr411;
+    std::deque<u64> fsr411_ticks; ///< scheduler ticks of its recent frames (constant ring)
+    std::string fsr411_described;
 
     Impl(const Instance& instance_, Scheduler& scheduler_)
         : instance{instance_}, scheduler{scheduler_} {}
@@ -219,7 +225,54 @@ struct Fsr4Upscaler::Impl {
         return ffxFsr4VkSetExternalImageState(&backend, &state);
     }
 
+    bool Record411(const Frame& f) {
+        if (!instance.IsFsr411Supported()) {
+            Fail("FSR 4.1.1 needs INT8 dot products and VK_VALVE_shader_mixed_float_dot_product", true);
+            return false;
+        }
+        if (!fsr411) {
+            const char* env = std::getenv("BB_FSR411_DIR");
+            fsr411 = std::make_unique<Fsr411::Upscaler>(instance.GetPhysicalDevice(), instance.GetDevice(),
+                                                        env && env[0] ? env : "fsr4_411");
+        }
+        // Its constant ring holds kFramesInFlight frames: the oldest must be done.
+        while (fsr411_ticks.size() >= Fsr411::kFramesInFlight) {
+            scheduler.Wait(fsr411_ticks.front());
+            fsr411_ticks.pop_front();
+        }
+        Fsr411::Frame g;
+        g.cmdbuf = f.cmdbuf;
+        g.color = {f.color.image, f.color.view, f.color.width, f.color.height};
+        g.depth = {f.depth.image, f.depth.view, f.depth.width, f.depth.height};
+        g.motion = {f.motion.image, f.motion.view, f.motion.width, f.motion.height};
+        g.output = {f.output.image, f.output.view, f.output.width, f.output.height};
+        g.render_width = f.render_width;
+        g.render_height = f.render_height;
+        g.ultra_performance = f.preset >= 4;
+        g.jitter[0] = f.jitter[0];
+        g.jitter[1] = f.jitter[1];
+        g.sharpness = f.sharpness;
+        g.sharpen = f.sharpen && f.sharpness > 0.0f;
+        g.reset = f.reset;
+        g.auto_exposure = f.auto_exposure;
+        if (!fsr411->Record(g)) {
+            // Missing assets are permanent for this session; the menu shows the reason.
+            Fail("FSR 4.1.1: " + fsr411->Error(), fsr411->Error().starts_with("missing"));
+            return false;
+        }
+        fsr411_ticks.push_back(scheduler.CurrentTick());
+        if (const std::string d = fsr411->Describe(); d != fsr411_described) {
+            fsr411_described = d;
+            std::printf("Upscaler: FSR 4.1.1 replay, %s\n", d.c_str());
+        }
+        problem.clear();
+        return true;
+    }
+
     bool Record(const Frame& f) {
+        if (BbSettings::Get().upscaler == BbSettings::UpscalerFsr411) {
+            return Record411(f);
+        }
         if (fatal) {
             return false;
         }

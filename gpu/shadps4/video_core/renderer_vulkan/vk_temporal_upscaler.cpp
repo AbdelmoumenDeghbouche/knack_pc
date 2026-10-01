@@ -215,7 +215,7 @@ bool TemporalUpscaler::Active() const {
     // Toggle 1 << 24 switches it off at run time (A/B); history restarts after.
     return enabled && !failed &&
            (BbSettings::Get().upscaler == BbSettings::UpscalerFsr3 ||
-            BbSettings::Get().upscaler == BbSettings::UpscalerFsr4) &&
+            BbSettings::IsFsr4(BbSettings::Get().upscaler)) &&
            !BbToggle::Disabled(1u << 24);
 }
 
@@ -1525,7 +1525,7 @@ bool TemporalUpscaler::DisplayOverride(VAddr address, Display& display) {
 namespace Vulkan {
 
 bool TemporalUpscaler::UseFsr4() const {
-    return BbSettings::Get().upscaler == BbSettings::UpscalerFsr4 && !fsr4_failed;
+    return BbSettings::IsFsr4(BbSettings::Get().upscaler) && !fsr4_failed;
 }
 
 bool TemporalUpscaler::RecordFsr4(vk::CommandBuffer cmdbuf, Fsr4Upscaler::Image color,

@@ -28,7 +28,7 @@ CONFIG_FILE = CONFIG_DIR / "settings.json"
 MAX_LOG_LINES = 5000
 
 # Choices: (label, value). The first entry is the default.
-UPSCALERS = [("FSR 4", "fsr4"), ("FSR 3", "fsr3"), ("Выключен", "off")]
+UPSCALERS = [("FSR 4", "fsr4"), ("FSR 4.1.1", "fsr411"), ("FSR 3", "fsr3"), ("Выключен", "off")]
 PRESETS = [("Native AA", 0), ("Quality (x1.5)", 1), ("Balanced (x1.7)", 2),
            ("Performance (x2)", 3), ("Ultra Performance (x3)", 4)]
 OUTPUT_RES = [("1920×1080", "1920x1080"), ("2560×1440", "2560x1440"), ("3840×2160", "3840x2160")]

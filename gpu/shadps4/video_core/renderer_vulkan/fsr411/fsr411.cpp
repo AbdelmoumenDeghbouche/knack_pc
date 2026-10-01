@@ -10,6 +10,7 @@
 #include <array>
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <fstream>
 #include <map>
@@ -237,6 +238,13 @@ struct Upscaler::Impl {
     std::vector<uint8_t> initializer_data;
     uint64_t frame_index = 0;
     float previous_pre_exposure = 0.0f;
+    // BB_FSR4_PROFILE=1: GPU time per pass, read when a ring slot is reused, printed every 300 frames.
+    VkQueryPool profile_pool = VK_NULL_HANDLE;
+    float period_ns = 1.0f;
+    std::array<uint32_t, kFramesInFlight> profile_count{};
+    std::array<std::array<uint8_t, kPassCount>, kFramesInFlight> profile_pass{};
+    std::array<double, kPassCount> profile_ms{};
+    uint64_t profile_frames = 0;
 
     Impl(VkPhysicalDevice p, VkDevice d, std::string dir_)
         : physical{p}, device{d}, dir{std::move(dir_)} {
@@ -246,10 +254,50 @@ struct Upscaler::Impl {
         ubo_align = std::max<VkDeviceSize>(256, props.limits.minUniformBufferOffsetAlignment);
         push_descriptors = reinterpret_cast<PFN_vkCmdPushDescriptorSetKHR>(
             vkGetDeviceProcAddr(device, "vkCmdPushDescriptorSetKHR"));
+        period_ns = props.limits.timestampPeriod;
+        const char* profile = std::getenv("BB_FSR4_PROFILE");
+        if (profile && profile[0] == '1') {
+            VkQueryPoolCreateInfo qci{VK_STRUCTURE_TYPE_QUERY_POOL_CREATE_INFO};
+            qci.queryType = VK_QUERY_TYPE_TIMESTAMP;
+            qci.queryCount = kFramesInFlight * (kPassCount + 1);
+            if (vkCreateQueryPool(device, &qci, nullptr, &profile_pool) != VK_SUCCESS) {
+                profile_pool = VK_NULL_HANDLE;
+            }
+        }
+    }
+
+    void CollectProfile(uint32_t slot) {
+        const uint32_t count = profile_count[slot];
+        if (!profile_pool || !count) {
+            return;
+        }
+        profile_count[slot] = 0;
+        std::array<uint64_t, kPassCount + 1> ts{};
+        if (vkGetQueryPoolResults(device, profile_pool, slot * (kPassCount + 1), count + 1,
+                                  sizeof(ts), ts.data(), 8, VK_QUERY_RESULT_64_BIT) != VK_SUCCESS) {
+            return;
+        }
+        for (uint32_t i = 0; i < count; ++i) {
+            profile_ms[profile_pass[slot][i]] += double(ts[i + 1] - ts[i]) * period_ns * 1e-6;
+        }
+        if (++profile_frames % 300) {
+            return;
+        }
+        double total = 0.0;
+        for (double ms : profile_ms) total += ms;
+        std::printf("FSR 4.1.1 profile: %.3f ms/frame\n", total / 300.0);
+        for (uint32_t p = 0; p < kPassCount; ++p) {
+            if (profile_ms[p] > 0.0) {
+                std::printf("  %6.3f ms/frame  %s\n", profile_ms[p] / 300.0, kPasses[p]);
+            }
+            profile_ms[p] = 0.0;
+        }
+        std::fflush(stdout);
     }
 
     ~Impl() {
         Destroy();
+        if (profile_pool) vkDestroyQueryPool(device, profile_pool, nullptr);
     }
 
     uint32_t MemoryType(uint32_t bits, VkMemoryPropertyFlags flags) const {
@@ -355,6 +403,7 @@ struct Upscaler::Impl {
             p = {};
         }
         if (linear_clamp) vkDestroySampler(device, linear_clamp, nullptr);
+        profile_count = {};
         linear_clamp = VK_NULL_HANDLE;
         for (Img* img : {&recurrent, &history, &reprojected, &mlsr_output, &exposure,
                          &exposure_identity, &spd_atomic, &spd_mip5}) {
@@ -546,7 +595,15 @@ struct Upscaler::Impl {
         const float pre_exposure = f.pre_exposure > 0.0f ? f.pre_exposure : 1.0f;
 
         // Constant buffers of this frame: MLSR, SPD, RCAS.
-        const VkDeviceSize slot = (frame_index++ % kFramesInFlight) * 4 * ubo_align;
+        const uint32_t ring = uint32_t(frame_index++ % kFramesInFlight);
+        const VkDeviceSize slot = ring * 4 * ubo_align;
+        CollectProfile(ring);
+        const uint32_t query_base = ring * (kPassCount + 1);
+        uint32_t profiled = 0;
+        if (profile_pool) {
+            vkCmdResetQueryPool(cmd, profile_pool, query_base, kPassCount + 1);
+            vkCmdWriteTimestamp(cmd, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, profile_pool, query_base);
+        }
         auto* base = static_cast<uint8_t*>(ubo.mapped) + slot;
         struct Mlsr {
             float inv_size[2], scale[2], inv_scale[2], jitter[2], mv_scale[2], tex_size[2],
@@ -694,10 +751,16 @@ struct Upscaler::Impl {
                 gy = ah >> level;
             }
             vkCmdDispatch(cmd, gx, gy, 1);
+            if (profile_pool) {
+                vkCmdWriteTimestamp(cmd, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, profile_pool,
+                                    query_base + 1 + profiled);
+                profile_pass[ring][profiled++] = uint8_t(index);
+            }
             vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
                                  VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT, 0, 1, &between, 0, nullptr, 0,
                                  nullptr);
         }
+        profile_count[ring] = profiled;
         return true;
     }
 };

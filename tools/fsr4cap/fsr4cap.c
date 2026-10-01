@@ -187,7 +187,9 @@ int main(int argc, char** argv) {
     // Record everything the upscaler does with the device (capture/ next to the exe).
     char capture_dir[MAX_PATH];
     GetModuleFileNameA(NULL, capture_dir, MAX_PATH);
-    snprintf(strrchr(capture_dir, '\\') + 1, 64, "capture_%ux%u_%ux%u", rw, rh, ow, oh);
+    // Test runs with pseudo-random inputs (verify.sh) record next to, not over, the captures.
+    snprintf(strrchr(capture_dir, '\\') + 1, 64, "%scapture_%ux%u_%ux%u",
+             argc > 5 && strcmp(argv[5], "noise") == 0 ? "noise_" : "", rw, rh, ow, oh);
     CaptureInstall(device, list, capture_dir);
 
     HMODULE loader = LoadLibraryA("amd_fidelityfx_loader_dx12.dll");

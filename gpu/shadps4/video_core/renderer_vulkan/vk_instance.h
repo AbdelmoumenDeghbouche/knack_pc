@@ -284,6 +284,11 @@ public:
                features.shaderStorageImageExtendedFormats;
     }
 
+    /// bbport: FSR 4.1.1 (INT8 model passes and VK_VALVE_shader_mixed_float_dot_product).
+    bool IsFsr411Supported() const {
+        return IsFsr4Int8Supported() && mixed_float_dot_product;
+    }
+
     /// VK_KHR_shader_clock is supported.
     bool IsShaderSubgroupClockSupported() const {
         return shader_clock && shader_clock_features.shaderSubgroupClock;
@@ -554,6 +559,7 @@ private:
     bool image_view_min_lod{};
     bool shader_clock{};
     bool compute_shader_derivatives{};
+    bool mixed_float_dot_product{}; // bbport: VK_VALVE_shader_mixed_float_dot_product (FSR 4.1.1)
     bool supports_memory_budget{};
     bool supports_block_texel_view{};
     u64 total_memory_budget{};

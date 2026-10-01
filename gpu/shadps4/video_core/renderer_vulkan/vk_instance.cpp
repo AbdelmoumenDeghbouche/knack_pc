@@ -217,7 +217,8 @@ bool Instance::CreateDevice() {
         vk::PhysicalDeviceShaderAtomicFloat2FeaturesEXT,
         vk::PhysicalDeviceWorkgroupMemoryExplicitLayoutFeaturesKHR,
         vk::PhysicalDeviceImage2DViewOf3DFeaturesEXT, vk::PhysicalDeviceShaderClockFeaturesKHR,
-        vk::PhysicalDeviceComputeShaderDerivativesFeaturesKHR>();
+        vk::PhysicalDeviceComputeShaderDerivativesFeaturesKHR,
+        vk::PhysicalDeviceShaderMixedFloatDotProductFeaturesVALVE>();
     features = feature_chain.get().features;
 
     const vk::StructureChain properties_chain = physical_device.getProperties2<
@@ -353,6 +354,11 @@ bool Instance::CreateDevice() {
     supports_memory_budget = add_extension(VK_EXT_MEMORY_BUDGET_EXTENSION_NAME);
     // bbport: FSR 4 v07 INT8 (vk_temporal_upscaler): quad derivatives in compute shaders.
     compute_shader_derivatives = add_extension(VK_KHR_COMPUTE_SHADER_DERIVATIVES_EXTENSION_NAME);
+    // bbport: FSR 4.1.1 passes (dot2 of halves accumulated in float, as vkd3d-proton translates them).
+    mixed_float_dot_product =
+        feature_chain.get<vk::PhysicalDeviceShaderMixedFloatDotProductFeaturesVALVE>()
+            .shaderMixedFloatDotProductFloat16AccFloat32 &&
+        add_extension(VK_VALVE_SHADER_MIXED_FLOAT_DOT_PRODUCT_EXTENSION_NAME);
     if (compute_shader_derivatives) {
         compute_shader_derivatives_features =
             feature_chain.get<vk::PhysicalDeviceComputeShaderDerivativesFeaturesKHR>();
@@ -546,6 +552,9 @@ bool Instance::CreateDevice() {
             .computeDerivativeGroupLinear =
                 compute_shader_derivatives_features.computeDerivativeGroupLinear,
         },
+        vk::PhysicalDeviceShaderMixedFloatDotProductFeaturesVALVE{
+            .shaderMixedFloatDotProductFloat16AccFloat32 = true,
+        },
     };
 
     if (!custom_border_color) {
@@ -599,6 +608,9 @@ bool Instance::CreateDevice() {
     }
     if (!compute_shader_derivatives) {
         device_chain.unlink<vk::PhysicalDeviceComputeShaderDerivativesFeaturesKHR>();
+    }
+    if (!mixed_float_dot_product) {
+        device_chain.unlink<vk::PhysicalDeviceShaderMixedFloatDotProductFeaturesVALVE>();
     }
 
     auto [device_result, dev] = physical_device.createDeviceUnique(device_chain.get());

@@ -3,6 +3,7 @@
 # (capture_<render>_<output> directories written by capture_all.sh).
 #
 #   extract.py <dxil-spirv> <capture root> <output dir>
+# (spirv-dis, spirv-as from SPIRV-Tools on PATH: the postpass is rewritten by postpass_lds.py.)
 #
 # Per (tier, model) set: the shaders of one frame translated to SPIR-V (dxil-spirv with
 # --class-bindings: binding = register + 32 * class, SRV/UAV/CBV/sampler), named after the pass,
@@ -111,8 +112,17 @@ for key, entry in sorted(sets.items()):
     d = os.path.join(out, key)
     os.makedirs(d, exist_ok=True)
     for name, path in entry['dxil'].items():
-        subprocess.run([dxil_spirv, path, *FLAGS, '--output', os.path.join(d, f'{name}.spv')], check=True,
-                       stderr=subprocess.DEVNULL)
+        spv = os.path.join(d, f'{name}.spv')
+        subprocess.run([dxil_spirv, path, *FLAGS, '--output', spv], check=True, stderr=subprocess.DEVNULL)
+        if name == 'postpass':
+            # Stores through workgroup memory (bit-exact, ~2.3x faster): postpass_lds.py.
+            os.replace(spv, os.path.join(d, 'postpass_orig.spv'))
+            asm = subprocess.run(['spirv-dis', os.path.join(d, 'postpass_orig.spv')], check=True,
+                                 capture_output=True, text=True).stdout
+            lds = subprocess.run([sys.executable, os.path.join(os.path.dirname(__file__), 'postpass_lds.py')],
+                                 input=asm, check=True, capture_output=True, text=True).stdout
+            subprocess.run(['spirv-as', '--target-env', 'spv1.3', '-', '-o', spv], input=lds, check=True,
+                           text=True)
     open(os.path.join(d, 'initializer.bin'), 'wb').write(entry['init'])
     print(f'{key}: {len(entry["dxil"])} shaders, initializer {hashlib.sha256(entry["init"]).hexdigest()[:12]}, '
           f'from {len(entry["caps"])} captures')
