@@ -60,3 +60,26 @@ The previous frame's matrices are not there; the port keeps them itself.
 - Frame-to-frame difference while standing still: ~33% lower with FSR.
 - Missing: motion of animated objects (characters, cloth, foliage), reactive/transparency
   masks for particles and fog, render-resolution scaling, frame generation.
+
+## 2026-10-01: FSR 4 при выводе 1440p/2160p не работал (мерцание и дрожание)
+
+Видео `video_2026-10-01_03-58-59.mp4` (вывод 3840x2160, FSR 4 Performance): мерцание и дрожание
+всех объектов. Причина — апскейлер в этом режиме вообще не выполнялся, а jitter оставался
+включённым: на экран шёл растянутый кадр сцены, каждый кадр сдвинутый на свою фазу Halton.
+
+1. Проход UI опознавался по точному размеру цели `BB_RENDER_RES` (1916x1078), а игра выделяет
+   цели с выровненной высотой (1916x1080; в константах сцены тоже 1916x1080). `RunScaled` не
+   вызывался ни разу (в логе не было `UI: native composition`). Теперь допускается выравнивание
+   до 8 пикселей (`RenderTarget`), а размер сцены для FSR берётся из констант сцены
+   (`CameraMotion::RenderSize`, `SceneSize`).
+2. После этого FSR 4 падал с `external image registration failed (-1000069000)`: `RunScaled`
+   создавал новые image view каждый кадр, а реестр FSR 4 вмещает восемь. Теперь те же
+   `CachedView`, что и в пути Native AA.
+
+Проверка дампом (`BB_DUMP_TRIGGER=<файл> BB_DUMP_DIR=<каталог>`, `BB_DUMP_FRAMES`, по умолчанию 8:
+вход FSR, векторы движения и выход, raw): при неподвижной камере PSNR соседних кадров выхода
+~45 дБ против ~28 дБ у входа с jitter; при повороте камеры и ходьбе шлейфов нет. FPS в этом
+режиме ~107 вместо ~220 — раньше FSR 4 просто не выполнялся.
+
+Осталось: спрайты (по 4 индекса) в цвет сцены со сценической глубиной — свечения, огоньки —
+по-прежнему не сдвигаются jitter (правило «≤ 6 индексов = полноэкранный проход»).

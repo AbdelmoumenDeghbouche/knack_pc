@@ -10,6 +10,9 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <string>
+
+#include <vk_mem_alloc.h>
 
 #include "bbport_settings.h"
 #include "bbport_toggles.h"
@@ -42,6 +45,99 @@ FfxVkPortableImage Describe(vk::Image image, vk::Format format, u32 width, u32 h
     out.aspect = static_cast<VkImageAspectFlags>(aspect);
     out.state = state;
     return out;
+}
+
+/// bbport: BB_DUMP_TRIGGER=<file> BB_DUMP_DIR=<dir> (default out/dump): creating the file dumps
+/// the upscaler's images of the next BB_DUMP_FRAMES (8) frames as raw files
+/// <dir>/fNNN_<name>_<w>x<h>_<format>.raw, for checking temporal stability offline.
+/// Returns the frame number to dump, or -1.
+int DumpFrame() {
+    static const char* trigger = std::getenv("BB_DUMP_TRIGGER");
+    static int remaining = 0, index = 0, polls = 0;
+    if (!trigger) {
+        return -1;
+    }
+    if (remaining == 0) {
+        if (++polls % 30 != 0 || std::remove(trigger) != 0) {
+            return -1;
+        }
+        const char* frames = std::getenv("BB_DUMP_FRAMES");
+        remaining = frames ? std::max(1, std::atoi(frames)) : 8;
+        index = 0;
+    }
+    --remaining;
+    return index++;
+}
+
+struct DumpImage {
+    vk::Image image; ///< in layout General
+    u32 width, height, bytes_per_pixel;
+    const char* name;
+    const char* format;
+};
+
+/// Copies `images` into host buffers after the commands recorded so far and writes them to
+/// files once the GPU is done.
+void DumpImages(const Instance& instance, Scheduler& scheduler, vk::CommandBuffer cmdbuf,
+                int frame, std::initializer_list<DumpImage> images) {
+    static const std::string dir = [] {
+        const char* env = std::getenv("BB_DUMP_DIR");
+        return std::string{env && env[0] ? env : "out/dump"};
+    }();
+    const vk::MemoryBarrier2 before{
+        .srcStageMask = vk::PipelineStageFlagBits2::eAllCommands,
+        .srcAccessMask = vk::AccessFlagBits2::eMemoryWrite,
+        .dstStageMask = vk::PipelineStageFlagBits2::eTransfer,
+        .dstAccessMask = vk::AccessFlagBits2::eTransferRead,
+    };
+    cmdbuf.pipelineBarrier2({.memoryBarrierCount = 1, .pMemoryBarriers = &before});
+    for (const auto& image : images) {
+        const VkDeviceSize size = VkDeviceSize(image.width) * image.height * image.bytes_per_pixel;
+        const VkBufferCreateInfo buffer_ci{
+            .sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
+            .size = size,
+            .usage = VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+        };
+        const VmaAllocationCreateInfo alloc_ci{
+            .flags = VMA_ALLOCATION_CREATE_MAPPED_BIT |
+                     VMA_ALLOCATION_CREATE_HOST_ACCESS_RANDOM_BIT,
+            .usage = VMA_MEMORY_USAGE_AUTO_PREFER_HOST,
+        };
+        VkBuffer buffer{};
+        VmaAllocation allocation{};
+        VmaAllocationInfo info{};
+        if (vmaCreateBuffer(instance.GetAllocator(), &buffer_ci, &alloc_ci, &buffer, &allocation,
+                            &info) != VK_SUCCESS) {
+            std::printf("Dump: no host memory for %s\n", image.name);
+            continue;
+        }
+        const vk::BufferImageCopy region{
+            .imageSubresource = {vk::ImageAspectFlagBits::eColor, 0, 0, 1},
+            .imageExtent = {image.width, image.height, 1},
+        };
+        cmdbuf.copyImageToBuffer(image.image, vk::ImageLayout::eGeneral, buffer, region);
+        char path[512];
+        std::snprintf(path, sizeof(path), "%s/f%03d_%s_%ux%u_%s.raw", dir.c_str(), frame,
+                      image.name, image.width, image.height, image.format);
+        scheduler.DeferPriorityOperation(
+            [allocator = instance.GetAllocator(), buffer, allocation, info, size,
+             file = std::string{path}] {
+                vmaInvalidateAllocation(allocator, allocation, 0, VK_WHOLE_SIZE);
+                if (FILE* f = std::fopen(file.c_str(), "wb")) {
+                    std::fwrite(info.pMappedData, 1, size, f);
+                    std::fclose(f);
+                }
+                vmaDestroyBuffer(allocator, buffer, allocation);
+            });
+    }
+    const vk::MemoryBarrier2 after{
+        .srcStageMask = vk::PipelineStageFlagBits2::eTransfer,
+        .srcAccessMask = vk::AccessFlagBits2::eNone,
+        .dstStageMask = vk::PipelineStageFlagBits2::eAllCommands,
+        .dstAccessMask = vk::AccessFlagBits2::eNone,
+    };
+    cmdbuf.pipelineBarrier2({.memoryBarrierCount = 1, .pMemoryBarriers = &after});
+    std::printf("Dump: frame %d -> %s\n", frame, dir.c_str());
 }
 
 void PrintIssues(const char* what, u64 issues) {
@@ -448,8 +544,10 @@ void TemporalUpscaler::OnBlendedSceneDraw() {
     // must use that size, or each frame would recreate the context (native <-> reduced).
     const bool reduced = ReducedScene(color);
     const u32 ow = color.info.size.width, oh = color.info.size.height;
-    const u32 w = reduced ? scene_targets.Size().width : ow;
-    const u32 h = reduced ? scene_targets.Size().height : oh;
+    // Scaled presets: the scene fills the top-left of its aligned targets (see RunScaled).
+    const auto scene = Scaled() ? SceneSize(ow, oh) : std::array<u32, 2>{ow, oh};
+    const u32 w = reduced ? scene_targets.Size().width : scene[0];
+    const u32 h = reduced ? scene_targets.Size().height : scene[1];
     if (color.info.pixel_format != vk::Format::eR16G16B16A16Sfloat ||
         !(color.usage_flags & vk::ImageUsageFlagBits::eTransferSrc)) {
         return;
@@ -514,8 +612,10 @@ void TemporalUpscaler::OnSceneComposite() {
     }
     auto& color = texture_cache.GetImage(scene_color);
     const bool reduced = ReducedScene(color);
-    const u32 w = reduced ? scene_targets.Size().width : color.info.size.width;
-    const u32 h = reduced ? scene_targets.Size().height : color.info.size.height;
+    const auto scene = Scaled() ? SceneSize(color.info.size.width, color.info.size.height)
+                                : std::array<u32, 2>{color.info.size.width, color.info.size.height};
+    const u32 w = reduced ? scene_targets.Size().width : scene[0];
+    const u32 h = reduced ? scene_targets.Size().height : scene[1];
     if (w != width || h != height || !(color.usage_flags & vk::ImageUsageFlagBits::eStorage)) {
         return;
     }
@@ -866,6 +966,15 @@ vk::ImageView TemporalUpscaler::CachedView(const VideoCore::Image& image, vk::Fo
 
 namespace Vulkan {
 
+std::array<u32, 2> TemporalUpscaler::SceneSize(u32 w, u32 h) const {
+    // The game's own render size (scene constants); BB_RENDER_RES until the first camera.
+    auto size = camera_motion.RenderSize();
+    if (size[0] == 0 || size[1] == 0) {
+        size = {render_width, render_height};
+    }
+    return {std::min(size[0], w), std::min(size[1], h)};
+}
+
 bool TemporalUpscaler::Scaled() const {
     return scaled_session;
 }
@@ -903,7 +1012,7 @@ void TemporalUpscaler::OnDraw(u64 vs_hash, VideoCore::ImageId color,
     const bool ui_draw = (vs_hash == ui_trigger_vs || native_viewport) &&
         (image.info.pixel_format == vk::Format::eR8G8B8A8Unorm ||
          image.info.pixel_format == vk::Format::eR8G8B8A8Srgb) &&
-        image.info.size.width == render_width && image.info.size.height == render_height &&
+        RenderTarget(image.info.size.width, image.info.size.height) &&
         !FrameCapture::IsDisplayBuffer(image.info.guest_address);
     switch (UiComposition::Choose(Scaled(), ui_draw,
                                   camera_motion.Ready() && ldr_target == color,
@@ -1094,9 +1203,11 @@ void TemporalUpscaler::RunScaled() {
     }
     auto& color = texture_cache.GetImage(ldr_target);
     auto& depth = texture_cache.GetImage(camera_motion.Depth());
-    const u32 w = color.info.size.width, h = color.info.size.height;
+    // The scene fills the top-left w x h of its targets (iw x ih, aligned by the game).
+    const u32 iw = color.info.size.width, ih = color.info.size.height;
+    const auto [w, h] = SceneSize(iw, ih);
     const u32 ow = target_width, oh = target_height;
-    if (depth.info.size.width != w || depth.info.size.height != h || w >= ow || h >= oh) {
+    if (depth.info.size.width != iw || depth.info.size.height != ih || w >= ow || h >= oh) {
         return;
     }
     if (!EnsureResources(w, h, ow, oh, false)) {
@@ -1105,14 +1216,9 @@ void TemporalUpscaler::RunScaled() {
     }
     EnsureUiResources(ow, oh, color.info.pixel_format, depth.info.pixel_format);
     PrepareUiDepth(camera_motion.Depth());
-    const auto device = instance.GetDevice();
     const auto depth_format = depth.info.pixel_format;
-    const auto depth_view = Check(device.createImageView({
-        .image = vk::Image(depth.backing->image),
-        .viewType = vk::ImageViewType::e2D,
-        .format = depth_format,
-        .subresourceRange = {vk::ImageAspectFlagBits::eDepth, 0, 1, 0, 1},
-    }));
+    // Views kept across frames: FSR 4 registers images by view in a registry of eight.
+    const auto depth_view = CachedView(depth, depth_format, vk::ImageAspectFlagBits::eDepth);
 
     scheduler.EndRendering();
     const auto cmdbuf = scheduler.CommandBuffer();
@@ -1161,17 +1267,13 @@ void TemporalUpscaler::RunScaled() {
 
     // bbport: FSR 4 writes its HDR-format output, copied into the output-size UI image.
     if (UseFsr4()) {
-        const auto color_view = Check(device.createImageView({
-            .image = vk::Image(color.backing->image),
-            .viewType = vk::ImageViewType::e2D,
-            .format = color.info.pixel_format,
-            .subresourceRange = {vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1},
-        }));
+        const auto color_view =
+            CachedView(color, color.info.pixel_format, vk::ImageAspectFlagBits::eColor);
         barrier(vk::Image(output_image), vk::ImageAspectFlagBits::eColor,
                 vk::ImageLayout::eUndefined, all, vk::AccessFlagBits2::eNone,
                 vk::ImageLayout::eGeneral, all, rw);
-        const bool ok4 = RecordFsr4(cmdbuf, {vk::Image(color.backing->image), color_view, w, h},
-                                    {vk::Image(depth.backing->image), depth_view, w, h}, w, h, ow,
+        const bool ok4 = RecordFsr4(cmdbuf, {vk::Image(color.backing->image), color_view, iw, ih},
+                                    {vk::Image(depth.backing->image), depth_view, iw, ih}, w, h, ow,
                                     oh, frame_ms);
         if (ok4) {
             barrier(vk::Image(output_image), vk::ImageAspectFlagBits::eColor,
@@ -1197,11 +1299,13 @@ void TemporalUpscaler::RunScaled() {
                     vk::PipelineStageFlagBits2::eColorAttachmentOutput, color_access);
             reset = false;
             dispatched_last_frame = true;
+            if (const int dump = DumpFrame(); dump >= 0) {
+                DumpImages(instance, scheduler, cmdbuf, dump,
+                           {{vk::Image(color.backing->image), iw, ih, 4, "input", "rgba"},
+                            {vk::Image(motion_image), w, h, 4, "motion", "rg16f"},
+                            {vk::Image(output_image), ow, oh, 8, "output", "rgba16f"}});
+            }
         }
-        scheduler.DeferOperation([device, depth_view, color_view] {
-            device.destroyImageView(depth_view);
-            device.destroyImageView(color_view);
-        });
         done_this_frame = true;
         if (ok4) {
             ui_phase = true;
@@ -1215,10 +1319,10 @@ void TemporalUpscaler::RunScaled() {
     FfxVkPortableUpscaleDispatchInfo info{};
     info.structSize = sizeof(info);
     info.commandBuffer = cmdbuf;
-    info.color = Describe(vk::Image(color.backing->image), color.info.pixel_format, w, h,
+    info.color = Describe(vk::Image(color.backing->image), color.info.pixel_format, iw, ih,
                           color.usage_flags, vk::ImageAspectFlagBits::eColor,
                           FFX_VK_PORTABLE_RESOURCE_STATE_GENERIC_READ);
-    info.depth = Describe(vk::Image(depth.backing->image), depth_format, w, h, depth.usage_flags,
+    info.depth = Describe(vk::Image(depth.backing->image), depth_format, iw, ih, depth.usage_flags,
                           vk::ImageAspectFlagBits::eDepth,
                           FFX_VK_PORTABLE_RESOURCE_STATE_GENERIC_READ);
     info.motionVectors = Describe(vk::Image(motion_image), vk::Format::eR16G16Sfloat, w, h,
@@ -1274,7 +1378,6 @@ void TemporalUpscaler::RunScaled() {
     barrier(vk::Image(ui_image), vk::ImageAspectFlagBits::eColor, vk::ImageLayout::eGeneral, all,
             rw, vk::ImageLayout::eGeneral, vk::PipelineStageFlagBits2::eColorAttachmentOutput,
             color_access);
-    scheduler.DeferOperation([device, depth_view] { device.destroyImageView(depth_view); });
 
     done_this_frame = true; // the UI is not jittered
     if (ok) {

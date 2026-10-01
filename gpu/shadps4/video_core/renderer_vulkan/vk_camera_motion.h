@@ -52,6 +52,11 @@ public:
     [[nodiscard]] VideoCore::ImageId Depth() const noexcept {
         return depth_id;
     }
+    /// The render size in the scene constants (the game's viewport; its targets may be
+    /// allocated larger, e.g. 1916x1080 for a 1916x1078 scene), or zero before the first camera.
+    [[nodiscard]] std::array<u32, 2> RenderSize() const noexcept {
+        return render_size;
+    }
     /// Vertical field of view and near/far planes of the current camera.
     [[nodiscard]] float VerticalFov() const noexcept;
     [[nodiscard]] float Near() const noexcept;
@@ -95,6 +100,7 @@ private:
     Camera current, previous;
     bool frame_has_camera = false;
     std::array<float, 2> jitter{}, previous_jitter{};
+    std::array<u32, 2> render_size{};
     VideoCore::ImageId depth_id{};
 
     vk::UniqueDescriptorSetLayout desc_layout;

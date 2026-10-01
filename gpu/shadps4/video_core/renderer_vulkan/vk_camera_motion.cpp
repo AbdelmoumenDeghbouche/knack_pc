@@ -221,6 +221,11 @@ void CameraMotion::OnConstants(const float* data) {
     std::memcpy(current.inv_view.data(), data + 180, 12 * sizeof(float));
     current.proj = {data[52], data[57], data[62], data[63]};
     current.valid = current.proj[0] != 0.0f && current.proj[1] != 0.0f;
+    const std::array<u32, 2> size{u32(data[4]), u32(data[5])};
+    if (size != render_size) {
+        std::printf("Camera motion: scene render size %ux%u\n", size[0], size[1]);
+        render_size = size;
+    }
     frame_has_camera = true;
 }
 

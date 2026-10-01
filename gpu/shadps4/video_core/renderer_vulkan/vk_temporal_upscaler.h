@@ -141,6 +141,14 @@ private:
     void PrepareUiDepth(VideoCore::ImageId depth);
     /// Render size below the scaled-preset output size (the resolution patch is on).
     [[nodiscard]] bool Scaled() const;
+    /// A target of the patched render size: the game allocates it with aligned dimensions
+    /// (a 1916x1078 scene in 1916x1080 targets).
+    [[nodiscard]] bool RenderTarget(u32 w, u32 h) const {
+        return w >= render_width && h >= render_height && w < render_width + 8 &&
+               h < render_height + 8;
+    }
+    /// The scene's size inside a `w` x `h` render target: the game's viewport.
+    [[nodiscard]] std::array<u32, 2> SceneSize(u32 w, u32 h) const;
     // The scene color is drawn into a reduced SceneTargets proxy (live presets).
     [[nodiscard]] bool ReducedScene(const VideoCore::Image& color) const;
     /// Available and switched on (menu setting, toggle 1 << 24).
