@@ -410,8 +410,10 @@ class LauncherWindow(Adw.ApplicationWindow):
             ok = (PORT_DIR / "fsr4_shaders").is_dir()
             hint = "Ассеты найдены" if ok else "Нет ассетов: tools/fetch_fsr4_assets.sh"
         elif value == "fsr411":
-            ok = (PORT_DIR / "fsr4_411").is_dir()
+            ok = (PORT_DIR / "fsr4_411").is_dir() or (DATA_DIR / "fsr4_411").is_dir()
             hint = ("Ассеты найдены" if ok else
+                    f"Нет ассетов: tools/fsr4cap/build_assets.sh (из DLL AMD 4.1.x, нужен Proton), "
+                    f"затем папку fsr4_411 — в {DATA_DIR}" if PACKAGED else
                     "Нет ассетов: tools/fsr4cap/build_assets.sh (из DLL AMD 4.1.x, нужен Proton)")
         else:
             hint = None

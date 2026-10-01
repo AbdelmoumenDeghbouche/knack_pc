@@ -11,7 +11,7 @@ let
   root = ./..;
   # Only what the package needs (the tree also holds builds, profiles and captures).
   wanted = [
-    "run.sh" "scripts" "patches" "fsr4_shaders" "fsr4_411" "launcher" "out" "out/bb-probe" "out/gpu"
+    "run.sh" "scripts" "patches" "fsr4_shaders" "launcher" "out" "out/bb-probe" "out/gpu"
     "out/gpu/libbbgpu.so"
   ];
   src = builtins.path {
@@ -20,7 +20,7 @@ let
     filter = path: type:
       let rel = lib.removePrefix (toString root + "/") (toString path);
       in builtins.elem rel wanted
-        || lib.any (dir: lib.hasPrefix (dir + "/") rel) [ "scripts" "patches" "fsr4_shaders" "fsr4_411" "launcher" ];
+        || lib.any (dir: lib.hasPrefix (dir + "/") rel) [ "scripts" "patches" "fsr4_shaders" "launcher" ];
   };
   python = pkgs.python3.withPackages (ps: [ ps.pygobject3 ]);
   # Mesa's own drivers: the host's (e.g. SteamOS /usr/lib) cannot load into this closure's glibc.
@@ -57,8 +57,8 @@ pkgs.stdenv.mkDerivation {
     mkdir -p $d/bin $out/bin
     cp run.sh $d/
     cp -r scripts patches fsr4_shaders launcher $d/
-    # FSR 4.1.1 assets exist only when built from the user's own DLLs (tools/fsr4cap).
-    if [ -d fsr4_411 ]; then cp -r fsr4_411 $d/; fi
+    # FSR 4.1.1 assets are extracted from AMD's DLL: never packaged (each user builds them,
+    # tools/fsr4cap/build_assets.sh, into the data directory's fsr4_411).
     install -m755 out/bb-probe $d/bin/bb-probe
     install -Dm755 out/gpu/libbbgpu.so $d/bin/gpu/libbbgpu.so
     runHook postInstall
