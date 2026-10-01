@@ -1,7 +1,11 @@
 # Packaged port: the prebuilt game binaries (build.sh first), the start-up scripts and the GTK4
 # launcher, with their whole Nix closure and Mesa's Vulkan drivers. `bash packaging/appimage.sh`
 # turns it into an AppImage (Steam Deck); `nix-build packaging` alone gives result/bin/bbport.
-{ pkgs ? import <nixpkgs> { } }:
+{ pkgs ? import <nixpkgs> { }
+  # Store paths the prebuilt binaries load libraries from (their RUNPATHs), written by
+  # appimage.sh. Nix only finds references to its inputs, and the binaries were built outside.
+, runtimePaths ? (if builtins.pathExists ./runtime-paths.nix then import ./runtime-paths.nix else [ ])
+}:
 let
   lib = pkgs.lib;
   root = ./..;
@@ -35,13 +39,17 @@ pkgs.stdenv.mkDerivation {
   pname = "bbport";
   version = "0.1";
   inherit src;
-  nativeBuildInputs = [ pkgs.patchelf pkgs.makeShellWrapper pkgs.wrapGAppsHook4 pkgs.gobject-introspection ];
-  buildInputs = [ pkgs.gtk4 pkgs.libadwaita pkgs.adwaita-icon-theme pkgs.librsvg ];
+  nativeBuildInputs = [ pkgs.makeShellWrapper pkgs.wrapGAppsHook4 pkgs.gobject-introspection ];
+  buildInputs = [ pkgs.gtk4 pkgs.libadwaita pkgs.adwaita-icon-theme pkgs.librsvg ]
+    ++ map builtins.storePath runtimePaths;
   dontBuild = true;
   dontConfigure = true;
   # The binaries live under share/ (next to the scripts run.sh expects): strip them too, which
   # also drops the compiler and header paths their debug info would keep in the closure.
-  stripDebugList = [ "share/bbport/bin" ];
+  stripDebugList = [ "share/bbport/bin/gpu" ];
+  # patchelf (RPATH shrinking) corrupts the non-PIE game binary's symbol versions; it finds
+  # its library through $ORIGIN/gpu and its other libraries through the build's RUNPATH.
+  dontPatchELF = true;
   dontWrapGApps = true; # wrapped once below, together with the launcher's own variables
   installPhase = ''
     runHook preInstall
@@ -50,10 +58,7 @@ pkgs.stdenv.mkDerivation {
     cp run.sh prepare.py link_libc.py link_modules.py content_profile.py patches.py $d/
     cp -r patches fsr4_shaders launcher $d/
     install -m755 out/bb-probe $d/bin/bb-probe
-    install -m755 out/gpu/libbbgpu.so $d/bin/libbbgpu.so
-    # The development rpath points at the build tree: the library is next to the binary now.
-    rpath=$(patchelf --print-rpath $d/bin/bb-probe | tr ':' '\n' | grep '^/nix/store' | paste -sd:)
-    patchelf --set-rpath "$d/bin:$rpath" $d/bin/bb-probe
+    install -Dm755 out/gpu/libbbgpu.so $d/bin/gpu/libbbgpu.so
     runHook postInstall
   '';
   postFixup = ''

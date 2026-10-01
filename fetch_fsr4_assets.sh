@@ -2,8 +2,8 @@
 # Downloads the FSR 4 v07 INT8/DOT4 asset set (SPIR-V passes, model initializers, pre-pass
 # weights) used by the FSR-Vulkan provider into fsr4_shaders/. The assets were built by
 # Q2RTX from AMD's MIT-licensed FidelityFX SDK FSR 4 source (see LICENSE-FSR4-v07.txt);
-# they are not part of this repository. Output 1920x1080 needs the 1080 tier; pass
-# BB_FSR4_TIERS="1080 2160" for larger outputs (BB_OUTPUT_RES).
+# they are not part of this repository. Output 1920x1080 needs the 1080 tier, 1440p and 2160p
+# outputs (menu: output resolution) the 2160 tier; BB_FSR4_TIERS selects them.
 set -euo pipefail
 cd -- "$(dirname -- "$0")"
 commit=ae8d628fae208813172446d1e49ed94150b04658
@@ -15,7 +15,7 @@ for model in native quality balanced performance ultraperf drs; do
     files+=("fsr4_model_v07_i8_${model}_initializers.bin"
             "fsr4_model_v07_i8_${model}_pre_weights.bin"
             "fsr4_model_v07_i8_${model}_shader_manifest.json")
-    for tier in ${BB_FSR4_TIERS:-1080}; do
+    for tier in ${BB_FSR4_TIERS:-1080 2160}; do
         files+=("fsr4_model_v07_i8_${model}_${tier}_pre.spv"
                 "fsr4_model_v07_i8_${model}_${tier}_post.spv")
         for pass in $(seq 1 12); do

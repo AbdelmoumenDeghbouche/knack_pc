@@ -8,3 +8,4 @@ pgo/
 *.png
 last_run.log
 dist/
+packaging/runtime-paths.nix
