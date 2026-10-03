@@ -12,6 +12,7 @@
 #include <dirent.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <limits.h>
 #include <pthread.h>
 #include <unistd.h>
 #include <sys/stat.h>
@@ -128,7 +129,13 @@ static Listing *list_directory(const char *path) {
         if (!l->offsets || !l->types || !l->names) { fputs("Out of memory listing directory\n",stderr); exit(1); }
         memcpy(l->names+bytes,e->d_name,n);
         l->offsets[l->count]=bytes;
-        l->types[l->count]=e->d_type==DT_DIR ? 4 : e->d_type==DT_REG ? 8 : e->d_type==DT_LNK ? 10 : 0;
+        unsigned char type=e->d_type;
+        if (type==DT_LNK || type==DT_UNKNOWN) {
+            struct stat entry;
+            if (!fstatat(dirfd(d),e->d_name,&entry,0))
+                type=S_ISDIR(entry.st_mode) ? DT_DIR : S_ISREG(entry.st_mode) ? DT_REG : type;
+        }
+        l->types[l->count]=type==DT_DIR ? 4 : type==DT_REG ? 8 : type==DT_LNK ? 10 : 0;
         ++l->count; bytes+=n;
     }
     closedir(d);
@@ -150,8 +157,16 @@ static File *get(int fd) {
 }
 /* BB_AUDIO_TRACE=1: sound file opens and failed reads (missing game sounds). */
 static int audio_trace(void) { static int v=-1; if (v<0) { const char *e=getenv("BB_AUDIO_TRACE"); v=e && e[0]=='1'; } return v; }
+/* Game mounts (including linked mod overlays) are read-only. Saves use other mounts. */
+static int game_path(const char *p) {
+    if (!p || !*p) return 0;
+    if (*p!='/') return 1;
+    return (!strncmp(p,"/app0",5) && (!p[5] || p[5]=='/')) ||
+           (!strncmp(p,"/hostapp",8) && (!p[8] || p[8]=='/'));
+}
 /* All operations return >=0 or -(host errno); wrappers adapt the convention. */
 static int64_t do_open(const char *guest,int flags,int mode) {
+    if (game_path(guest) && (flags & (3|0x8|0x200|0x400|0x800))) return -EROFS;
     char path[1024];
     int e=translate(guest,path,sizeof(path));
     if (e) return -e;
@@ -173,6 +188,17 @@ static int64_t do_open(const char *guest,int flags,int mode) {
     ++opens;
     pthread_mutex_unlock(&lock);
     if (audio_trace() && strstr(guest,"sound/")) printf("Audio trace: open(%s) -> fd %d, %lld bytes\n",guest,fd,(long long)s.st_size);
+    const char *mod_trace=getenv("BB_MOD_TRACE"), *mod_root=getenv("BB_MODS_DIR");
+    if (mod_trace && mod_trace[0]=='1' && mod_root) {
+        char actual[PATH_MAX],root[PATH_MAX];
+        static unsigned traced;
+        if (realpath(path,actual) && realpath(mod_root,root)) {
+            size_t n=strlen(root);
+            if (!strncmp(actual,root,n) && actual[n]=='/' &&
+                __atomic_fetch_add(&traced,1,__ATOMIC_RELAXED)<32)
+                printf("Mods: open %s -> %s\n",guest,actual);
+        }
+    }
     return fd;
 }
 static int64_t do_close(int fd) {
@@ -291,6 +317,7 @@ static int64_t do_getdents(int fd,char *buffer,uint64_t size,int64_t *basep) {
     return result;
 }
 static int64_t path_op(const char *guest,int op,int mode) {
+    if (game_path(guest)) return -EROFS;
     char path[1024];
     int e=translate(guest,path,sizeof(path));
     if (e) return -e;
@@ -298,6 +325,7 @@ static int64_t path_op(const char *guest,int op,int mode) {
     return r ? -errno : 0;
 }
 static int64_t do_rename(const char *from,const char *to) {
+    if (game_path(from) || game_path(to)) return -EROFS;
     char a[1024],b[1024];
     int e=translate(from,a,sizeof(a));
     if (!e) e=translate(to,b,sizeof(b));
@@ -310,6 +338,7 @@ static int64_t do_ftruncate(int fd,int64_t length) {
     return ftruncate(h,length) ? -errno : 0;
 }
 static int64_t do_truncate(const char *guest,int64_t length) {
+    if (game_path(guest)) return -EROFS;
     char path[1024];
     int e=translate(guest,path,sizeof(path));
     if (e) return -e;

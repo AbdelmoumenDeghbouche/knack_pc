@@ -952,6 +952,7 @@ void Rasterizer::DrawRecord(const GraphicsPipeline* pipeline, const PreparedDraw
         NoteFrameStart();
         static const char* scene_debug = std::getenv("BB_SCENE_DEBUG");
         scene_debug_frame = scene_debug && std::remove(scene_debug) == 0;
+        scene_targets->debug = scene_debug_frame;
     }
     bind_prepared = used_prepared;
     motion_draw = pipeline->GetGraphicsKey().motion_vectors;
@@ -1515,6 +1516,20 @@ bool Rasterizer::BindResources(const Pipeline* pipeline) {
     set_writes.clear();
     buffer_infos.clear();
     image_infos.clear();
+    // bbport: G-buffer passes sample material textures for a scene rendered below the output
+    // size; the temporal upscaler restores the detail of the output's mip level (FSR guide:
+    // log2(render / output)). Shadows, post-processing and UI keep the guest's bias.
+    sampler_lod_bias = 0.0f;
+    if (!pipeline->IsCompute() && !BbToggle::Disabled(BbToggle::SceneMipBias) &&
+        std::popcount(static_cast<const GraphicsPipeline*>(pipeline)->GetGraphicsKey().mrt_mask &
+                      0xff) >= 5) {
+        sampler_lod_bias = upscaler->SceneMipBias();
+        static float reported = 0.0f;
+        if (sampler_lod_bias != reported) {
+            reported = sampler_lod_bias;
+            std::printf("Upscaler: scene texture LOD bias %.2f\n", sampler_lod_bias);
+        }
+    }
 
     bool uses_dma = false;
 
@@ -2245,6 +2260,17 @@ void Rasterizer::BindTextures(const Shader::Info& stage, const PreparedStage* pr
         auto& desc_entry =
             prepared ? CachedImageDescEntry(tsharp, image_desc, prepared->image_hashes[image_index])
                      : CachedImageDescEntry(tsharp, image_desc);
+        // BB_SCENE_DEBUG: proxied scene targets this binding reads at the native size, and why.
+        const auto debug_native = [&](const VideoCore::Image& image) {
+            if (!scene_debug_frame || proxy_candidate || !image.scene_proxy) return;
+            std::printf("Scene native read: %s %016llx %s %ux%u needs_native %d written %d "
+                        "bindings %u mip_fallback %d\n",
+                        stage.sw_stage == Shader::SwStage::Compute ? "cs" : "gfx",
+                        (unsigned long long)stage.pgm_hash,
+                        vk::to_string(image.info.pixel_format).c_str(), image.info.size.width,
+                        image.info.size.height, int(image_desc.needs_native),
+                        int(image_desc.is_written), num_bindings, int(mip_fallback_mode));
+        };
         for (auto i = 0; i < num_bindings; i++) {
             // bbport: a plain binding (no mip override) of the same T# resolves to the same image
             // while no image was registered or unregistered.
@@ -2262,6 +2288,7 @@ void Rasterizer::BindTextures(const Shader::Info& stage, const PreparedStage* pr
                     image_id = depth_image_id;
                     image = &texture_cache.GetImage(image_id);
                 }
+                debug_native(*image);
                 if (image->binding.is_bound) {
                     image->binding.force_general |= image_desc.is_written;
                 }
@@ -2299,6 +2326,7 @@ void Rasterizer::BindTextures(const Shader::Info& stage, const PreparedStage* pr
                 image_id = depth_image_id;
                 image = &texture_cache.GetImage(image_id);
             }
+            debug_native(*image);
             if (image->binding.is_bound) {
                 // The image is already bound. In case if it is about to be used as storage we
                 // need to force general layout on it.
@@ -2438,8 +2466,8 @@ void Rasterizer::BindSamplers(const Shader::Info& stage, const PreparedStage* pr
         const auto& sampler = stage.samplers[sampler_index];
         auto ssharp =
             prepared ? prepared->sampler_sharps[sampler_index] : sampler.GetSharp(stage);
-        const auto vk_sampler =
-            texture_cache.GetSampler(ssharp, Regs().ta_bc_base, sampler.is_depth);
+        const auto vk_sampler = texture_cache.GetSampler(
+            ssharp, Regs().ta_bc_base, sampler.is_depth, sampler.is_depth ? 0.0f : sampler_lod_bias);
         image_infos.emplace_back(vk_sampler, VK_NULL_HANDLE, vk::ImageLayout::eGeneral);
         auto& set_write = set_writes[write_index++];
         set_write.dstSet = VK_NULL_HANDLE;
@@ -2525,7 +2553,9 @@ bool Rasterizer::BindTexturesFromSet(const Shader::Info& stage, const PreparedSt
         const bool proxies_on = !BbToggle::Disabled(BbToggle::SampleSceneProxies);
         if (image.backing != entry.backing || image.binding.needs_rebind ||
             image.binding.is_target || !texture_cache.IsUpToDate(entry.id) ||
-            (entry.proxy ? !proxies_on || !scene_targets->ProxyCurrent(image)
+            (entry.proxy ? !proxies_on ||
+                               !scene_targets->ProxyCurrent(image, entry.range.base.level,
+                                                            entry.range.extent.levels)
                          : image.scene_proxy && proxies_on) ||
             (upscaler->Enabled() && upscaler->RedirectsSampled(entry.id))) {
             ++texture_set_why[2];
@@ -2549,7 +2579,7 @@ bool Rasterizer::BindTexturesFromSet(const Shader::Info& stage, const PreparedSt
         image.usage.texture = 1u;
         if (entry.proxy) {
             image_infos.emplace_back(VK_NULL_HANDLE, entry.view,
-                                     scene_targets->PrepareSample(image));
+                                     scene_targets->PrepareSample(image, entry.range.base.level));
             ++proxy_samples;
             continue;
         }
@@ -2635,7 +2665,7 @@ RenderState Rasterizer::BeginRenderingFull(const GraphicsPipeline* pipeline) {
     const auto& regs = Regs();
     const auto& key = pipeline->GetGraphicsKey();
     if (std::popcount(key.mrt_mask & 0x7f) >= 5 && db_desc.first &&
-        scene_targets->Eligible(texture_cache.GetImage(db_desc.first))) scene_started = true;
+        scene_targets->EligibleScene(texture_cache.GetImage(db_desc.first))) scene_started = true;
     // A proxy attachment cannot represent MSAA or a feedback loop that reads the
     // same image through the guest's native descriptor during this draw.
     bool reduced = scene_started && upscaler->RasterScaling() && key.num_samples == 1;
@@ -2655,13 +2685,21 @@ RenderState Rasterizer::BeginRenderingFull(const GraphicsPipeline* pipeline) {
     const u32 num_attachments = BbToggle::Disabled(BbToggle::SceneAttachmentsOnly)
                                     ? u32(cb_descs.size())
                                     : u32(std::bit_width(key.mrt_mask));
+    // All attachments of a reduced pass share one proxy size (scene or half resolution).
+    std::optional<SceneResolution::Size> pass_size;
+    const auto same_size = [&](const VideoCore::Image& image, u32 level) {
+        const auto proxy = scene_targets->ProxySize(image, level);
+        if (!pass_size) pass_size = proxy;
+        return *pass_size == proxy;
+    };
     for (u32 cb = 0; cb < num_attachments; ++cb) {
         const auto& [id, desc] = cb_descs[cb];
         if (id) {
             const auto& image = texture_cache.GetImage(id);
+            // Mip levels of eligible chains have their own proxies (SceneTargets::Get).
             if (!scene_targets->Eligible(image) || image.binding.is_bound ||
-                image.binding.needs_rebind || desc.view_info.range.base.level ||
-                desc.view_info.range.base.layer) reduced = false;
+                image.binding.needs_rebind || desc.view_info.range.base.layer ||
+                !same_size(image, desc.view_info.range.base.level)) reduced = false;
             if (debug_pass) {
                 why += fmt::format(" [{} {}x{} eligible {} bound {} rebind {} level {} layer {}]",
                                    vk::to_string(image.info.pixel_format), image.info.size.width,
@@ -2672,7 +2710,10 @@ RenderState Rasterizer::BeginRenderingFull(const GraphicsPipeline* pipeline) {
             }
         }
     }
-    if (db_desc.first && !scene_targets->Eligible(texture_cache.GetImage(db_desc.first))) reduced = false;
+    if (db_desc.first && (!scene_targets->Eligible(texture_cache.GetImage(db_desc.first)) ||
+                          !same_size(texture_cache.GetImage(db_desc.first), 0))) {
+        reduced = false;
+    }
     if (debug_pass) {
         if (db_desc.first) {
             const auto& depth = texture_cache.GetImage(db_desc.first);
@@ -2903,9 +2944,11 @@ RenderState Rasterizer::BeginRenderingFull(const GraphicsPipeline* pipeline) {
     }
 
     if (reduced) {
+        // Half-resolution passes keep the scene's factor (proxy / native = scene / 1920).
         const auto size = scene_targets->Size();
-        state.width = size.width;
-        state.height = size.height;
+        const auto proxy = pass_size.value_or(size);
+        state.width = proxy.width;
+        state.height = proxy.height;
         target_scale = {float(size.width) / 1920.0f, float(size.height) / 1080.0f};
     }
     if (FrameCapture::Active()) {

@@ -12,7 +12,7 @@
 
 namespace Serialization {
 /* You should increment versions below once corresponding serialization scheme is changed. */
-static constexpr u32 ShaderBinaryVersion = 6u;
+static constexpr u32 ShaderBinaryVersion = 7u; // bbport: interpolated integer fix (Pascal)
 static constexpr u32 ShaderMetaVersion = 7u; // bbport: ImageResource::needs_native
 static constexpr u32 PipelineKeyVersion = 5u; // bbport: Info layout (ImageResource::needs_native)
 } // namespace Serialization
@@ -327,19 +327,24 @@ void PipelineCache::WarmUp() {
         return;
     }
     if (profile_data.size() != sizeof(Shader::Profile)) {
-        LOG_WARNING(Render,
-                    "Pipeline cache profile has unexpected size ({} != {}). Ignoring the cache",
+        LOG_WARNING(Render, "Pipeline cache profile has unexpected size ({} != {})",
                     profile_data.size(), sizeof(Shader::Profile));
-        Storage::DataBase::Instance().Close();
-        return;
     }
-
     Shader::Profile cached_profile{};
-    std::memcpy(&cached_profile, profile_data.data(), sizeof(cached_profile));
-    if (cached_profile != profile) {
-        LOG_WARNING(Render,
-                    "Pipeline cache isn't compatible with current system. Ignoring the cache");
-        Storage::DataBase::Instance().Close();
+    if (profile_data.size() == sizeof(Shader::Profile)) {
+        std::memcpy(&cached_profile, profile_data.data(), sizeof(cached_profile));
+    }
+    if (profile_data.size() != sizeof(Shader::Profile) || cached_profile != profile) {
+        // bbport: upstream closed the cache for the session here, so it was never rewritten
+        // and every later session compiled every shader again (stutters on each new area).
+        // Start a fresh cache for this build and GPU instead.
+        LOG_WARNING(Render, "Pipeline cache isn't compatible with current system: rebuilding it");
+        Storage::DataBase::Instance().Clear();
+        Storage::DataBase::Instance().FinishPreload();
+        profile_data.resize(sizeof(profile));
+        std::memcpy(profile_data.data(), &profile, sizeof(profile));
+        Storage::DataBase::Instance().Save(Storage::BlobType::ShaderProfile, "profile",
+                                           std::move(profile_data));
         return;
     }
 

@@ -31,7 +31,8 @@ Mesa/RADV) has been tested thoroughly.
   scene is jittered sub-pixel (Halton) and rendered at a reduced resolution; the upscaler fills
   the output (720p for the Steam Deck, 1080p, 1440p or 2160p) and the UI is drawn natively at the output resolution.
   - **FSR 3.1** (FireBurn/FSR-Vulkan).
-  - **FSR 4 (INT8, model v07)** on any GPU with integer dot products — RDNA2/3 included.
+  - **FSR 4 (INT8, model v07)** on GPUs exposing the required Vulkan shader features —
+    RDNA2/3 included (see Requirements).
   - **FSR 4.1.1 (INT8)**: AMD's 4.1.1 DLL is recorded once under vkd3d-proton and its passes
     are replayed natively on Vulkan; the output is **bit-exact** with the DLL. The assets are
     built on your machine from your own DLLs (`tools/fsr4cap`).
@@ -63,9 +64,11 @@ the graphics side.
 
 ## Requirements
 
-- Linux x86-64, a Vulkan 1.3 GPU. Tested: AMD RX 7800 XT with Mesa 26 (RADV). FSR 4 / 4.1.1
-  need integer dot products (RDNA2 and newer; NVIDIA and Intel should work but are untested);
-  FSR 4.1.1 also needs `VK_VALVE_shader_mixed_float_dot_product` (RADV).
+- Linux x86-64, a Vulkan 1.3 GPU. Tested: AMD RX 7800 XT with Mesa 26 (RADV).
+  FSR 4 / 4.1.1 require shader Float16, Int8/Int16, integer dot products, linear compute
+  derivatives and extended storage image formats; FSR 4.1.1 additionally requires
+  `VK_VALVE_shader_mixed_float_dot_product`. Unsupported choices fall back to FSR 3.1
+  before the first frame and are disabled in the in-game menu.
 - Your decrypted game dump: the `CUSA03173` folder (eboot.bin, sce_module, ...), version 1.09.
 - To build: GCC, CMake, Ninja, Python 3, glslang, SDL3, Vulkan headers and the libraries in
   `shell.nix`. With [Nix](https://nixos.org) everything comes from `shell.nix` automatically.
@@ -88,6 +91,49 @@ By default the game folder is expected next to the repository (`../CUSA03173`). 
 shader cache go to `user/` (the launcher lets you choose another folder); settings to
 `bbport.ini`. A gamepad is used through SDL3; there is a keyboard fallback.
 
+**Resolution and preset changes:** for outputs other than 1080p (720p on the Steam Deck,
+1440p, 4K) the whole game renders at the preset's resolution, set by a patch at start — the
+fastest path. Changing the output or the preset in the in-game menu then needs *Apply and
+restart the game*. The *Live resolution changes* setting (launcher, in-game menu,
+`bbport.ini` `live_resolution=0|1|auto`; **off by default**) instead keeps the game at
+1080p internally and scales its render targets at run time, so 720p/1080p/1440p/4K and the
+presets switch without a restart. It costs more: the game then believes it renders 1080p
+and draws more (e.g. ~8× more small lights), and some targets are copied between sizes —
+use it on strong desktop GPUs only (`auto` turns it on for discrete GPUs with 8+ GB that are
+not pre-Turing NVIDIA). 1080p output and TAA always use the live path.
+
+**TAA:** a separate native-resolution temporal AA mode in the launcher and overlay,
+switchable live without an FSR model. The saved FSR preset is restored when returning
+to FSR. FSR Native AA adds reconstruction on top of full-resolution rendering and can
+be slower than disabling AA. TAA also adds work compared with no temporal AA.
+The RCAS switch and the 0–2 sharpness control also work with TAA. Sharpening runs after
+temporal accumulation and leaves its history and HUD unchanged.
+
+**Mods:** the launcher accepts separate loose-file mod folders (with `dvdroot_ps4/`, an extra
+wrapper folder, or the game folders such as `chr/` directly; file name case does not matter),
+with enable switches and load order. A sibling `CUSA03173-mods/` overlay also works.
+The original game is preserved; later mods override conflicting files.
+**Third-party patches:** shadPS4-format XML patch files in the data directory's `patches/`,
+switched on and off in the launcher. See [mods and patches](docs/MODS.md).
+
+**Launcher language:** Russian or English (follows the system language by default).
+
+**Free camera and game debug menu** (v1.09): enable the corresponding switches in the
+launcher or in-game menu and restart. Free camera uses Lance McDonald's
+[GoldHEN patch](https://github.com/GoldHEN/GoldHEN_Patch_Repository/blob/main/patches/xml/Bloodborne-Orbis.xml):
+hold Cross and press L3 to cycle modes (keyboard: hold Space and press Z). It needs no fonts
+and conflicts with *Enemy Control*.
+For the game debug menu, install `DbgFont14h.ccm` and `DbgFont14h.tpf` from
+[Debug Menu and XML Patch](https://www.nexusmods.com/bloodborne/mods/253) into the game's
+`dvdroot_ps4/font/` first. Startup rejects missing or empty font files instead of launching
+the unsafe patch. Open it with the left touchpad / Tab; Backspace is the right touchpad.
+Touch coordinates are forwarded from SDL gamepads; Back/Select emulates a left click on
+pads without a touch surface. The port's settings menu remains Insert / L3+R3.
+
+GPU occlusion queries still use synthetic pixel counters (`PixelPipeStatDump`), and
+`IT_SET_PREDICATION` is unimplemented. Free camera allows visual investigation; it does
+not implement GPU occlusion culling.
+
 **Upscaler assets** (not included; FSR 3.1 needs none):
 
 ```bash
@@ -98,7 +144,9 @@ bash tools/fsr4cap/build_assets.sh <amd_fidelityfx_upscaler_dx12.dll> <amd_fidel
 
 **AppImage** (Steam Deck): `bash build.sh && bash packaging/appimage.sh` →
 `dist/Bloodborne-bbport-x86_64.AppImage`; data in `~/.local/share/bbport`, `--play` starts the
-game without the launcher window (Game Mode). On the Steam Deck pick the 1280×720 output (the
+game without the launcher window (Game Mode). FSR 4.1.1 models are not packaged: build them
+(see above) into `~/.local/share/bbport/fsr4_411` (`BB_PACKAGE_FSR411=1` bundles a local
+`fsr4_411` into an AppImage for your own devices). On the Steam Deck pick the 1280×720 output (the
 game is 16:9; on the 1280×800 screen it gets thin bars).
 
 **Adding the AppImage to Steam** (*Add a Non-Steam Game*) needs no options; the compatibility tool
@@ -116,9 +164,36 @@ The AppImage then unpacks itself (~2 GB, `~/.cache/appimage_extracted_*`) on the
 be deleted. Without `TMPDIR` it would unpack into Steam's `/tmp`, which is in RAM there. Add
 ` --play` after `%command%` to skip the launcher.
 
+**NVIDIA in the AppImage:** startup discovers the host's installed 64-bit NVIDIA Vulkan ICD
+and exposes its vendor libraries alongside the bundled AMD/Intel drivers. This keeps the
+NVIDIA userspace driver matched to the host kernel module. Standard Linux distributions keep
+these libraries under `/usr/lib*`; on NixOS the AppImage's internal `/nix/store` may hide them.
+In that case copy the NVIDIA libraries into an accessible directory and set
+`BB_NVIDIA_LIB_DIR=/path/to/libraries` (the NVIDIA manifest must also be accessible).
+Explicit `VK_DRIVER_FILES`/`VK_ICD_FILENAMES` overrides are preserved. Diagnose drivers inside
+the package with:
+
+```bash
+./Bloodborne-bbport-x86_64.AppImage --vulkan-info 2>&1 | tee bbport-vulkan.log
+```
+
+A user reported successful startup with FSR 3 on a GTX 1060 6GB (Fedora 44, NVIDIA
+580.178.04); selecting FSR 4 caused a black window. Use FSR 3 on this configuration.
+
+MangoHud is bundled in the AppImage; enable its checkbox in the launcher.
+When running from source, install MangoHud separately. A diagnostic launch with
+`VK_LOADER_LAYERS_DISABLE=~implicit~` also disables MangoHud.
+
 Useful variables: `BB_FRAME_STATS=1` (frame statistics), `BB_GPU_PROFILE=1` (GPU time per
-pass), `BB_FSR4_PROFILE=1` (GPU time per FSR 4 pass), `BB_UPSCALER=fsr3|fsr4|fsr411|none`.
-More in [docs/](docs).
+pass), `BB_FSR4_PROFILE=1` (GPU time per FSR 4 pass), `BB_UPSCALER=taa|fsr3|fsr4|fsr411|off|none`,
+`BB_FRAMES_AHEAD=N` (how many frames the GPU command thread may run ahead of the GPU; 1 by default,
+0 = unbounded), `BB_PRESENT_THREAD=0` (present on the vblank thread, as before),
+`BB_LIVE_RES=1` (live resolution changes instead of the startup patch for outputs other than 1080p),
+`BB_PAD_RECORD=file` / `BB_PAD_REPLAY=file` (record a route with F9, replay it in scripted tests),
+`BB_GC_BUDGET_MB=N` (texture cache budget, as on integrated GPUs), `BB_PRESENT_DUMP_TRIGGER=file`
+with `BB_PRESENT_DUMP_COUNT=N` (dump N consecutive presented frames).
+More in [docs/](docs); recent changes: [docs/CHANGES_2026-10-02.md](docs/CHANGES_2026-10-02.md),
+[docs/CHANGES_2026-10-03.md](docs/CHANGES_2026-10-03.md).
 
 ## Repository layout
 

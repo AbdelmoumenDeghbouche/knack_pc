@@ -22,6 +22,13 @@ inline bool NativeViewport(float width, float height) {
            std::abs(std::abs(height) - 1080.0f) < 0.5f;
 }
 
+// Scaleform draws, including the first stencil/movie pass. A native-size viewport
+// alone also matches every fullscreen post pass when guest targets stay at 1080p.
+constexpr bool MovieShader(uint64_t hash) {
+    return hash == 0x34e8a281 || hash == 0x81d336ce || hash == 0x09957251 ||
+           hash == 0x24042a9b || hash == 0xa400228b;
+}
+
 inline std::array<float, 2> Scale(uint32_t guest_width, uint32_t guest_height,
                                 uint32_t output_width, uint32_t output_height,
                                 bool native_coordinates) {

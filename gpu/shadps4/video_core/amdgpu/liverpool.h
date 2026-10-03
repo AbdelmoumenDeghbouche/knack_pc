@@ -3,6 +3,8 @@
 
 #pragma once
 
+#include <cstdlib>
+
 #include <condition_variable>
 #include <deque>
 #include <coroutine>
@@ -110,8 +112,14 @@ public:
         submit_cv.wait(lk, [this] { return num_submits == 0; });
     }
 
+    /// bbport: also the draw recording thread and the fences it deferred are done (see
+    /// work_retired). sceGnmSubmitDone does not block the guest when this is true.
     bool IsGpuIdle() const {
-        return num_submits == 0;
+        static const bool use_retired = [] {
+            const char* env = std::getenv("BB_WORK_RETIRED");
+            return !(env && env[0] == '0');
+        }();
+        return num_submits == 0 && (work_retired || !use_retired);
     }
 
     void SetVoPort(Libraries::VideoOut::VideoOutPort* port) {
@@ -259,6 +267,10 @@ private:
     const bool guest_markers_enabled;
     std::jthread process_thread{};
     std::atomic<u32> num_submits{};
+    /// bbport: false from a submission until its draws and deferred fences are done (stage A
+    /// decrements num_submits once it has decoded a submission, before that). Under
+    /// submit_mutex with num_submits.
+    std::atomic<bool> work_retired{true};
     std::atomic<u32> num_commands{};
     std::atomic<bool> submit_done{};
     std::mutex submit_mutex;

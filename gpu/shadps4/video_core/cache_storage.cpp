@@ -259,6 +259,20 @@ void DataBase::ForEachBlob(BlobType type, const std::function<void(std::vector<u
     }
 }
 
+void DataBase::Clear() {
+    if (!opened || EmulatorSettings.IsPipelineCacheArchived()) {
+        return;
+    }
+    std::error_code ec;
+    u64 removed = 0;
+    for (const auto& entry : std::filesystem::directory_iterator(cache_path, ec)) {
+        if (entry.is_regular_file(ec) && std::filesystem::remove(entry.path(), ec)) {
+            ++removed;
+        }
+    }
+    LOG_WARNING(Render, "Pipeline cache cleared ({} files): it is rebuilt for this build", removed);
+}
+
 void DataBase::FinishPreload() {
     if (EmulatorSettings.IsPipelineCacheArchived()) {
         mz_zip_writer_init_from_reader(&zip_ar, cache_path.string().c_str());

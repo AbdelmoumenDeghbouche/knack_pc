@@ -1,6 +1,9 @@
 // SPDX-FileCopyrightText: Copyright 2025-2026 shadPS4 Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+#include <algorithm>
+#include <cmath>
+#include <vector>
 #include <chrono>
 #include <cstdio>
 #include <time.h>
@@ -57,7 +60,45 @@ VideoOutDriver::VideoOutDriver(u32 width, u32 height) {
     main_port.resolution.full_height = height;
     main_port.resolution.pane_width = width;
     main_port.resolution.pane_height = height;
+    const char* separate = std::getenv("BB_PRESENT_THREAD");
+    separate_swap = !(separate && separate[0] == '0');
+    if (separate_swap) {
+        swap_thread = std::jthread([&](std::stop_token token) { SwapThread(token); });
+    }
     present_thread = std::jthread([&](std::stop_token token) { PresentThread(token); });
+}
+
+void VideoOutDriver::RunPresenter(std::function<void()> work, bool if_idle) {
+    if (!separate_swap) {
+        work();
+        return;
+    }
+    {
+        std::scoped_lock lock{swap_mutex};
+        if (if_idle && (swap_busy || !swap_queue.empty())) {
+            return; // a redraw of the last frame is pointless while frames are queued
+        }
+        swap_queue.push_back(std::move(work));
+    }
+    swap_cv.notify_one();
+}
+
+void VideoOutDriver::SwapThread(std::stop_token token) {
+    Common::SetCurrentThreadName("bb:Present");
+    while (true) {
+        std::function<void()> work;
+        {
+            std::unique_lock lock{swap_mutex};
+            swap_busy = false;
+            if (!swap_cv.wait(lock, token, [this] { return !swap_queue.empty(); })) {
+                return;
+            }
+            work = std::move(swap_queue.front());
+            swap_queue.pop_front();
+            swap_busy = true;
+        }
+        work();
+    }
 }
 
 VideoOutDriver::~VideoOutDriver() = default;
@@ -247,11 +288,11 @@ int VideoOutDriver::ChangeBufferAttribute(VideoOutPort* port, s32 attributeIndex
 }
 
 void VideoOutDriver::Flip(const Request& req) {
-    // Update HDR status before presenting.
-    presenter->SetHDR(req.port->is_hdr);
-
-    // Present the frame.
-    presenter->Present(req.frame);
+    // Update HDR status before presenting, then present the frame (bbport: on the swap thread).
+    RunPresenter([this, frame = req.frame, hdr = req.port->is_hdr] {
+        presenter->SetHDR(hdr);
+        presenter->Present(frame);
+    });
     Vulkan::FrameCapture::OnFlip(req.index >= 0 ? req.port->buffer_slots[req.index].address_left
                                                 : 0);
 
@@ -265,6 +306,8 @@ void VideoOutDriver::Flip(const Request& req) {
         const auto now = Clock::now();
         const double frame_ms = std::chrono::duration<double, std::milli>(now - last).count();
         worst_ms = std::max(worst_ms, frame_ms);
+        static std::vector<double> intervals;
+        intervals.push_back(frame_ms);
         last = now;
         // Stall diagnostics: what happened during a long frame.
         static u64 last_gpu_ns, last_images, last_image_bytes, last_buffer_bytes;
@@ -407,6 +450,25 @@ void VideoOutDriver::Flip(const Request& req) {
                         BbStats::tick_wait_ns.exchange(0) / (window * 1e7),
                         frames ? double(BbStats::reduced_draws.exchange(0)) / frames : 0.0,
                         frames ? double(BbStats::scene_draws.exchange(0)) / frames : 0.0);
+            // Frame pacing: spread of the guest flip intervals (judder that the mean hides).
+            if (intervals.size() > 2) {
+                std::vector<double> sorted = intervals;
+                std::sort(sorted.begin(), sorted.end());
+                const double median = sorted[sorted.size() / 2];
+                double sum = 0, sq = 0;
+                u32 spikes = 0;
+                for (const double ms : intervals) {
+                    sum += ms;
+                    sq += ms * ms;
+                    spikes += ms > 1.5 * median;
+                }
+                const double mean = sum / intervals.size();
+                std::printf("Frame pacing: median %.2f ms, stddev %.2f ms, p99 %.2f ms, "
+                            "%u frames over 1.5x median\n",
+                            median, std::sqrt(std::max(0.0, sq / intervals.size() - mean * mean)),
+                            sorted[std::min(sorted.size() - 1, sorted.size() * 99 / 100)], spikes);
+            }
+            intervals.clear();
             window_start = now;
             frames = 0;
             worst_ms = 0;
@@ -451,15 +513,19 @@ void VideoOutDriver::Flip(const Request& req) {
 }
 
 void VideoOutDriver::DrawBlankFrame() {
-    const auto empty_frame = presenter->PrepareBlankFrame(true);
-    presenter->Present(empty_frame, false, false);
+    RunPresenter([this] {
+        const auto empty_frame = presenter->PrepareBlankFrame(true);
+        presenter->Present(empty_frame, false, false);
+    }, true);
 }
 
 void VideoOutDriver::DrawLastFrame() {
-    const auto frame = presenter->PrepareLastFrame();
-    if (frame != nullptr) {
-        presenter->Present(frame, true);
-    }
+    RunPresenter([this] {
+        const auto frame = presenter->PrepareLastFrame();
+        if (frame != nullptr) {
+            presenter->Present(frame, true);
+        }
+    }, true);
 }
 
 bool VideoOutDriver::SubmitFlip(VideoOutPort* port, s32 index, s64 flip_arg,

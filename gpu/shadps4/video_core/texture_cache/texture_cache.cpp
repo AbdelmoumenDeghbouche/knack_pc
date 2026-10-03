@@ -849,13 +849,14 @@ void TextureCache::RefreshImage(Image& image) {
 
 vk::Sampler TextureCache::GetSampler(const AmdGpu::Sampler& sampler,
                                      AmdGpu::BorderColorBuffer border_color_base,
-                                     const bool is_depth) {
-    // Compare and plain uses of one S# need separate samplers.
-    const u64 hash = HashCombine(XXH3_64bits(&sampler, sizeof(sampler)), is_depth);
+                                     const bool is_depth, float extra_lod_bias) {
+    // Compare and plain uses of one S# need separate samplers; so do extra LOD biases.
+    const u64 hash = HashCombine(HashCombine(XXH3_64bits(&sampler, sizeof(sampler)), is_depth),
+                                 u64(std::bit_cast<u32>(extra_lod_bias)));
 
     std::scoped_lock lock{samplers_mutex};
-    const auto [it, new_sampler] =
-        samplers.try_emplace(hash, instance, sampler, border_color_base, is_depth);
+    const auto [it, new_sampler] = samplers.try_emplace(hash, instance, sampler, border_color_base,
+                                                        is_depth, extra_lod_bias);
     if (new_sampler) {
         samplers.at(hash).lru_id = sampler_lru_cache.Insert(hash, gc_tick);
     } else {
@@ -1014,6 +1015,24 @@ void TextureCache::UntrackImageTail(ImageId image_id) {
 void TextureCache::GarbageCollectImages() {
     if (instance.CanReportMemoryUsage()) {
         total_used_memory = instance.GetDeviceMemoryUsage();
+        // bbport: on integrated GPUs (Steam Deck) the usage covers system-memory heaps holding
+        // much more than images (buffers backing guest memory), and the startup budget left
+        // ~1 GB after its 8 GB system reserve: usage stayed above the critical mark, so the
+        // collector evicted images used two or three frames ago on every submission and wrote
+        // GPU-written ones back. Compare with the driver's current budget instead.
+        // BB_GC_BUDGET_MB=N: this rule with a fixed budget on any GPU (tests on a desktop).
+        static const u64 forced_budget = [] {
+            const char* env = std::getenv("BB_GC_BUDGET_MB");
+            return env ? std::strtoull(env, nullptr, 10) << 20 : 0;
+        }();
+        if (instance.IsIntegrated() || forced_budget) {
+            const u64 budget = forced_budget ? forced_budget : instance.GetDeviceMemoryBudgetNow();
+            if (budget != 0) {
+                trigger_gc_memory = budget / 10 * 7;
+                pressure_gc_memory = budget / 100 * 85;
+                critical_gc_memory = budget / 100 * 95;
+            }
+        }
     }
     if (total_used_memory < trigger_gc_memory) {
         return;
@@ -1047,8 +1066,13 @@ void TextureCache::GarbageCollectImages() {
             return false;
         }
         if (download) {
-            DownloadImageMemory(image_id);
+            // bbport: synchronously, while the image still protects its pages. A deferred
+            // write-back landed after FreeImage had unprotected them, over whatever the game
+            // had meanwhile stored there (e.g. its heap after unloading an area).
+            DownloadImageMemory(image_id, true);
+            ++gc_downloads;
         }
+        ++gc_evictions;
         FreeImage(image_id);
         if (total_used_memory < critical_gc_memory) {
             if (aggresive) {
@@ -1072,6 +1096,20 @@ void TextureCache::GarbageCollectImages() {
         // If we are still over the critical limit, run an aggressive GC
         configure(true);
         lru_cache.ForEachItemBelow(gc_tick - ticks_to_destroy, clean_up);
+    }
+    // bbport: evictions under memory pressure, at most every 5 s (BB_FRAME_STATS or not).
+    if (pressured || gc_downloads != 0) {
+        const auto now = std::chrono::steady_clock::now();
+        if (now - gc_report_time >= std::chrono::seconds(5)) {
+            std::printf("Texture cache: memory pressure, %llu of %llu MiB (critical %llu): "
+                        "%llu images evicted, %llu written back since the last report\n",
+                        (unsigned long long)(total_used_memory >> 20),
+                        (unsigned long long)(pressure_gc_memory >> 20),
+                        (unsigned long long)(critical_gc_memory >> 20),
+                        (unsigned long long)gc_evictions, (unsigned long long)gc_downloads);
+            gc_report_time = now;
+            gc_evictions = gc_downloads = 0;
+        }
     }
 }
 

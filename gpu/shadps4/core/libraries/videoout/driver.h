@@ -3,6 +3,9 @@
 
 #pragma once
 
+#include <deque>
+#include <functional>
+
 #include "common/debug.h"
 #include "common/polyfill_thread.h"
 #include "core/libraries/videoout/video_out.h"
@@ -110,6 +113,19 @@ private:
     void DrawLastFrame();  // Used when there is no flip request
     void SubmitFlipInternal(VideoOutPort* port, s32 index, s64 flip_arg, bool is_eop = false);
     void PresentThread(std::stop_token token);
+    /// bbport: runs presenter work (acquire, blit, vkQueuePresent) off the vblank thread, in
+    /// order. Acquire and present block while the GPU is the bottleneck (much longer on NVIDIA);
+    /// on the vblank thread that delayed the guest's vblank events and its frame timing jumped.
+    /// The presenter's frame pool still bounds how far the GPU command thread runs ahead.
+    void SwapThread(std::stop_token token);
+    void RunPresenter(std::function<void()> work, bool if_idle = false);
+
+    std::mutex swap_mutex;
+    std::condition_variable_any swap_cv;
+    std::deque<std::function<void()>> swap_queue;
+    bool swap_busy = false;
+    bool separate_swap = true;
+    std::jthread swap_thread; ///< before present_thread: destroyed after it
 
     std::mutex mutex;
     std::condition_variable request_cv; ///< bbport: a flip was queued (immediate flips)

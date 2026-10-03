@@ -5,6 +5,7 @@
 Picks the game folder, edits the port's settings (bbport.ini: upscaler, preset, ...) and the
 start-up tweaks passed as environment variables to run.sh, starts and stops the game and shows
 its output. Launcher settings live in ~/.config/bbport-launcher/settings.json.
+Russian and English (bbport_i18n: the Russian text is the key).
 """
 
 import json
@@ -12,6 +13,8 @@ import os
 import signal
 import sys
 from pathlib import Path
+from bbport_assets import fsr411_problem
+from bbport_i18n import language, set_language, tr
 
 import gi
 
@@ -20,6 +23,9 @@ gi.require_version("Adw", "1")
 from gi.repository import Adw, Gio, GLib, Gtk  # noqa: E402
 
 PORT_DIR = Path(__file__).resolve().parent.parent  # native_probe (or the package's copy)
+sys.path.insert(0, str(PORT_DIR / 'scripts'))
+from mods import discover as discover_mods  # noqa: E402
+from patches import external_patches  # noqa: E402
 # Packaged (AppImage): generated files, saves and bbport.ini live in BB_DATA_DIR.
 PACKAGED = bool(os.environ.get("BB_PREBUILT"))
 DATA_DIR = Path(os.environ.get("BB_DATA_DIR", PORT_DIR))
@@ -27,8 +33,10 @@ CONFIG_DIR = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config")) / 
 CONFIG_FILE = CONFIG_DIR / "settings.json"
 MAX_LOG_LINES = 5000
 
-# Choices: (label, value). The first entry is the default.
-UPSCALERS = [("FSR 4", "fsr4"), ("FSR 4.1.1", "fsr411"), ("FSR 3", "fsr3"), ("Выключен", "off")]
+# Choices: (label, value). The first entry is the default. Labels are translated when shown.
+UI_LANGUAGES = [("Как в системе", ""), ("Русский", "ru"), ("English", "en")]
+UPSCALERS = [("FSR 4", "fsr4"), ("FSR 4.1.1", "fsr411"), ("FSR 3", "fsr3"),
+             ("TAA (нативное сглаживание)", "taa"), ("Выключен", "off")]
 PRESETS = [("Native AA", 0), ("Quality (x1.5)", 1), ("Balanced (x1.7)", 2),
            ("Performance (x2)", 3), ("Ultra Performance (x3)", 4)]
 OUTPUT_RES = [("1280×720 (Steam Deck)", "1280x720"), ("1920×1080", "1920x1080"), ("2560×1440", "2560x1440"), ("3840×2160", "3840x2160")]
@@ -42,6 +50,8 @@ EFFECTS = [
     ("effect_dynamic_shadows", "Тени от динамических источников", True),
     ("effect_ssr", "Отражения SSR (не было в игре)", False),
     ("skip_intro", "Пропуск заставок при запуске", False),
+    ("debug_camera", "Свободная камера (Cross + L3 / Space + Z)", False),
+    ("debug_menu", "Debug menu (левый touchpad / Tab; нужны шрифты)", False),
 ]
 MODEL_LOD = [("Как в игре", "0"), ("Максимальная (-2)", "-2"), ("Ниже (1)", "1"),
              ("Минимальная (2)", "2")]
@@ -52,11 +62,16 @@ PRESENT_MODES = [("Mailbox", "Mailbox"), ("FIFO (VSync)", "Fifo"),
 DRAW_PIPE = [("Авто (8+ потоков)", ""), ("Включён", "1"), ("Выключен (стабильнее)", "0")]
 LANGUAGES = [("Английский", "1"), ("Русский", "8"), ("Японский", "0"), ("Французский", "2"),
              ("Испанский", "3"), ("Немецкий", "4"), ("Итальянский", "5")]
+LIVE_RESOLUTION = [("Авто (по видеокарте)", "auto"), ("Выключена (быстрее)", "0"), ("Включена", "1")]
 READBACKS = [("Relaxed (по умолчанию)", ""), ("Выключены", "0"), ("Precise", "2")]
 
 DEFAULTS = {
+    "ui_language": "",
     "game_dir": "" if PACKAGED else str(PORT_DIR.parent / "CUSA03173"),
     "user_dir": "",
+    "mods_dir": "",
+    "mods_enabled": True,
+    "patches_dir": "",
     "language": "1",
     "fullscreen": False,
     "hdr": False,
@@ -82,6 +97,7 @@ INI_DEFAULTS = {
     "show_fps": "1",
     "output_res": "1920x1080",
     "model_lod": "0",
+    "live_resolution": "0",
     **{key: "1" if default else "0" for key, _, default in EFFECTS},
 }
 
@@ -138,12 +154,21 @@ def save_ini(values, lines):
     ini_path().write_text("\n".join(out) + "\n")
 
 
+def patches_dir(settings):
+    return Path(settings.get("patches_dir") or DATA_DIR / "patches").expanduser()
+
+
 def game_environment(s):
     """Environment for run.sh from the launcher settings."""
     env = dict(os.environ)
     env["BB_GAME_DIR"] = str(Path(s["game_dir"]).expanduser())
     if s["user_dir"]:
         env["BB_USER_DIR"] = s["user_dir"]
+    env["BB_MODS_DIR"] = str(Path(s.get("mods_dir") or DATA_DIR / "mods").expanduser())
+    env["BB_MODS_CONFIG"] = str(DATA_DIR / "mods.json")
+    env["BB_MODS_ENABLED"] = "1" if s.get("mods_enabled", True) else "0"
+    env["BB_PATCHES_DIR"] = str(patches_dir(s))
+    env["BB_PATCHES_CONFIG"] = str(DATA_DIR / "patches.json")
     env["BB_LANGUAGE"] = s["language"]
     env["BB_FULLSCREEN"] = "1" if s["fullscreen"] else "0"
     env["BB_PRESENT_MODE"] = s["present_mode"]
@@ -188,7 +213,7 @@ def open_folder(window, path):
 
 
 def combo_row(title, subtitle, choices, current):
-    model = Gtk.StringList.new([label for label, _ in choices])
+    model = Gtk.StringList.new([tr(label) for label, _ in choices])
     row = Adw.ComboRow(title=title, model=model)
     if subtitle:
         row.set_subtitle(subtitle)
@@ -202,21 +227,43 @@ def combo_value(row):
     return row.values[row.get_selected()]
 
 
+class FolderList:
+    """A preferences group with a folder row and one switch row per item below it."""
+
+    def __init__(self, group):
+        self.group = group
+        self.rows = []
+
+    def clear(self):
+        for _, row in self.rows:
+            self.group.remove(row)
+        self.rows = []
+
+    def add(self, key, row):
+        self.group.add(row)
+        self.rows.append((key, row))
+
+
 class LauncherWindow(Adw.ApplicationWindow):
     def __init__(self, app):
         super().__init__(application=app, title="Bloodborne")
         self.set_default_size(760, 820)
         self.settings = load_settings()
+        set_language(self.settings.get("ui_language", ""))
         self.ini, self.ini_lines = load_ini()
         self.process = None
+        self.stream = None
+        self.build()
+        self.connect("close-request", self.on_close)
 
+    def build(self):
+        """(Re)creates the window's content in the current launcher language."""
         toolbar = Adw.ToolbarView()
         header = Adw.HeaderBar()
         self.stack = Adw.ViewStack()
         switcher = Adw.ViewSwitcher(stack=self.stack, policy=Adw.ViewSwitcherPolicy.WIDE)
         header.set_title_widget(switcher)
-        self.launch_button = Gtk.Button(label="Запустить")
-        self.launch_button.add_css_class("suggested-action")
+        self.launch_button = Gtk.Button()
         self.launch_button.connect("clicked", self.on_launch)
         header.pack_end(self.launch_button)
         toolbar.add_top_bar(header)
@@ -226,143 +273,222 @@ class LauncherWindow(Adw.ApplicationWindow):
         toolbar.set_content(self.toasts)
         self.set_content(toolbar)
 
-        self.stack.add_titled_with_icon(self.build_settings_page(), "settings", "Настройки",
+        log_text = self.log_view.get_buffer().get_text(
+            *self.log_view.get_buffer().get_bounds(), False) if hasattr(self, "log_view") else ""
+        self.stack.add_titled_with_icon(self.build_settings_page(), "settings", tr("Настройки"),
                                         "preferences-system-symbolic")
-        self.stack.add_titled_with_icon(self.build_log_page(), "log", "Журнал",
+        self.stack.add_titled_with_icon(self.build_log_page(), "log", tr("Журнал"),
                                         "utilities-terminal-symbolic")
-        self.connect("close-request", self.on_close)
+        self.log_view.get_buffer().set_text(log_text)
+        self.update_launch_button()
         self.update_game_status()
         self.update_user_status()
         self.update_upscaler_status()
+
+    def update_launch_button(self):
+        running = self.process is not None
+        self.launch_button.set_label(tr("Остановить") if running else tr("Запустить"))
+        self.launch_button.remove_css_class("destructive-action" if not running else "suggested-action")
+        self.launch_button.add_css_class("destructive-action" if running else "suggested-action")
 
     # --- settings page -------------------------------------------------------------------
 
     def build_settings_page(self):
         page = Adw.PreferencesPage()
 
-        game = Adw.PreferencesGroup(title="Игра")
-        self.game_row = Adw.ActionRow(title="Папка игры (CUSA03173)")
+        launcher = Adw.PreferencesGroup()
+        self.ui_language_row = combo_row(tr("Язык лаунчера") + " / Launcher language", None,
+                                         UI_LANGUAGES, self.settings.get("ui_language", ""))
+        self.ui_language_row.connect("notify::selected", self.on_ui_language)
+        launcher.add(self.ui_language_row)
+        page.add(launcher)
+
+        game = Adw.PreferencesGroup(title=tr("Игра"))
+        self.game_row = Adw.ActionRow(title=tr("Папка игры (CUSA03173)"))
         self.game_status = Gtk.Image()
         self.game_row.add_suffix(self.game_status)
-        self.game_row.add_suffix(flat_button("folder-open-symbolic", "Выбрать папку с eboot.bin",
+        self.game_row.add_suffix(flat_button("folder-open-symbolic", tr("Выбрать папку с eboot.bin"),
                                              self.on_choose_game))
         self.game_row.add_suffix(flat_button("system-file-manager-symbolic",
-                                             "Открыть в файловом менеджере",
+                                             tr("Открыть в файловом менеджере"),
                                              lambda _b: open_folder(self, self.game_dir())))
         game.add(self.game_row)
         # Saves and the shader cache: user/ in the data directory unless chosen.
-        self.user_row = Adw.ActionRow(title="Папка сохранений")
+        self.user_row = Adw.ActionRow(title=tr("Папка сохранений"))
         self.user_status = Gtk.Image()
         self.user_row.add_suffix(self.user_status)
-        self.user_row.add_suffix(flat_button("folder-open-symbolic", "Выбрать папку сохранений",
+        self.user_row.add_suffix(flat_button("folder-open-symbolic", tr("Выбрать папку сохранений"),
                                              self.on_choose_user))
         self.user_row.add_suffix(flat_button("system-file-manager-symbolic",
-                                             "Открыть в файловом менеджере",
+                                             tr("Открыть в файловом менеджере"),
                                              lambda _b: open_folder(self, self.user_dir())))
-        self.user_reset = flat_button("edit-undo-symbolic", "Вернуть папку по умолчанию",
+        self.user_reset = flat_button("edit-undo-symbolic", tr("Вернуть папку по умолчанию"),
                                       self.on_reset_user)
         self.user_row.add_suffix(self.user_reset)
         game.add(self.user_row)
-        self.language_row = combo_row("Язык системы", None, LANGUAGES, self.settings["language"])
+        self.language_row = combo_row(tr("Язык системы"), None, LANGUAGES, self.settings["language"])
         game.add(self.language_row)
         page.add(game)
 
-        screen = Adw.PreferencesGroup(title="Экран")
-        self.output_row = combo_row("Разрешение вывода",
-                                    "Апскейлер дорисовывает кадр; Steam Deck — 720p",
+        self.mods_group = Adw.PreferencesGroup(
+            title=tr("Моды"), description=tr(
+                "Распакуйте каждый мод в отдельную папку (с dvdroot_ps4 или сразу с chr/, parts/ и т. п.). "
+                "При совпадении файлов побеждает мод ниже в списке. Применяется при запуске."))
+        self.mods_enabled_row = Adw.SwitchRow(title=tr("Загружать моды"),
+                                               active=self.settings["mods_enabled"])
+        self.mods_group.add(self.mods_enabled_row)
+        self.mods_folder_row = Adw.ActionRow(title=tr("Папка модов"))
+        self.mods_folder_row.add_suffix(flat_button("folder-open-symbolic", tr("Выбрать папку модов"),
+                                                    self.on_choose_mods))
+        self.mods_folder_row.add_suffix(flat_button("system-file-manager-symbolic", tr("Открыть папку модов"),
+                                                    lambda _b: open_folder(self, self.mods_dir())))
+        self.mods_folder_row.add_suffix(flat_button("view-refresh-symbolic", tr("Обновить список"),
+                                                    self.on_refresh_mods))
+        self.mods_group.add(self.mods_folder_row)
+        self.mod_list = FolderList(self.mods_group)
+        self.refresh_mods()
+        page.add(self.mods_group)
+
+        self.patches_group = Adw.PreferencesGroup(
+            title=tr("Сторонние патчи"),
+            description=tr("XML-патчи в формате shadPS4 для версии 01.09 из папки патчей. "
+                           "Применяются при запуске."))
+        self.patches_folder_row = Adw.ActionRow(title=tr("Папка патчей"))
+        self.patches_folder_row.add_suffix(flat_button("folder-open-symbolic", tr("Выбрать папку патчей"),
+                                                       self.on_choose_patches))
+        self.patches_folder_row.add_suffix(flat_button(
+            "system-file-manager-symbolic", tr("Открыть папку патчей"),
+            lambda _b: open_folder(self, patches_dir(self.settings))))
+        self.patches_folder_row.add_suffix(flat_button("view-refresh-symbolic", tr("Обновить список"),
+                                                       self.on_refresh_patches))
+        self.patches_group.add(self.patches_folder_row)
+        self.patch_list = FolderList(self.patches_group)
+        self.refresh_patches()
+        page.add(self.patches_group)
+
+        screen = Adw.PreferencesGroup(title=tr("Экран"))
+        self.output_row = combo_row(tr("Разрешение вывода"),
+                                    tr("Апскейлер дорисовывает кадр; Steam Deck — 720p"),
                                     OUTPUT_RES, self.ini.get("output_res", "1920x1080"))
         screen.add(self.output_row)
-        self.fullscreen_row = Adw.SwitchRow(title="Полноэкранный режим",
+        self.live_row = combo_row(tr("Смена разрешения на лету"),
+                                  tr("Без перезапуска, но медленнее на Steam Deck и старых GPU"),
+                                  LIVE_RESOLUTION, self.ini.get("live_resolution", "0"))
+        screen.add(self.live_row)
+        self.fullscreen_row = Adw.SwitchRow(title=tr("Полноэкранный режим"),
                                             active=self.settings["fullscreen"])
         screen.add(self.fullscreen_row)
-        self.present_row = combo_row("Режим показа кадров", None, PRESENT_MODES,
+        self.present_row = combo_row(tr("Режим показа кадров"), None, PRESENT_MODES,
                                      self.settings["present_mode"])
         screen.add(self.present_row)
-        self.hdr_row = Adw.SwitchRow(title="Разрешить HDR", active=self.settings["hdr"])
+        self.hdr_row = Adw.SwitchRow(title=tr("Разрешить HDR"), active=self.settings["hdr"])
         screen.add(self.hdr_row)
         page.add(screen)
 
         upscaler = Adw.PreferencesGroup(
-            title="Апскейлер",
-            description="Хранится в bbport.ini; в игре меняется через меню (Insert или L3+R3)")
-        self.upscaler_row = combo_row("Апскейлер", None, UPSCALERS, self.ini["upscaler"])
+            title=tr("Апскейлер"),
+            description=tr("Хранится в bbport.ini; в игре меняется через меню (Insert или L3+R3)"))
+        self.upscaler_row = combo_row(tr("Апскейлер"), None, UPSCALERS, self.ini["upscaler"])
         self.upscaler_row.connect("notify::selected", lambda *_: self.update_upscaler_status())
         upscaler.add(self.upscaler_row)
-        self.preset_row = combo_row("Пресет", None, PRESETS, int(self.ini.get("preset", "4")))
+        self.preset_row = combo_row(tr("Пресет"), None, PRESETS, int(self.ini.get("preset", "4")))
+        self.preset_row.connect("notify::selected", lambda *_: self.update_upscaler_status())
+        self.output_row.connect("notify::selected", lambda *_: self.update_upscaler_status())
         upscaler.add(self.preset_row)
-        self.sharpen_row = Adw.SwitchRow(title="Резкость (RCAS)",
+        self.sharpen_row = Adw.SwitchRow(title=tr("Резкость (RCAS)"),
                                          active=self.ini.get("sharpen") == "1")
         upscaler.add(self.sharpen_row)
-        self.sharpness_row = Adw.SpinRow.new_with_range(0.0, 1.0, 0.05)
-        self.sharpness_row.set_title("Сила резкости")
+        self.sharpness_row = Adw.SpinRow.new_with_range(0.0, 2.0, 0.05)
+        self.sharpness_row.set_title(tr("Сила резкости"))
         self.sharpness_row.set_digits(2)
         self.sharpness_row.set_value(float(self.ini.get("sharpness", "0.5")))
         upscaler.add(self.sharpness_row)
         self.motion_row = Adw.SwitchRow(
-            title="Векторы движения объектов",
-            subtitle="Меньше гостинга на персонажах; стоит около 10% FPS",
+            title=tr("Векторы движения объектов"),
+            subtitle=tr("Меньше гостинга на персонажах; стоит около 10% FPS"),
             active=self.ini.get("object_motion") == "1")
         upscaler.add(self.motion_row)
-        self.show_fps_row = Adw.SwitchRow(title="Показывать FPS",
+        self.show_fps_row = Adw.SwitchRow(title=tr("Показывать FPS"),
                                           active=self.ini.get("show_fps") == "1")
         upscaler.add(self.show_fps_row)
         page.add(upscaler)
 
-        effects = Adw.PreferencesGroup(title="Эффекты игры",
-                                       description="Патчи игры, применяются при запуске")
-        self.lod_row = combo_row("Детализация моделей", None, MODEL_LOD,
+        effects = Adw.PreferencesGroup(title=tr("Эффекты игры"),
+                                       description=tr("Патчи игры, применяются при запуске"))
+        self.lod_row = combo_row(tr("Детализация моделей"), None, MODEL_LOD,
                                  self.ini.get("model_lod", "0"))
         effects.add(self.lod_row)
         self.effect_rows = {}
         for key, title, default in EFFECTS:
-            row = Adw.SwitchRow(title=title,
+            row = Adw.SwitchRow(title=tr(title),
                                 active=self.ini.get(key, "1" if default else "0") == "1")
+            if key == "debug_menu":
+                row.set_subtitle(tr("Установите DbgFont14h.ccm и DbgFont14h.tpf в dvdroot_ps4/font "
+                                    "из мода Nexus #253"))
             self.effect_rows[key] = row
             effects.add(row)
         page.add(effects)
 
-        frames = Adw.PreferencesGroup(title="Частота кадров")
-        self.fps_row = combo_row("Режим", "Какой патч частоты кадров применить к игре",
+        frames = Adw.PreferencesGroup(title=tr("Частота кадров"))
+        self.fps_row = combo_row(tr("Режим"), tr("Какой патч частоты кадров применить к игре"),
                                  FPS_MODES, self.settings["fps_mode"])
         frames.add(self.fps_row)
         self.limit_row = Adw.SpinRow.new_with_range(0, 480, 1)
-        self.limit_row.set_title("Ограничение FPS")
-        self.limit_row.set_subtitle("0 — без ограничения (или по частоте экрана)")
+        self.limit_row.set_title(tr("Ограничение FPS"))
+        self.limit_row.set_subtitle(tr("0 — по частоте экрана (не выше 120 Гц); "
+                                       "укажите число, чтобы ограничить иначе"))
         self.limit_row.set_value(self.settings["fps_limit"])
         frames.add(self.limit_row)
         page.add(frames)
 
-        perf = Adw.PreferencesGroup(title="Производительность")
+        perf = Adw.PreferencesGroup(title=tr("Производительность"))
         self.pipe_row = combo_row(
-            "Двухстадийный конвейер GPU",
-            "Быстрее на 20–30%; при нестабильности выключите", DRAW_PIPE,
+            tr("Двухстадийный конвейер GPU"),
+            tr("Быстрее на 20–30%; при нестабильности выключите"), DRAW_PIPE,
             self.settings["draw_pipe"])
         perf.add(self.pipe_row)
-        self.readbacks_row = combo_row("Чтение данных GPU процессором", None, READBACKS,
+        self.readbacks_row = combo_row(tr("Чтение данных GPU процессором"), None, READBACKS,
                                        self.settings["readbacks"])
         perf.add(self.readbacks_row)
         page.add(perf)
 
-        dev = Adw.PreferencesGroup(title="Для разработчика")
+        dev = Adw.PreferencesGroup(title=tr("Для разработчика"))
         self.mangohud_row = Adw.SwitchRow(title="MangoHud", active=self.settings["mangohud"])
         dev.add(self.mangohud_row)
-        self.stats_row = Adw.SwitchRow(title="Статистика кадров в журнале",
+        self.stats_row = Adw.SwitchRow(title=tr("Статистика кадров в журнале"),
                                        subtitle="BB_FRAME_STATS",
                                        active=self.settings["frame_stats"])
         dev.add(self.stats_row)
-        self.profile_row = Adw.SwitchRow(title="Профиль GPU в журнале",
+        self.profile_row = Adw.SwitchRow(title=tr("Профиль GPU в журнале"),
                                          subtitle="BB_GPU_PROFILE",
                                          active=self.settings["gpu_profile"])
         dev.add(self.profile_row)
-        self.validation_row = Adw.SwitchRow(title="Слои валидации Vulkan",
-                                            subtitle="Сильно замедляет",
+        self.validation_row = Adw.SwitchRow(title=tr("Слои валидации Vulkan"),
+                                            subtitle=tr("Сильно замедляет"),
                                             active=self.settings["vk_validation"])
         dev.add(self.validation_row)
-        self.extra_row = Adw.EntryRow(title="Доп. переменные (ИМЯ=значение через пробел)",
+        self.extra_row = Adw.EntryRow(title=tr("Доп. переменные (ИМЯ=значение через пробел)"),
                                       text=self.settings["extra_env"])
         dev.add(self.extra_row)
         page.add(dev)
         return page
+
+    def on_ui_language(self, row, _param):
+        choice = combo_value(row)
+        if choice == self.settings.get("ui_language", ""):
+            return
+        self.store()
+        self.settings["ui_language"] = choice
+        save_settings(self.settings)
+        if self.process:
+            # The log keeps streaming into the current page; rebuild on the next start.
+            set_language(choice)
+            self.toasts.add_toast(Adw.Toast(
+                title=tr("Применится после перезапуска лаунчера, пока игра запущена")))
+            return
+        set_language(choice)
+        # After this handler returns: the row that emitted the signal is replaced.
+        GLib.idle_add(lambda: self.build() and False)
 
     def game_dir(self):
         return Path(self.settings["game_dir"]).expanduser()
@@ -374,29 +500,34 @@ class LauncherWindow(Adw.ApplicationWindow):
     def update_user_status(self):
         path = self.user_dir()
         custom = bool(self.settings["user_dir"])
-        self.user_row.set_subtitle(str(path) if custom else f"По умолчанию: {path}")
+        self.user_row.set_subtitle(str(path) if custom else tr("По умолчанию: {}").format(path))
         saves = path / "savedata"
         found = saves.is_dir() and any(saves.iterdir())
         self.user_status.set_from_icon_name("object-select-symbolic" if found else "document-new-symbolic")
-        self.user_status.set_tooltip_text("Найдены сохранения" if found
-                                          else "Сохранений пока нет: игра создаст их здесь")
+        self.user_status.set_tooltip_text(tr("Найдены сохранения") if found
+                                          else tr("Сохранений пока нет: игра создаст их здесь"))
         self.user_reset.set_sensitive(custom)
 
-    def on_choose_user(self, _button):
-        dialog = Gtk.FileDialog(title="Папка сохранений")
-        if self.user_dir().is_dir():
-            dialog.set_initial_folder(Gio.File.new_for_path(str(self.user_dir())))
-        dialog.select_folder(self, None, self.on_user_chosen)
+    def choose_folder(self, title, current, done):
+        dialog = Gtk.FileDialog(title=title)
+        if Path(current).is_dir():
+            dialog.set_initial_folder(Gio.File.new_for_path(str(current)))
 
-    def on_user_chosen(self, dialog, result):
-        try:
-            folder = dialog.select_folder_finish(result)
-        except GLib.Error:
-            return
-        if folder:
-            self.settings["user_dir"] = folder.get_path()
+        def finish(dialog, result):
+            try:
+                folder = dialog.select_folder_finish(result)
+            except GLib.Error:
+                return
+            if folder:
+                done(folder.get_path())
+        dialog.select_folder(self, None, finish)
+
+    def on_choose_user(self, _button):
+        def chosen(path):
+            self.settings["user_dir"] = path
             self.update_user_status()
             self.store()
+        self.choose_folder(tr("Папка сохранений"), self.user_dir(), chosen)
 
     def on_reset_user(self, _button):
         self.settings["user_dir"] = ""
@@ -407,40 +538,35 @@ class LauncherWindow(Adw.ApplicationWindow):
         value = combo_value(self.upscaler_row)
         if value == "fsr4":
             ok = (PORT_DIR / "fsr4_shaders").is_dir()
-            hint = "Ассеты найдены" if ok else "Нет ассетов: tools/fetch_fsr4_assets.sh"
+            hint = tr("Ассеты найдены") if ok else tr("Нет ассетов: tools/fetch_fsr4_assets.sh")
         elif value == "fsr411":
-            ok = (PORT_DIR / "fsr4_411").is_dir() or (DATA_DIR / "fsr4_411").is_dir()
-            hint = ("Ассеты найдены" if ok else
-                    f"Нет ассетов: tools/fsr4cap/build_assets.sh (из DLL AMD 4.1.x, нужен Proton), "
-                    f"затем папку fsr4_411 — в {DATA_DIR}" if PACKAGED else
-                    "Нет ассетов: tools/fsr4cap/build_assets.sh (из DLL AMD 4.1.x, нужен Proton)")
+            directory = Path(os.environ["BB_FSR411_DIR"]) if os.environ.get("BB_FSR411_DIR") else (
+                PORT_DIR / "fsr4_411" if (PORT_DIR / "fsr4_411").is_dir() else DATA_DIR / "fsr4_411")
+            problem = fsr411_problem(directory, combo_value(self.output_row),
+                                     int(combo_value(self.preset_row)))
+            hint = tr("Ассеты для выбранного режима найдены") if not problem else (
+                tr("{}. Установите полный набор fsr4_411 в {}.").format(problem, directory))
         else:
-            hint = None
+            hint = tr("Сглаживание в разрешении вывода без модели FSR") if value == "taa" else None
+        self.preset_row.set_sensitive(value not in ("taa", "off"))
+        self.sharpen_row.set_sensitive(value != "off")
+        self.sharpness_row.set_sensitive(value != "off")
         self.upscaler_row.set_subtitle(hint or "")
 
     def update_game_status(self):
         path = self.game_dir()
         ok = bool(self.settings["game_dir"]) and (path / "eboot.bin").is_file()
-        self.game_row.set_subtitle(str(path) if self.settings["game_dir"] else "не выбрана")
+        self.game_row.set_subtitle(str(path) if self.settings["game_dir"] else tr("не выбрана"))
         self.game_status.set_from_icon_name("object-select-symbolic" if ok else "dialog-warning-symbolic")
-        self.game_status.set_tooltip_text("Найден eboot.bin" if ok else "Нет eboot.bin в папке")
+        self.game_status.set_tooltip_text(tr("Найден eboot.bin") if ok else tr("Нет eboot.bin в папке"))
         self.launch_button.set_sensitive(ok or self.process is not None)
 
     def on_choose_game(self, _button):
-        dialog = Gtk.FileDialog(title="Папка игры (с eboot.bin)")
-        if self.game_dir().is_dir():
-            dialog.set_initial_folder(Gio.File.new_for_path(str(self.game_dir())))
-        dialog.select_folder(self, None, self.on_game_chosen)
-
-    def on_game_chosen(self, dialog, result):
-        try:
-            folder = dialog.select_folder_finish(result)
-        except GLib.Error:
-            return
-        if folder:
-            self.settings["game_dir"] = folder.get_path()
+        def chosen(path):
+            self.settings["game_dir"] = path
             self.update_game_status()
             self.store()
+        self.choose_folder(tr("Папка игры (с eboot.bin)"), self.game_dir(), chosen)
 
     def store(self):
         s = self.settings
@@ -457,6 +583,9 @@ class LauncherWindow(Adw.ApplicationWindow):
         s["gpu_profile"] = self.profile_row.get_active()
         s["vk_validation"] = self.validation_row.get_active()
         s["extra_env"] = self.extra_row.get_text().strip()
+        s["mods_enabled"] = self.mods_enabled_row.get_active()
+        self.save_mod_profile()
+        self.save_patch_profile()
         save_settings(s)
         self.ini.update({
             "upscaler": combo_value(self.upscaler_row),
@@ -467,6 +596,7 @@ class LauncherWindow(Adw.ApplicationWindow):
             "show_fps": "1" if self.show_fps_row.get_active() else "0",
             "output_res": combo_value(self.output_row),
             "model_lod": combo_value(self.lod_row),
+            "live_resolution": combo_value(self.live_row),
             **{key: "1" if row.get_active() else "0" for key, row in self.effect_rows.items()},
         })
         save_ini(self.ini, self.ini_lines)
@@ -475,6 +605,114 @@ class LauncherWindow(Adw.ApplicationWindow):
     def environment(self):
         return game_environment(self.settings)
 
+    # --- mods ----------------------------------------------------------------------------
+
+    def mods_dir(self):
+        return Path(self.settings.get("mods_dir") or DATA_DIR / "mods").expanduser()
+
+    def save_mod_profile(self):
+        DATA_DIR.mkdir(parents=True, exist_ok=True)
+        rows = self.mod_list.rows
+        profile = {"order": [name for name, _ in rows],
+                   "disabled": [name for name, row in rows if not row.get_active()]}
+        (DATA_DIR / "mods.json").write_text(json.dumps(profile, indent=2, ensure_ascii=False) + "\n")
+
+    def refresh_mods(self):
+        self.mod_list.clear()
+        self.mods_folder_row.set_subtitle(str(self.mods_dir()))
+        try:
+            profile = json.loads((DATA_DIR / "mods.json").read_text())
+        except (OSError, ValueError):
+            profile = {}
+        available = discover_mods(self.mods_dir())
+        order = list(dict.fromkeys(n for n in [*profile.get("order", []), *available] if n in available))
+        for name in order:
+            row = Adw.SwitchRow(title=name, active=name not in profile.get("disabled", []))
+            row.add_suffix(flat_button("go-up-symbolic", tr("Загрузить раньше"),
+                                        lambda _b, n=name: self.move_mod(n, -1)))
+            row.add_suffix(flat_button("go-down-symbolic", tr("Загрузить позже"),
+                                        lambda _b, n=name: self.move_mod(n, 1)))
+            self.mod_list.add(name, row)
+        if not order:
+            self.mods_folder_row.set_subtitle(f"{self.mods_dir()} — {tr('Модов нет')}")
+
+    def move_mod(self, name, direction):
+        rows = self.mod_list.rows
+        index = next(i for i, (n, _) in enumerate(rows) if n == name)
+        target = index + direction
+        if 0 <= target < len(rows):
+            rows[index], rows[target] = rows[target], rows[index]
+            self.save_mod_profile()
+            self.refresh_mods()
+
+    def on_refresh_mods(self, _button):
+        self.save_mod_profile()
+        self.refresh_mods()
+
+    def on_choose_mods(self, _button):
+        self.save_mod_profile()
+
+        def chosen(path):
+            self.settings["mods_dir"] = path
+            self.refresh_mods()
+            self.store()
+        self.choose_folder(tr("Папка модов"), self.mods_dir(), chosen)
+
+    # --- third-party patches -------------------------------------------------------------
+
+    def save_patch_profile(self):
+        """patches.json: the switches that differ from each file's isEnabled."""
+        enabled, disabled = [], []
+        for key, row in self.patch_list.rows:
+            if row.get_active() != row.default:
+                (enabled if row.get_active() else disabled).append(key)
+        path = DATA_DIR / "patches.json"
+        try:
+            profile = json.loads(path.read_text())
+        except (OSError, ValueError):
+            profile = {}
+        # Patches of files not listed now (another folder) keep their choice.
+        shown = {key for key, _ in self.patch_list.rows}
+        profile = {"enabled": sorted({k for k in profile.get("enabled", []) if k not in shown} | set(enabled)),
+                   "disabled": sorted({k for k in profile.get("disabled", []) if k not in shown} | set(disabled))}
+        DATA_DIR.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(profile, indent=2, ensure_ascii=False) + "\n")
+
+    def refresh_patches(self):
+        self.patch_list.clear()
+        directory = patches_dir(self.settings)
+        try:
+            profile = json.loads((DATA_DIR / "patches.json").read_text())
+        except (OSError, ValueError):
+            profile = {}
+        found = external_patches(directory)
+        for key, _path, meta in found:
+            default = meta.get("isEnabled", "false").lower() == "true"
+            active = key in profile.get("enabled", []) or (default and key not in profile.get("disabled", []))
+            subtitle = key.split("/", 1)[0]
+            if meta.get("Author"):
+                subtitle += " · " + tr("Автор: {}").format(meta.get("Author"))
+            row = Adw.SwitchRow(title=GLib.markup_escape_text(meta.get("Name") or key),
+                                subtitle=GLib.markup_escape_text(subtitle), active=active)
+            if meta.get("Note"):
+                row.set_tooltip_text(meta.get("Note").replace("\\n", "\n"))
+            row.default = default
+            self.patch_list.add(key, row)
+        self.patches_folder_row.set_subtitle(
+            str(directory) if found else f"{directory} — {tr('Патчей нет')}")
+
+    def on_refresh_patches(self, _button):
+        self.save_patch_profile()
+        self.refresh_patches()
+
+    def on_choose_patches(self, _button):
+        self.save_patch_profile()
+
+        def chosen(path):
+            self.settings["patches_dir"] = path
+            self.refresh_patches()
+            self.store()
+        self.choose_folder(tr("Папка патчей"), patches_dir(self.settings), chosen)
 
     # --- log page ------------------------------------------------------------------------
 
@@ -515,14 +753,12 @@ class LauncherWindow(Adw.ApplicationWindow):
             # setsid: the game and its helpers form one process group, stopped together.
             self.process = launcher.spawnv(["setsid", "bash", str(PORT_DIR / "run.sh")])
         except GLib.Error as error:
-            self.toasts.add_toast(Adw.Toast(title=f"Не удалось запустить: {error.message}"))
+            self.toasts.add_toast(Adw.Toast(title=tr("Не удалось запустить: {}").format(error.message)))
             return
         self.stream = Gio.DataInputStream.new(self.process.get_stdout_pipe())
         self.read_line()
         self.process.wait_async(None, self.on_exit)
-        self.launch_button.set_label("Остановить")
-        self.launch_button.remove_css_class("suggested-action")
-        self.launch_button.add_css_class("destructive-action")
+        self.update_launch_button()
         self.stack.set_visible_child_name("log")
 
     def read_line(self):
@@ -563,11 +799,9 @@ class LauncherWindow(Adw.ApplicationWindow):
             pass
         status = process.get_exit_status() if process.get_if_exited() else -1
         self.process = None
-        self.launch_button.set_label("Запустить")
-        self.launch_button.remove_css_class("destructive-action")
-        self.launch_button.add_css_class("suggested-action")
+        self.update_launch_button()
         self.update_game_status()
-        self.append_log(f"\n— игра завершилась (код {status}) —\n")
+        self.append_log(tr("\n— игра завершилась (код {}) —\n").format(status))
 
     def on_close(self, _window):
         self.store()

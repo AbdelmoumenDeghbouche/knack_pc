@@ -41,16 +41,18 @@ void main() {
     const vec2 ndc = vec2(scene_uv.x * 2.0 - 1.0, 1.0 - scene_uv.y * 2.0);
 
     // Clip z = zs * z + zo, w = z; depth = zs + zo / z (zo < 0, depth < zs in front).
-    const float denom = depth - proj.z;
-    const float z = denom < -1e-7 ? proj.w / denom : 1e6;
-    const vec4 view = vec4(ndc.x * z / proj.x, ndc.y * z / proj.y, z, 1.0);
+    const bool sky = depth >= 1.0;
+    const float denom = min(depth - proj.z, -1e-8);
+    const float z = sky ? 1.0 : proj.w / denom;
+    // Clear depth is an infinite direction: rotate it with the camera, without translation.
+    // A threshold below 1 incorrectly classified distant geometry as motionless sky.
+    const vec4 view = vec4(ndc.x * z / proj.x, ndc.y * z / proj.y, z, sky ? 0.0 : 1.0);
     const vec3 prev_view =
         vec3(dot(reproject[0], view), dot(reproject[1], view), dot(reproject[2], view));
     const vec2 prev_ndc =
         vec2(prev_view.x * prev_proj.x, prev_view.y * prev_proj.y) / max(prev_view.z, 1e-4);
     const vec2 prev_uv = vec2(prev_ndc.x * 0.5 + 0.5, 0.5 - prev_ndc.y * 0.5);
     const vec2 motion = (prev_uv - scene_uv) * size;
-    const bool sky = depth >= 0.99999;
 
 #ifdef DEBUG_OVERLAY
     const vec4 current = imageLoad(color_img, pixel);
@@ -65,21 +67,31 @@ void main() {
         imageStore(color_img, pixel, vec4(out_color, current.a));
         return;
     }
-    if (mode != 0) {
-        const float v = mode == 1 ? depth : z / 50.0;
+    if (mode == 1) {
+        // Raw depth visualization
+        imageStore(color_img, pixel, vec4(fract(depth * 4.0), depth, depth < 0.0 ? 1.0 : 0.0, 1.0));
+        return;
+    } else if (mode == 2) {
+        // View-space depth visualization (z / 50)
+        const float v = z / 50.0;
         imageStore(color_img, pixel, vec4(fract(v * 4.0), v, v < 0.0 ? 1.0 : 0.0, 1.0));
         return;
     }
+    // Mode 0: motion vectors blended with current frame
     // Red/green: horizontal/vertical motion (grey = none), 64 pixels to full scale.
+    // Sky = dark blue, motion magnitude shown by color deviation from grey
     const vec3 mv_color = sky ? vec3(0.0, 0.0, 0.3) : vec3(0.5) + vec3(motion / 128.0, 0.0);
     imageStore(color_img, pixel, vec4(mix(current.rgb, mv_color, 0.75), current.a));
 #else
-    vec2 result = sky ? vec2(0.0) : motion;
+    vec2 result = motion;
     if (mode == 1) {
         const vec4 object_motion = texelFetch(object_tex, pixel, 0);
         // A later ordinary draw may have covered this pixel without touching the motion
         // target. Its final depth then differs from the depth stored with the vector.
-        if (object_motion.b > 0.99 && abs(object_motion.a - depth) < 0.001 &&
+        // Both depths are full precision. Do not accept an old foreground vector merely
+        // because perspective depth compresses distant surfaces into a small interval.
+        float depth_threshold = max(2e-7, (proj.z - depth) * 0.01);
+        if (object_motion.b > 0.99 && abs(object_motion.a - depth) < depth_threshold &&
             !any(isnan(object_motion.rg)) &&
             !any(isinf(object_motion.rg))) {
             result = object_motion.rg;

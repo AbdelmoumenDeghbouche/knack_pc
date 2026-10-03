@@ -35,7 +35,7 @@ void Set(Values& v, const std::string& key, const std::string& value) {
     } else if (key == "sharpen") {
         v.sharpen = i != 0;
     } else if (key == "sharpness") {
-        v.sharpness = Clamp(f, 0.0f, 1.0f);
+        v.sharpness = Clamp(f, 0.0f, 2.0f);
     } else if (key == "jitter") {
         v.jitter = i != 0;
     } else if (key == "reactive") {
@@ -58,6 +58,8 @@ void Set(Values& v, const std::string& key, const std::string& value) {
         v.fsr4_invert_jitter = i != 0;
     } else if (key == "model_lod") {
         v.model_lod = std::clamp(i, -2, 2);
+    } else if (key == "live_resolution") {
+        v.live_resolution = value == "auto" ? -1 : std::clamp(i, 0, 1);
     } else if (key == "output_res") {
         for (int r = 0; r < OutputCount; ++r) {
             if (value == std::to_string(OutputWidths[r]) + "x" + std::to_string(OutputHeights[r])) {
@@ -125,6 +127,41 @@ void Load() {
     }
     v.startup_model_lod = v.model_lod;
     v.startup_output_res = v.output_res;
+    v.startup_live_resolution = v.live_resolution;
+}
+
+void ConfigureUpscalerSupport(bool fsr4, bool fsr411) {
+    auto& v = Get();
+    v.fsr4_supported = fsr4;
+    v.fsr411_supported = fsr4 && fsr411;
+    const int requested = v.upscaler;
+    if ((requested == UpscalerFsr4 && !v.fsr4_supported) ||
+        (requested == UpscalerFsr411 && !v.fsr411_supported)) {
+        v.fsr4_problem = "GPU does not support the selected FSR 4 shaders; using FSR 3.1";
+        std::printf("Upscaler: %s unsupported on this GPU; falling back to FSR 3.1 before the first frame\n",
+                    UpscalerName(requested));
+        v.upscaler = UpscalerFsr3;
+    }
+}
+
+bool FixedRenderSession() {
+    const char* size = std::getenv("BB_RENDER_RES");
+    return size && size[0];
+}
+
+int RenderPreset() {
+    const auto& v = Get();
+    return FixedRenderSession() ? v.startup_preset :
+        v.upscaler == UpscalerTaa ? NativeAA : v.preset.load();
+}
+
+bool ResolutionNeedsRestart() {
+    const auto& v = Get();
+    // TAA needs the live path (native guest targets): run.sh selects it on restart.
+    return FixedRenderSession() &&
+        (v.preset != v.startup_preset || v.output_res != v.startup_output_res ||
+         (v.upscaler == UpscalerOff) != (v.startup_upscaler == UpscalerOff) ||
+         (v.upscaler == UpscalerTaa) != (v.startup_upscaler == UpscalerTaa));
 }
 
 void Save() {
@@ -151,6 +188,9 @@ void Save() {
     }
     std::fprintf(file, "model_lod=%d\noutput_res=%dx%d\n", v.model_lod.load(),
                  OutputWidths[v.output_res], OutputHeights[v.output_res]);
+    // Read by run.sh at start.
+    std::fprintf(file, "live_resolution=%s\n", v.live_resolution < 0 ? "auto"
+                                                  : v.live_resolution ? "1" : "0");
     std::fclose(file);
 }
 
@@ -166,7 +206,7 @@ const char* PresetName(int preset) {
 }
 
 const char* UpscalerName(int upscaler) {
-    static constexpr const char* names[UpscalerCount] = {"off", "fsr3", "fsr4", "fsr411"};
+    static constexpr const char* names[UpscalerCount] = {"off", "fsr3", "fsr4", "fsr411", "taa"};
     return names[std::clamp(upscaler, 0, UpscalerCount - 1)];
 }
 

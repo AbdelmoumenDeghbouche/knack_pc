@@ -161,8 +161,19 @@ float CameraMotion::Near() const noexcept {
     return -current.proj[3] / current.proj[2];
 }
 
+std::array<std::array<float, 4>, 3> CameraMotion::TaaDepthParameters() const noexcept {
+    const auto transform = Multiply(previous.view, current.inv_view);
+    return {current.proj, previous.proj,
+            {transform[8], transform[9], transform[10], transform[11]}};
+}
+
 vk::ImageView CameraMotion::ObjectMotionView() const noexcept {
     return object_motion && object_motion->Enabled() ? object_motion->View() : vk::ImageView{};
+}
+
+vk::Image CameraMotion::ObjectMotionImage(u32 width, u32 height) const noexcept {
+    return object_motion && object_motion->Enabled() ? object_motion->Image(width, height)
+                                                      : vk::Image{};
 }
 
 void CameraMotion::RecordMotion(vk::CommandBuffer cmdbuf, vk::ImageView depth_view,

@@ -56,6 +56,10 @@ public:
     [[nodiscard]] vk::ImageView View() const noexcept {
         return view ? *view : vk::ImageView{};
     }
+    [[nodiscard]] vk::Image Image(u32 width, u32 height) const noexcept {
+        return written && width == image_width && height == image_height
+            ? vk::Image(image) : vk::Image{};
+    }
 
 private:
     void EnsureImage(u32 width, u32 height);

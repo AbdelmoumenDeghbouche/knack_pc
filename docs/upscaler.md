@@ -1,5 +1,84 @@
 # Temporal upscaling and frame generation — frame analysis and plan
 
+## Native TAA and missing FSR 4 assets (2026-10-01)
+
+`upscaler=taa` / `BB_UPSCALER=taa` is a separate native-resolution temporal AA
+mode, available live in the launcher and overlay. It uses the existing jitter and
+camera/object motion vectors, reprojection, depth rejection and 3×3 neighborhood
+clipping in one compute pass with two ping-pong RGBA16F histories. History stores
+depth in alpha; the scene's original alpha is preserved by the HDR merge. HUD is
+composed afterwards and never enters history. Output changes and AA/provider
+changes reset history. TAA uses Native AA dimensions while preserving the saved
+FSR preset, and does not allocate an FSR context or execute an FSR model/RCAS.
+It still adds GPU work compared with disabling temporal AA; native 4K raster cost
+also remains. The explicit `BB_RENDER_RES` compatibility path must be unset.
+
+FSR Native AA is not a fast pass-through: it renders at the output resolution and
+also executes the temporal reconstruction (including the model for FSR 4) and
+optional sharpening. It can therefore be slower than no AA at the same output.
+
+FSR 4.1.1 assets have separate 1080p/2160p tiers and standard/Ultra models:
+`t1080_m0`, `t1080_m1`, `t2160_m0`, `t2160_m1`. Outputs above 1080p need the 2160
+tier, irrespective of the preset. A missing `t2160_m0/spd.spv` means missing
+assets, not a GPU feature failure. These assets are not bundled: build the full
+set with `tools/fsr4cap/build_assets.sh` and put it in `BB_FSR411_DIR` or the
+packaged data directory's `fsr4_411`. Fatal asset failures now select FSR 3.1 in
+the live settings, so the menu shows the active provider, retains the error, and
+allows retrying FSR 4 after changing the output/installing assets.
+
+`taa-shader-test` checks real SPIR-V output for accumulation, clipping, depth
+disocclusion, invalid history and out-of-frame motion on Vulkan (Lavapipe works).
+`out/taa-appimage-build.log` records these checks, settings round trips and 64
+Python tests. `out/taa-live-validation.log` and `out/taa-appimage-validation.log`
+check TAA at 1080p/720p/1440p/4K, TAA ↔ FSR 3, and a missing 2160-tier FSR 4.1.1
+model in one gameplay process, including output captures and camera movement.
+`out/taa-launcher-validation.log` checks actual GTK controls and saved settings.
+TAA has not yet been tested on the tester's GTX 1060.
+
+## Startup patch is the default again for outputs other than 1080p (2026-10-02)
+
+The live path below made the Steam Deck and a GTX 1060 + 4-core Haswell drop to 7–8 FPS
+(release 0.1 AppImage: 40–50 FPS on the Deck). With guest allocations at 1920×1080 the game's
+post-processing stays at 1080p even for 720p output, guest compute passes resolve scene proxies
+back to 1080p every frame (RX 7800 XT, 720p FSR 3 Performance on 4 cores: 826 vs 576
+draws/frame, 185 vs 210 FPS), and on GPUs without shader stencil export every depth/stencil
+copy took nine draws.
+
+- `run.sh` again patches the game's render size for outputs other than 1080p (as in 0.1) and
+  marks it with `BB_AUTO_RENDER_RES=1`, so an in-game restart recomputes it. Preset and output
+  changes then need a restart (the menu offers it). `BB_LIVE_RES=1` selects the live path.
+  1080p output and TAA keep the live path.
+- Depth/stencil scene proxies need `VK_EXT_shader_stencil_export` again; without it these
+  targets stay native (as in 0.1). `BB_SCENE_STENCIL_BITS=1` still forces the portable
+  resampler for tests.
+
+## Live resolution changes (2026-10-01)
+
+The in-game output selector now resizes 720p/1080p/1440p/2160p host targets at a
+display-pass boundary. Presets use `output / scale`, including raster sizes above
+1080p (4K Quality: 2560×1440; Native AA: 3840×2160). Guest allocations stay at
+1920×1080; `run.sh` no longer inserts a resolution patch for normal output choices.
+The explicit `BB_RENDER_RES` compatibility override is retained.
+
+`SceneTargets` resolves and retires old proxies before changing size. FSR resources
+and history are rebuilt for the new input/output, with completion waits for both
+FSR 3 and FSR 4. The 1080p path keeps HDR reconstruction before game post;
+other outputs reconstruct tonemapped scene proxies at the first Scaleform pass,
+then draw HUD/menu geometry into the output-size target. The display buffer is
+resized too. Movie shader identification prevents a native-size fullscreen post
+pass from being mistaken for UI.
+
+Guest compute passes retain their native dispatch sizes and can resolve proxies
+back to 1080p. This change does not scale every post-processing pass; performance
+and intermediate detail can differ from the old startup-patched render sizes.
+
+Verification: `out/dev/live-resolution-summary.log` switches output, preset and FSR
+off/on in one PID. `BB_PRESENT_DUMP_TRIGGER` captures the completed host display
+buffer (including HUD) into `BB_DUMP_DIR`. Captures confirm actual 720p/1440p/2160p
+buffers. `scene-resolution-test` covers color/depth/stencil round trips through
+proxies both smaller and larger than the guest allocation. `BB_PRESET_FILE` accepts
+`preset [output-index [upscaler-index]]` for scripted menu-equivalent changes.
+
 Frame analyzer: `BB_CAPTURE_TRIGGER=<file> BB_CAPTURE_DIR=<dir>`; creating the file records
 the next frame (boundary: the pass writing a display buffer) — passes, targets, shaders,
 sampled textures, and the first 1 KiB of bound constants for small passes and first draws.

@@ -9,21 +9,25 @@
 let
   lib = pkgs.lib;
   root = ./..;
+  # FSR 4.1.1 models are extracted from AMD's DLLs: never in a public package. BB_PACKAGE_FSR411=1
+  # (appimage.sh runs nix with --impure) bundles the local fsr4_411 for one's own devices.
+  fsr411 = builtins.getEnv "BB_PACKAGE_FSR411" == "1";
+  assetDirs = [ "scripts" "patches" "fsr4_shaders" "launcher" ] ++ lib.optional fsr411 "fsr4_411";
   # Only what the package needs (the tree also holds builds, profiles and captures).
   wanted = [
-    "run.sh" "scripts" "patches" "fsr4_shaders" "launcher" "out" "out/bb-probe" "out/gpu"
-    "out/gpu/libbbgpu.so"
-  ];
+    "run.sh" "out" "out/bb-probe" "out/bb-gpu-capabilities" "out/gpu" "out/gpu/libbbgpu.so"
+  ] ++ assetDirs;
   src = builtins.path {
     name = "bbport-src";
     path = root;
     filter = path: type:
       let rel = lib.removePrefix (toString root + "/") (toString path);
       in builtins.elem rel wanted
-        || lib.any (dir: lib.hasPrefix (dir + "/") rel) [ "scripts" "patches" "fsr4_shaders" "launcher" ];
+        || lib.any (dir: lib.hasPrefix (dir + "/") rel) assetDirs;
   };
   python = pkgs.python3.withPackages (ps: [ ps.pygobject3 ]);
-  # Mesa's own drivers: the host's (e.g. SteamOS /usr/lib) cannot load into this closure's glibc.
+  # Mesa comes with the package. bbport_vulkan.py adds the host NVIDIA ICD and
+  # only its vendor libraries (matching the host's kernel module).
   icds = lib.concatMapStringsSep ":" (name: "${pkgs.mesa}/share/vulkan/icd.d/${name}")
     [ "radeon_icd.x86_64.json" "intel_icd.x86_64.json" ];
   # Fonts: bundled DejaVu and Adwaita plus the host's usual font directories, but not the host's
@@ -45,10 +49,12 @@ let
   # Environment the closure needs on any host: icon themes, SVG icon loader, fonts (above) and
   # a UTF-8 locale built into glibc.
   common = ''
-      --prefix XDG_DATA_DIRS : ${pkgs.adwaita-icon-theme}/share:${pkgs.hicolor-icon-theme}/share:${pkgs.gtk4}/share/gsettings-schemas/${pkgs.gtk4.name} \
+      --prefix XDG_DATA_DIRS : ${pkgs.mangohud}/share:${pkgs.adwaita-icon-theme}/share:${pkgs.hicolor-icon-theme}/share:${pkgs.gtk4}/share/gsettings-schemas/${pkgs.gtk4.name} \
       --set-default GDK_PIXBUF_MODULE_FILE ${pkgs.librsvg}/${pkgs.gdk-pixbuf.moduleDir}.cache \
       --set-default FONTCONFIG_FILE ${fontsConf} \
       --set-default LC_ALL C.UTF-8 \
+      --prefix LD_LIBRARY_PATH : ${lib.makeLibraryPath [ pkgs.libglvnd pkgs.libx11 pkgs.libxext ]} \
+      --set BB_VULKANINFO ${pkgs.vulkan-tools}/bin/vulkaninfo \
   '';
 in
 pkgs.stdenv.mkDerivation {
@@ -73,9 +79,24 @@ pkgs.stdenv.mkDerivation {
     mkdir -p $d/bin $out/bin
     cp run.sh $d/
     cp -r scripts patches fsr4_shaders launcher $d/
-    # FSR 4.1.1 assets are extracted from AMD's DLL: never packaged (each user builds them,
-    # tools/fsr4cap/build_assets.sh, into the data directory's fsr4_411).
+    # FSR 4.1.1 models only with BB_PACKAGE_FSR411=1 (see above); otherwise run.sh finds them in
+    # the data directory (~/.local/share/bbport/fsr4_411).
+    if [ -d fsr4_411 ]; then
+      ${pkgs.python3}/bin/python3 - <<'PY'
+    import sys
+    from pathlib import Path
+    sys.path.insert(0, 'launcher')
+    from bbport_assets import fsr411_problem
+    for output in ('1920x1080', '3840x2160'):
+        for preset in (0, 4):
+            problem = fsr411_problem(Path('fsr4_411'), output, preset)
+            if problem:
+                raise SystemExit(problem)
+    PY
+      cp -r fsr4_411 $d/
+    fi
     install -m755 out/bb-probe $d/bin/bb-probe
+    install -m755 out/bb-gpu-capabilities $d/bin/bb-gpu-capabilities
     install -Dm755 out/gpu/libbbgpu.so $d/bin/gpu/libbbgpu.so
     runHook postInstall
   '';
@@ -87,18 +108,18 @@ pkgs.stdenv.mkDerivation {
       ${./bbport-entry.c} -o $out/bin/bbport
     makeShellWrapper ${python}/bin/python3 $out/libexec/bbport \
       "''${gappsWrapperArgs[@]}" \
-      ${common}      --add-flags $out/share/bbport/launcher/bbport_launcher.py \
+      ${common}      --add-flags "$out/share/bbport/launcher/bbport_vulkan.py ${python}/bin/python3 $out/share/bbport/launcher/bbport_launcher.py" \
       --set BB_PREBUILT 1 \
       --set PYTHON ${pkgs.python3}/bin/python3 \
-      --set-default VK_DRIVER_FILES ${icds} \
+      --set BB_BUNDLED_VK_DRIVER_FILES ${icds} \
       --prefix PATH : ${lib.makeBinPath [ pkgs.bash pkgs.coreutils pkgs.util-linux ]} \
       --run 'export BB_DATA_DIR=''${BB_DATA_DIR:-''${XDG_DATA_HOME:-$HOME/.local/share}/bbport}; mkdir -p "$BB_DATA_DIR"'
     # The game alone, without the launcher (settings from the data directory's bbport.ini).
-    makeShellWrapper ${pkgs.bash}/bin/bash $out/bin/bbport-game \
-      ${common}      --add-flags $out/share/bbport/run.sh \
+    makeShellWrapper ${pkgs.python3}/bin/python3 $out/bin/bbport-game \
+      ${common}      --add-flags "$out/share/bbport/launcher/bbport_vulkan.py ${pkgs.bash}/bin/bash $out/share/bbport/run.sh" \
       --set BB_PREBUILT 1 \
       --set PYTHON ${pkgs.python3}/bin/python3 \
-      --set-default VK_DRIVER_FILES ${icds} \
+      --set BB_BUNDLED_VK_DRIVER_FILES ${icds} \
       --prefix PATH : ${lib.makeBinPath [ pkgs.bash pkgs.coreutils ]} \
       --run 'export BB_DATA_DIR=''${BB_DATA_DIR:-''${XDG_DATA_HOME:-$HOME/.local/share}/bbport}; mkdir -p "$BB_DATA_DIR"'
   '';

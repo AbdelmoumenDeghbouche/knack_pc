@@ -86,7 +86,7 @@ int main() {
     cv.format = ci.pixel_format;
     auto dv = cv;
     dv.format = di.pixel_format;
-    const auto clear_native = [&](u32 rgba) {
+    const auto clear_native = [&](u32 rgba, u32 stencil = 7) {
         vk::ClearValue clear{};
         clear.color.float32 = std::array{float(rgba & 255)/255, float((rgba>>8)&255)/255,
                                         float((rgba>>16)&255)/255, 1.0f};
@@ -96,21 +96,27 @@ int main() {
         runtime.FlushBarriers();
         scheduler.CommandBuffer().clearDepthStencilImage(
             images[depth_id].GetImage(), vk::ImageLayout::eTransferDstOptimal,
-            vk::ClearDepthStencilValue{0.25f, 7},
+            vk::ClearDepthStencilValue{0.25f, stencil},
             vk::ImageSubresourceRange{vk::ImageAspectFlagBits::eDepth |
                 vk::ImageAspectFlagBits::eStencil, 0, 1, 0, 1}, dispatch);
     };
-    for (int preset : {3,1,4,2,0,3,0}) {
-        const auto size = SceneResolution::ForPreset(preset);
+    constexpr u32 stencil_values[] = {0, 255, 128, 85, 170, 7, 13, 255, 0, 170};
+    u32 stencil_index = 0;
+    for (int preset : {3,1,4,2,0,3,0,1,0,3}) {
+        const u32 copied_stencil = stencil_values[stencil_index++];
+        const u32 resolved_stencil = copied_stencil ^ 255;
+        const auto output = stencil_index > 7 ? SceneResolution::Size{3840,2160}
+                                             : SceneResolution::Size{};
+        const auto size = SceneResolution::ForPreset(preset, output);
         targets.SetSize(size);
         assert(SceneResolution::Unpack(SceneResolution::Pack(size)) == size);
-        clear_native(0xffff0000); // blue
+        clear_native(0xffff0000, copied_stencil); // blue
         auto c = targets.Read(color_id,cv);
         assert(pixel(c.image,vk::ImageAspectFlagBits::eColor,c.layout,size.width,size.height)==0xffff0000);
         auto d = targets.Read(depth_id,dv);
         const u32 depth_bits = pixel(d.image,vk::ImageAspectFlagBits::eDepth,d.layout,size.width,size.height);
         assert(std::bit_cast<float>(depth_bits)==0.25f);
-        assert((pixel(d.image,vk::ImageAspectFlagBits::eStencil,d.layout,size.width,size.height)&255)==7);
+        assert((pixel(d.image,vk::ImageAspectFlagBits::eStencil,d.layout,size.width,size.height)&255)==copied_stencil);
 
         c = targets.Attachment(color_id,cv);
         d = targets.Attachment(depth_id,dv);
@@ -120,7 +126,7 @@ int main() {
             .clearValue=vk::ClearValue{.color={.float32=std::array{1.f,0.f,0.f,1.f}}}};
         const vk::RenderingAttachmentInfo depth{.imageView=d.view,.imageLayout=d.layout,
             .loadOp=vk::AttachmentLoadOp::eClear,.storeOp=vk::AttachmentStoreOp::eStore,
-            .clearValue=vk::ClearValue{.depthStencil={0.75f,13}}};
+            .clearValue=vk::ClearValue{.depthStencil={0.75f,resolved_stencil}}};
         cmd.beginRendering({.renderArea={{0,0},{size.width,size.height}},.layerCount=1,
             .colorAttachmentCount=1,.pColorAttachments=&color,
             .pDepthAttachment=&depth,.pStencilAttachment=&depth}, dispatch);
@@ -136,12 +142,60 @@ int main() {
         assert(std::bit_cast<float>(pixel(images[depth_id].GetImage(),vk::ImageAspectFlagBits::eDepth,
                      vk::ImageLayout::eTransferSrcOptimal,1920,1080))==0.75f);
         assert((pixel(images[depth_id].GetImage(),vk::ImageAspectFlagBits::eStencil,
-                     vk::ImageLayout::eTransferSrcOptimal,1920,1080)&255)==13);
+                     vk::ImageLayout::eTransferSrcOptimal,1920,1080)&255)==resolved_stencil);
         clear_native(0xff00ff00); // overwrite after reduced render: proxy must be invalidated
         c=targets.Read(color_id,cv);
         assert(pixel(c.image,vk::ImageAspectFlagBits::eColor,c.layout,size.width,size.height)==0xff00ff00);
         std::printf("Scene targets: %ux%u color/depth/stencil roundtrip PASS\n",size.width,size.height);
     }
+
+    // Half-resolution mip chain (the game's bloom pyramid): one proxy per level, scaled by the
+    // scene's factor, resolved into its own native level.
+    auto hi = ci;
+    hi.size = {960, 540, 1};
+    hi.resources = {4, 1};
+    const auto half_id = images.insert(instance, runtime, views, hi);
+    const auto scene = SceneResolution::ForPreset(4); // 640x360 (x3 of 1080p)
+    targets.SetSize(scene);
+    auto& half = images[half_id];
+    assert(targets.Eligible(half) && !targets.EligibleScene(half));
+    assert((targets.ProxySize(half, 0) == SceneResolution::Size{320, 180}));
+    assert((targets.ProxySize(half, 2) == SceneResolution::Size{80, 45}));
+    auto lv = cv;
+    lv.range.base.level = 2;
+    const auto proxy = targets.Attachment(half_id, lv);
+    {
+        auto cmd = scheduler.CommandBuffer();
+        const vk::RenderingAttachmentInfo color{.imageView=proxy.view,.imageLayout=proxy.layout,
+            .loadOp=vk::AttachmentLoadOp::eClear,.storeOp=vk::AttachmentStoreOp::eStore,
+            .clearValue=vk::ClearValue{.color={.float32=std::array{0.f,1.f,0.f,1.f}}}};
+        cmd.beginRendering({.renderArea={{0,0},{80,45}},.layerCount=1,
+            .colorAttachmentCount=1,.pColorAttachments=&color}, dispatch);
+        cmd.endRendering(dispatch);
+    }
+    assert(targets.ProxyCurrent(half, 2, 1) && !targets.ProxyCurrent(half, 0, 4));
+    // A native access resolves the level: its last texel (239, 134) is the proxy's colour.
+    runtime.Transit(&half, vk::ImageLayout::eTransferSrcOptimal,
+                    vk::PipelineStageFlagBits2::eTransfer, vk::AccessFlagBits2::eTransferRead);
+    runtime.FlushBarriers();
+    {
+        scheduler.EndRendering();
+        const auto cmd = scheduler.CommandBuffer();
+        const vk::MemoryBarrier2 b{.srcStageMask=vk::PipelineStageFlagBits2::eAllCommands,
+            .srcAccessMask=vk::AccessFlagBits2::eMemoryWrite,
+            .dstStageMask=vk::PipelineStageFlagBits2::eTransfer,
+            .dstAccessMask=vk::AccessFlagBits2::eTransferRead};
+        cmd.pipelineBarrier2({.memoryBarrierCount=1,.pMemoryBarriers=&b}, dispatch);
+        const vk::BufferImageCopy region{.imageSubresource={vk::ImageAspectFlagBits::eColor,2,0,1},
+            .imageOffset={239,134,0},.imageExtent={1,1,1}};
+        cmd.copyImageToBuffer(half.GetImage(), vk::ImageLayout::eTransferSrcOptimal, readback,
+                              region, dispatch);
+        scheduler.Finish();
+        u32 result;
+        std::memcpy(&result, ai.pMappedData, 4);
+        assert(result == 0xff00ff00);
+    }
+    std::puts("Scene targets: half-resolution mip level proxy roundtrip PASS");
     scheduler.Finish();
     vmaDestroyBuffer(instance.GetAllocator(),readback,allocation);
 }

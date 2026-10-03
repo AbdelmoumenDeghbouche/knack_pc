@@ -35,6 +35,7 @@ public:
     }
     /// This frame's object motion image (after RecordMotion), for the debug view; or null.
     vk::ImageView ObjectMotionView() const noexcept;
+    vk::Image ObjectMotionImage(u32 width, u32 height) const noexcept;
 
     void SetJitter(std::array<float, 2> value) noexcept {
         previous_jitter = jitter;
@@ -60,6 +61,8 @@ public:
     /// Vertical field of view and near/far planes of the current camera.
     [[nodiscard]] float VerticalFov() const noexcept;
     [[nodiscard]] float Near() const noexcept;
+    // Current projection, previous projection, and row Z of previous-view * inverse-view.
+    [[nodiscard]] std::array<std::array<float, 4>, 3> TaaDepthParameters() const noexcept;
 
     /// Records the motion vector pass: `depth_view` (depth aspect, General layout) into
     /// `motion_view` (RG16F storage, General), pixels, previous minus current.

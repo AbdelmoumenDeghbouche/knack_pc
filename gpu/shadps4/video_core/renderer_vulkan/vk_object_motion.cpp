@@ -175,19 +175,20 @@ void ObjectMotion::EnsureImage(u32 width, u32 height) {
     image = VideoCore::UniqueImage(device, instance.GetAllocator());
     image.Create(vk::ImageCreateInfo{
         .imageType = vk::ImageType::e2D,
-        .format = vk::Format::eR16G16B16A16Sfloat,
+        .format = vk::Format::eR32G32B32A32Sfloat,
         .extent = {width, height, 1},
         .mipLevels = 1,
         .arrayLayers = 1,
         .samples = vk::SampleCountFlagBits::e1,
         .tiling = vk::ImageTiling::eOptimal,
-        .usage = vk::ImageUsageFlagBits::eColorAttachment | vk::ImageUsageFlagBits::eSampled,
+        .usage = vk::ImageUsageFlagBits::eColorAttachment | vk::ImageUsageFlagBits::eSampled |
+                 vk::ImageUsageFlagBits::eTransferSrc,
         .initialLayout = vk::ImageLayout::eUndefined,
     });
     view = Check(device.createImageViewUnique({
         .image = vk::Image(image),
         .viewType = vk::ImageViewType::e2D,
-        .format = vk::Format::eR16G16B16A16Sfloat,
+        .format = vk::Format::eR32G32B32A32Sfloat,
         .subresourceRange = {vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1},
     }));
     image_width = width;

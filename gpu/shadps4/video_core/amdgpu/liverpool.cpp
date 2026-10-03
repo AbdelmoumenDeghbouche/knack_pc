@@ -172,9 +172,17 @@ void Liverpool::Process(std::stop_token stoken) {
         // recording thread and the fences it deferred to the Vulkan recording thread
         // (RecorderFences). Else a late fence write lands in freed memory (a corrupted guest
         // heap free list after minutes of play).
+        // The same holds when sceGnmSubmitDone finds the GPU idle and does not block at all:
+        // decoded (num_submits 0) is not done until then (work_retired).
         if (rasterizer) {
             rasterizer->DrainDrawPipe(Vulkan::DrawPipe::ReasonSubmissionEnd);
             rasterizer->WaitDeferredSignals();
+        }
+        {
+            std::scoped_lock lk{submit_mutex};
+            if (num_submits == 0) {
+                work_retired = true;
+            }
         }
         Platform::IrqC::Instance()->Signal(Platform::InterruptId::GpuIdle);
     }
@@ -259,7 +267,9 @@ void RunEventWriteEop(Vulkan::Rasterizer& rasterizer, const u8* data) {
         // fence after the copies queued before it.
         rasterizer.SignalAfterHostCopies([eop] { SignalEop(eop); });
     } else {
+        // Labels are written in order: not before the ones deferred to the recording thread.
         rasterizer.WaitHostCopies();
+        rasterizer.WaitDeferredSignals();
         SignalEop(eop);
     }
 }
@@ -1674,6 +1684,7 @@ void Liverpool::SubmitGfx(std::span<const u32> dcb, std::span<const u32> ccb) {
 
     std::scoped_lock lk{submit_mutex};
     ++num_submits;
+    work_retired = false;
     submit_cv.notify_one();
 }
 
@@ -1691,6 +1702,7 @@ void Liverpool::SubmitAsc(u32 gnm_vqid, std::span<const u32> acb) {
     std::scoped_lock lk{submit_mutex};
     num_mapped_queues = std::max(num_mapped_queues, gnm_vqid + 1);
     ++num_submits;
+    work_retired = false;
     submit_cv.notify_one();
 }
 

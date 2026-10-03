@@ -9,7 +9,8 @@
 
 namespace BbSettings {
 
-enum Upscaler : int { UpscalerOff = 0, UpscalerFsr3 = 1, UpscalerFsr4 = 2, UpscalerFsr411 = 3, UpscalerCount };
+enum Upscaler : int { UpscalerOff = 0, UpscalerFsr3 = 1, UpscalerFsr4 = 2, UpscalerFsr411 = 3,
+                      UpscalerTaa = 4, UpscalerCount };
 /// FSR 4 v07 or FSR 4.1.1: the same inputs, settings and placement in the frame.
 inline bool IsFsr4(int upscaler) {
     return upscaler == UpscalerFsr4 || upscaler == UpscalerFsr411;
@@ -33,9 +34,11 @@ inline constexpr Effect Effects[] = {
     {"effect_dynamic_shadows", "Тени от динамических источников", true},
     {"effect_ssr", "Отражения SSR (не было в игре)", false},
     {"skip_intro", "Пропуск заставок при запуске", false},
+    {"debug_camera", "Свободная камера (Cross + L3)", false},
+    {"debug_menu", "Debug menu (нужны файлы шрифтов)", false},
 };
 inline constexpr int EffectCount = int(sizeof(Effects) / sizeof(Effects[0]));
-/// Output resolutions: the upscaler's output and the UI (patched at start).
+/// Live output resolutions: the upscaler's output and the UI host targets.
 inline constexpr int OutputWidths[] = {1280, 1920, 2560, 3840};
 inline constexpr int OutputHeights[] = {720, 1080, 1440, 2160};
 inline constexpr int OutputCount = 4;
@@ -62,23 +65,33 @@ struct Values {
     std::atomic<bool> effects[EffectCount]{};
     std::atomic<int> model_lod{0}; ///< -2 highest .. 2 lowest, 0 the game's
     std::atomic<int> output_res{OutputDefault}; ///< index into OutputWidths
+    /// Live resolution and preset changes (run.sh): 0 off by default (startup patch, fastest
+    /// on the Steam Deck and older GPUs), -1 auto (strong discrete GPUs), 1 on. On restart.
+    std::atomic<int> live_resolution{0};
     /// Why FSR 4 cannot run (assets, device features), or null. Set by the renderer.
     std::atomic<const char*> fsr4_problem{nullptr};
+    std::atomic<bool> fsr4_supported{false}, fsr411_supported{false};
 
-    /// Preset and upscaler the game was started with: the render resolution patch is applied
-    /// at start (patches.py), a changed preset needs a restart.
+    /// Startup settings for the explicit BB_RENDER_RES compatibility patch only.
     int startup_preset = NativeAA;
     int startup_upscaler = UpscalerFsr3;
     bool startup_object_motion = true;
     bool startup_effects[EffectCount]{};
     int startup_model_lod = 0;
     int startup_output_res = OutputDefault;
+    int startup_live_resolution = 0;
 };
 
 Values& Get();
 
 /// Reads the file, then the environment overrides. Called once at start.
 void Load();
+/// Checks the loaded choice before the first frame; unsupported FSR 4 uses FSR 3.1.
+void ConfigureUpscalerSupport(bool fsr4, bool fsr411);
+/// Startup-patched scene dimensions cannot change until run.sh prepares a new image.
+bool FixedRenderSession();
+int RenderPreset();
+bool ResolutionNeedsRestart();
 /// Writes the file (menu changes).
 void Save();
 

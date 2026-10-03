@@ -3,6 +3,8 @@
 
 #pragma once
 
+#include <deque>
+
 #include <condition_variable>
 
 #include "core/libraries/videoout/buffer.h"
@@ -119,6 +121,7 @@ private:
     HostPasses::PostProcessingPass pp_pass;
     AmdGpu::Liverpool* liverpool;
     Scheduler draw_scheduler;
+    std::deque<u64> recent_frame_ticks; ///< bbport: BB_FRAMES_AHEAD bound (PrepareFrame)
     Scheduler present_scheduler;
     Scheduler flip_scheduler;
     Swapchain swapchain;

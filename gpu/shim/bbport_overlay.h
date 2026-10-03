@@ -9,6 +9,7 @@
 #include "video_core/renderer_vulkan/vk_common.h"
 
 union SDL_Event;
+struct SDL_Window;
 
 namespace Vulkan {
 class Instance;
@@ -21,6 +22,8 @@ void Init(const Vulkan::Instance& instance, vk::Format format, u32 image_count);
 
 /// Window thread, for every SDL event: true when the menu consumed it.
 bool HandleEvent(const SDL_Event& event);
+/// Turns SDL text input on while the menu edits a value (window thread, once per poll).
+void UpdateTextInput(SDL_Window* window);
 
 /// Whether anything is drawn this frame (menu open or FPS counter on).
 bool Visible();

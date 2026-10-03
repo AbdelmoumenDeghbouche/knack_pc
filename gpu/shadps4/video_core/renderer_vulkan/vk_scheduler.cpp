@@ -18,6 +18,7 @@
 #include "imgui/renderer/texture_manager.h"
 #include "video_core/renderer_vulkan/vk_instance.h"
 #include "video_core/renderer_vulkan/vk_scheduler.h"
+#include "bbport_threads.h"
 
 namespace Vulkan {
 
@@ -269,7 +270,7 @@ void Scheduler::RecorderThread(std::stop_token stoken) {
         // and a sleeping recorder costs the GPU thread a wake-up syscall per kick. With few
         // hardware threads (Steam Deck: 8) the spin would take time from guest threads.
         static const auto spin_time = std::chrono::microseconds(
-            std::thread::hardware_concurrency() >= 12 ? 200 : 20);
+            BbThreads::Available() >= 12 ? 200 : 20);
         const auto spin_until = std::chrono::steady_clock::now() + spin_time;
         for (u32 spins = 1; queued_chunks.load(std::memory_order_acquire) == 0; ++spins) {
             __builtin_ia32_pause();

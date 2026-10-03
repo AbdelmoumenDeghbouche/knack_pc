@@ -4,6 +4,7 @@
 #pragma once
 
 #include <atomic>
+#include <chrono>
 #include "bbport_toggles.h"
 
 #include <condition_variable>
@@ -194,9 +195,10 @@ public:
     void RefreshImage(Image& image);
 
     /// Retrieves the sampler that matches the provided S# descriptor.
+    /// extra_lod_bias: bbport, added to the S#'s bias (reduced scene rendering).
     [[nodiscard]] vk::Sampler GetSampler(const AmdGpu::Sampler& sampler,
                                          AmdGpu::BorderColorBuffer border_color_base,
-                                         bool is_depth);
+                                         bool is_depth, float extra_lod_bias = 0.0f);
 
     /// Retrieves the image with the specified id.
     Image* TryGetImage(ImageId id, u64 uid) {
@@ -397,6 +399,8 @@ private:
     tsl::robin_map<u64, Sampler> samplers;
     std::unordered_set<ImageId> download_images;
     u64 total_used_memory = 0;
+    u64 gc_evictions = 0, gc_downloads = 0; ///< bbport: pressure report
+    std::chrono::steady_clock::time_point gc_report_time{};
     u64 trigger_gc_memory = 0;
     u64 pressure_gc_memory = 0;
     u64 critical_gc_memory = 0;

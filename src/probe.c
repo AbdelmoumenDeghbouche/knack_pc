@@ -216,25 +216,41 @@ static int mapped(Segment *segments, uint64_t count, uint64_t address, uint64_t 
             address - segments[i].address <= segments[i].size - bytes) return 1;
     return 0;
 }
-/* BBPATCH1 (patches.py): byte writes at image offsets, applied after relocation. */
+/* BBPATCH2 (patches.py): the patches' image base, then byte writes at image offsets, applied
+ * after relocation. A write may replace a whole base-relative pointer slot (60/90 FPS++ swap
+ * function pointers): the patch holds the address at the patches' base, rebased here. */
 static void apply_patches(const char *path, Segment *segments, uint64_t ns, const Reloc *relocs, uint64_t nr) {
     FILE *f=fopen(path,"rb");
     char magic[8];
-    if (!f || fread(magic,1,8,f)!=8 || memcmp(magic,"BBPATCH1",8)) fail("invalid patch file");
-    uint64_t count=read64(f), bytes=0;
+    if (!f || fread(magic,1,8,f)!=8 || memcmp(magic,"BBPATCH2",8)) fail("invalid patch file");
+    uint64_t base=read64(f), count=read64(f), bytes=0, rebased=0;
     unsigned char data[4096];
     for (uint64_t i=0;i<count;++i) {
         uint64_t offset=read64(f), length=read64(f);
         if (!length || length>sizeof(data) || !mapped(segments,ns,offset,length) || fread(data,1,length,f)!=length)
             fail("bad patch entry");
-        for (uint64_t r=0;r<nr;++r)
-            if (relocs[r].target<offset+length && offset<relocs[r].target+8) fail("patch overlaps a relocation");
+        uint64_t slots[sizeof(data)/8]; size_t nslots=0;
+        for (uint64_t r=0;r<nr;++r) {
+            if (!(relocs[r].target<offset+length && offset<relocs[r].target+8)) continue;
+            uint64_t target=relocs[r].target, value;
+            if (relocs[r].kind || target<offset || target+8>offset+length) fail("patch overlaps a relocation");
+            memcpy(&value,data+(target-offset),8);
+            if (value<base || !mapped(segments,ns,value-base,1)) fail("patch writes a pointer outside the image");
+            slots[nslots++]=target;
+        }
         memcpy(image+offset,data,length);
+        for (size_t s=0;s<nslots;++s) {
+            uint64_t value;
+            memcpy(&value,image+slots[s],8);
+            value=(uint64_t)(uintptr_t)image+(value-base);
+            memcpy(image+slots[s],&value,8);
+        }
+        rebased+=nslots;
         bytes+=length;
     }
     if (fgetc(f)!=EOF) fail("trailing data in patch file");
     fclose(f);
-    printf("Patches: %" PRIu64 " writes, %" PRIu64 " bytes applied\n",count,bytes);
+    printf("Patches: %" PRIu64 " writes, %" PRIu64 " bytes applied, %" PRIu64 " pointers rebased\n",count,bytes,rebased);
 }
 /* Restarts the game through run.sh (the settings menu: a new render resolution is a patch
  * applied at start). Descriptors are closed first so the old GPU device and its memory are

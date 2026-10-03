@@ -4,10 +4,10 @@
 // post-processing combine pass, with the scene depth and camera motion vectors, and writes the
 // result back so the game's own post, tonemap and UI continue unchanged (Native AA preset).
 //
-// Normal scaled presets keep guest targets at 1920x1080, rasterize the scene into
-// reduced host targets, and upscale HDR color before post and UI. BB_RENDER_RES
-// retains the older patched-resolution path, which upscales the tonemapped frame
-// and redirects UI/display passes to output-size images.
+// Guest targets stay at 1920x1080. Host scene targets use output/preset dimensions,
+// resized at frame boundaries. At 1080p HDR reconstruction precedes post; other outputs
+// reconstruct tonemapped scene proxies before output-size UI/display composition.
+// BB_RENDER_RES retains the older startup-patched guest-resolution path.
 
 #pragma once
 
@@ -65,6 +65,9 @@ public:
     /// Start of a frame in the command stream (display pass).
     bool OnFrameStart();
     bool RasterScaling() const;
+    /// bbport: LOD bias for scene materials, log2(render / output) while a reduced scene is
+    /// upscaled (0 at native size, for TAA and without an upscaler).
+    [[nodiscard]] float SceneMipBias() const;
     /// bbport: the state RedirectColor/RedirectDepth/RasterScaling depend on, for memoizing a
     /// draw's render state (Rasterizer::BeginRendering).
     [[nodiscard]] u64 RedirectState() const noexcept {
@@ -144,6 +147,7 @@ private:
     /// A target of the patched render size: the game allocates it with aligned dimensions
     /// (a 1916x1078 scene in 1916x1080 targets).
     [[nodiscard]] bool RenderTarget(u32 w, u32 h) const {
+        if (!scaled_session) return w == 1920 && h == 1080;
         return w >= render_width && h >= render_height && w < render_width + 8 &&
                h < render_height + 8;
     }
@@ -163,6 +167,10 @@ private:
     /// Records FSR 4 into output_image; on a permanent failure FSR 3 takes over.
     bool RecordFsr4(vk::CommandBuffer cmdbuf, Fsr4Upscaler::Image color, Fsr4Upscaler::Image depth,
                     u32 w, u32 h, u32 ow, u32 oh, float frame_ms);
+    void RecordTaa(vk::CommandBuffer cmdbuf, vk::ImageView color, vk::ImageView depth);
+    /// Sharpness above 1 for FSR 3/4 (their RCAS stops at 1): one more RCAS pass over the target
+    /// (output_image, or the 8-bit UI image with ldr) in General layout after the upscaler.
+    void ExtraSharpen(vk::CommandBuffer cmdbuf, vk::Image target, bool ldr, u32 w, u32 h);
 
     const Instance& instance;
     Scheduler& scheduler;
@@ -182,6 +190,7 @@ private:
     VideoCore::ImageId scene_color{};
     bool done_this_frame = false;
     u32 preset_file_frames = 0; ///< BB_PRESET_FILE polling
+    int applied_output = -1;
     bool snapshot_taken = false;
     bool opaque_valid = false;
     bool mask_ready = false;
@@ -232,6 +241,7 @@ private:
     FfxVkPortableUpscaleContext* context = nullptr;
     bool resources_ready = false; ///< images below match width/height/out size
     bool resources_fsr4 = false;  ///< made for FSR 4 (no FSR 3 context)
+    bool resources_taa = false;
     std::unique_ptr<Fsr4Upscaler> fsr4;
     bool fsr4_failed = false;
     VideoCore::UniqueImage motion_image;
@@ -248,6 +258,22 @@ private:
     vk::UniqueDescriptorSetLayout merge_desc_layout;
     vk::UniquePipelineLayout merge_pipeline_layout;
     vk::UniquePipeline merge_pipeline;
+    std::array<VideoCore::UniqueImage, 2> taa_history;
+    std::array<vk::UniqueImageView, 2> taa_history_views;
+    u32 taa_next = 0;
+    vk::UniqueSampler taa_sampler;
+    vk::UniqueDescriptorSetLayout taa_desc_layout;
+    vk::UniquePipelineLayout taa_pipeline_layout;
+    vk::UniquePipeline taa_pipeline;
+    vk::UniqueDescriptorSetLayout taa_sharpen_desc_layout;
+    vk::UniquePipelineLayout taa_sharpen_pipeline_layout;
+    vk::UniquePipeline taa_sharpen_pipeline;
+    vk::UniquePipeline taa_sharpen_ldr_pipeline;
+    // ExtraSharpen: a copy of the upscaled frame (RCAS reads neighbours) and the target views.
+    VideoCore::UniqueImage extra_sharpen_image;
+    vk::UniqueImageView extra_sharpen_view;
+    u32 extra_sharpen_width = 0, extra_sharpen_height = 0;
+    vk::UniqueImageView ui_storage_view;
 };
 
 } // namespace Vulkan

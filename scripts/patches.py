@@ -5,8 +5,10 @@ image places eboot vaddr 0 at image offset 0. Only literal writes are supported
 (bytes, bytes16/32/64, float32/64, utf8, utf16); pattern ("mask") patches are rejected.
 """
 import argparse
+import json
 import os
 import struct
+import sys
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
@@ -32,9 +34,25 @@ EFFECTS={
     'effect_dynamic_shadows':('Disable Dynamic Light Shadows (perf increase)',None),
     'effect_ssr':(None,'Enable Screen Space Reflections (READ NOTE)'),
     'skip_intro':(None,'Skip Intro'),
+    'debug_camera':(None,'Restore Debug Camera'),
+    'debug_menu':(None,'Restore Debug Menu (READ NOTES)'),
 }
 # model_lod: -2 highest, 0 the game's, 1 lower, 2 lowest.
 MODEL_LOD={'-2':'Model LOD -2 (Highest)','1':'Model LOD 1 (Lower)','2':'Model LOD 2 (Lowest)'}
+
+
+def validate_patch_requirements(names, game):
+    if 'Restore Debug Camera' in names and 'Enemy Control' in names:
+        raise ValueError('Restore Debug Camera conflicts with Enemy Control; enable only one')
+    if 'Restore Debug Menu (READ NOTES)' in names:
+        font = game / 'dvdroot_ps4/font'
+        missing = [name for name in ('DbgFont14h.ccm', 'DbgFont14h.tpf')
+                   if not (font / name).is_file() or (font / name).stat().st_size == 0]
+        if missing:
+            raise ValueError('Debug menu needs non-empty font files in '
+                             f'{font}: {", ".join(missing)}. Install the fonts from '
+                             'https://www.nexusmods.com/bloodborne/mods/253 first; '
+                             'or disable debug_menu in bbport.ini')
 
 
 def effect_patches(settings):
@@ -87,9 +105,9 @@ def output_size(settings):
 def scaled_sizes(settings):
     """(render, output) for an output other than 1080p (above it, or 720p for the Steam Deck):
     the game renders at output / preset scale (or at the output size without upscaler) and the
-    upscaler fills the output. None at 1080p."""
+    upscaler fills the output. None at 1080p and for TAA (native, live host targets only)."""
     out=output_size(settings)
-    if out==OUTPUT_SIZE: return None
+    if out==OUTPUT_SIZE or settings.get('upscaler')=='taa': return None
     scale=1.0
     if settings.get('upscaler','fsr3')!='off':
         preset=int(settings.get('preset','0') or 0)
@@ -162,14 +180,72 @@ def compile_patches(xml, names, app_version, segments):
     return writes
 
 
+# Third-party patch files (shadPS4/GoldHEN XML) in the data directory's patches/ folder.
+BLOODBORNE_IDS={'CUSA00207','CUSA00208','CUSA00900','CUSA01363','CUSA03173','CUSA03023'}
+
+
+def external_patches(directory, app_version='01.09', exclude=Path(__file__).resolve().parent.parent/'patches/Bloodborne.xml'):
+    """[(key, file, metadata)] of eboot patches for this version in directory/*.xml.
+    key is "<file name>/<patch name>" (the launcher's selection, patches.json)."""
+    found=[]
+    directory=Path(directory)
+    for path in sorted(directory.glob('*.xml')) if directory.is_dir() else []:
+        if path.resolve()==Path(exclude).resolve(): continue  # the built-in file (patches/ in a checkout)
+        try:
+            root=ET.parse(path).getroot()
+        except ET.ParseError as error:
+            print(f'Patches: {path.name}: {error}',file=sys.stderr)
+            continue
+        ids={e.text.strip() for e in root.iter('ID') if e.text}
+        if ids and not ids&BLOODBORNE_IDS: continue
+        for meta in root.iter('Metadata'):
+            if meta.get('AppVer')==app_version and meta.get('AppElf','eboot.bin')=='eboot.bin':
+                found.append((f'{path.name}/{meta.get("Name")}',path,meta))
+    return found
+
+
+def external_selection(found, config):
+    """Selected external patches: patches.json {"enabled": [...], "disabled": [...]} overrides
+    each file's isEnabled."""
+    settings={}
+    if config and Path(config).is_file():
+        settings=json.loads(Path(config).read_text())
+    enabled,disabled=set(settings.get('enabled',[])),set(settings.get('disabled',[]))
+    return [(key,path,meta) for key,path,meta in found
+            if key in enabled or (key not in disabled and meta.get('isEnabled','false').lower()=='true')]
+
+
+def compile_external(selected, segments):
+    """Writes of the selected external patches; a patch with unsupported lines is skipped whole."""
+    writes=[]
+    for key,_,meta in selected:
+        try:
+            ours=[]
+            for line in meta.iter('Line'):
+                offset=int(line.get('Address') or '',0)-EBOOT_BASE
+                data=encode(line)
+                if not any(start<=offset and offset+len(data)<=end for start,end in segments):
+                    raise ValueError(f'address {line.get("Address")} is outside the eboot')
+                ours.append((offset,data))
+        except ValueError as error:
+            print(f'Patches: skipped {key}: {error}',file=sys.stderr)
+            continue
+        writes+=ours
+        print(f'Patches: external {key} ({len(ours)} writes)')
+    return writes
+
+
 def main():
     p=argparse.ArgumentParser(description=__doc__)
+    p.add_argument('--patches-dir',type=Path,help='third-party patch XML files (shadPS4 format)')
+    p.add_argument('--patches-config',type=Path,help='patches.json: enabled/disabled external patches')
     p.add_argument('--xml',type=Path,default=Path(__file__).resolve().parent.parent/'patches/Bloodborne.xml')
     p.add_argument('--fps',choices=sorted(FPS_PRESETS),default='uncap')
     p.add_argument('--extra',default='',help='additional patch names, separated by ";"')
     p.add_argument('--app-version',default='01.09')
     p.add_argument('--out',type=Path,default=Path(__file__).resolve().parent.parent/'out')
     p.add_argument('--settings',type=Path,default=Path(__file__).resolve().parent.parent/'bbport.ini')
+    p.add_argument('--game-dir',type=Path,default=Path(os.environ.get('BB_GAME_DIR','../CUSA03173')))
     p.add_argument('--render-res',default='',help='render resolution WxH (overrides the preset)')
     p.add_argument('--print-preset-size',action='store_true',help='print the selected preset size, if reduced')
     p.add_argument('--output-res',default='',help='output resolution WxH (the upscaler\'s; the UI stays 1920x1080)')
@@ -191,6 +267,7 @@ def main():
         return
     names=FPS_PRESETS[a.fps]+[n.strip() for n in a.extra.split(';') if n.strip()]
     names+=[n for n in effect_patches(read_settings(a.settings)) if n not in names]
+    validate_patch_requirements(names,a.game_dir)
     segments=eboot_segments((a.out/'eboot.elf').read_bytes())
     writes=compile_patches(a.xml,names,a.app_version,segments)
     size=render_size(read_settings(a.settings),a.render_res) if a.render_res else None
@@ -205,7 +282,13 @@ def main():
             writes+=compile_patches(a.xml,[heap],a.app_version,segments)
             names.append(heap)
         print(f'Patches: scene {size[0]}x{size[1]}; UI {ui[0]}x{ui[1]}')
-    blob=struct.pack('<8sQ',b'BBPATCH1',len(writes))
+    if a.patches_dir:
+        # After the built-in ones: an external patch of the same bytes wins.
+        writes+=compile_external(external_selection(external_patches(a.patches_dir,a.app_version,a.xml),
+                                                    a.patches_config),segments)
+    # BBPATCH2: the patch base, so the loader can rebase pointers the patches write into
+    # relocated slots (60/90 FPS++ replace function pointers).
+    blob=struct.pack('<8sQQ',b'BBPATCH2',EBOOT_BASE,len(writes))
     for offset,data in writes: blob+=struct.pack('<QQ',offset,len(data))+data
     (a.out/'patches.bin').write_bytes(blob)
     print(f'Patches: FPS preset {a.fps}; {len(writes)} writes from {names or "none"}')

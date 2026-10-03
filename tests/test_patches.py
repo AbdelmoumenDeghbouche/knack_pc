@@ -7,7 +7,9 @@ from pathlib import Path
 
 from patches import (EBOOT_BASE, OUTPUT_SIZE, RESOLUTION_TEMPLATE, SCENE_HEIGHT,
                      SCENE_WIDTH, UI_HEIGHT, UI_WIDTH, compile_patches,
-                     render_size, resolution_writes, scaled_sizes)
+                     render_size, resolution_writes, scaled_sizes, effect_patches,
+                     validate_patch_requirements, external_patches, external_selection,
+                     compile_external)
 
 XML = ROOT / 'patches/Bloodborne.xml'
 SEGMENTS = [(0, 0x6000000)]
@@ -81,6 +83,83 @@ class NativeUiTests(unittest.TestCase):
                                  (expected, (1280, 720)))
         self.assertEqual(scaled_sizes({'output_res': '3840x2160', 'preset': '3'}),
                          ((1916, 1078), (3840, 2160)))
+        # TAA is native-only and uses the live host targets.
+        self.assertIsNone(scaled_sizes({'output_res': '1280x720', 'upscaler': 'taa', 'preset': '3'}))
+
+
+class DebugPatchTests(unittest.TestCase):
+    def test_camera_patch_is_optional_and_compatible_with_fps_and_debug_menu(self):
+        self.assertEqual(effect_patches({'debug_camera': '0', 'debug_menu': '0'}), [])
+        camera = effect_patches({'debug_camera': '1'})
+        writes = compile_patches(XML, camera, '01.09', SEGMENTS)
+        self.assertGreater(len(writes), 0)
+        camera_bytes = {offset+i: byte for offset, data in writes for i, byte in enumerate(data)}
+        for patch in ('Uncap FPS++', '60 FPS++', '90 FPS++', 'Restore Debug Menu (READ NOTES)'):
+            for offset, data in compile_patches(XML, [patch], '01.09', SEGMENTS):
+                for i, byte in enumerate(data):
+                    if offset+i in camera_bytes:
+                        self.assertEqual(camera_bytes[offset+i], byte, patch)
+
+    def test_debug_menu_checks_both_fonts_but_camera_does_not_need_them(self):
+        names = effect_patches({'debug_menu': '1'})
+        with tempfile.TemporaryDirectory() as directory:
+            game = Path(directory)
+            validate_patch_requirements(['Restore Debug Camera'], game)
+            with self.assertRaisesRegex(ValueError, 'DbgFont14h.ccm.*DbgFont14h.tpf'):
+                validate_patch_requirements(names, game)
+            font = game / 'dvdroot_ps4/font'
+            font.mkdir(parents=True)
+            (font / 'DbgFont14h.ccm').write_bytes(b'test')
+            (font / 'DbgFont14h.tpf').touch()
+            with self.assertRaisesRegex(ValueError, 'DbgFont14h.tpf'):
+                validate_patch_requirements(names, game)
+            (font / 'DbgFont14h.tpf').write_bytes(b'test')
+            validate_patch_requirements(names, game)
+
+    def test_conflicting_enemy_control_patch_is_rejected(self):
+        with self.assertRaisesRegex(ValueError, 'conflicts with Enemy Control'):
+            validate_patch_requirements(['Enemy Control', 'Restore Debug Camera'], Path('.'))
+
+
+EXTERNAL = """<?xml version="1.0"?>
+<Patch>
+  <TitleID><ID>CUSA03173</ID><ID>CUSA00207</ID></TitleID>
+  <Metadata Title="Bloodborne" Name="On" Author="x" PatchVer="1.0" AppVer="01.09" AppElf="eboot.bin" isEnabled="true">
+    <PatchList><Line Type="bytes" Address="0x00401000" Value="9090"/></PatchList>
+  </Metadata>
+  <Metadata Title="Bloodborne" Name="Off" Author="x" PatchVer="1.0" AppVer="01.09" AppElf="eboot.bin">
+    <PatchList><Line Type="bytes32" Address="0x00402000" Value="0x12345678"/></PatchList>
+  </Metadata>
+  <Metadata Title="Bloodborne" Name="Mask" Author="x" PatchVer="1.0" AppVer="01.09" AppElf="eboot.bin" isEnabled="true">
+    <PatchList><Line Type="mask" Value="90 ?? 90" Offset="0"/></PatchList>
+  </Metadata>
+  <Metadata Title="Bloodborne" Name="Old" Author="x" PatchVer="1.0" AppVer="01.00" AppElf="eboot.bin" isEnabled="true">
+    <PatchList><Line Type="bytes" Address="0x00403000" Value="90"/></PatchList>
+  </Metadata>
+</Patch>"""
+
+
+class ExternalPatchTests(unittest.TestCase):
+    def test_selection_and_unsupported_lines(self):
+        with tempfile.TemporaryDirectory() as directory:
+            folder = Path(directory)
+            (folder / 'extra.xml').write_text(EXTERNAL)
+            (folder / 'other.xml').write_text(EXTERNAL.replace('CUSA03173', 'CUSA99999')
+                                              .replace('CUSA00207', 'CUSA99998'))
+            (folder / 'broken.xml').write_text('<Patch>')
+            found = external_patches(folder)
+            self.assertEqual([key for key, _, _ in found],
+                             ['extra.xml/On', 'extra.xml/Off', 'extra.xml/Mask'])
+            # The file's isEnabled; the mask patch is skipped as a whole.
+            writes = compile_external(external_selection(found, None), SEGMENTS)
+            self.assertEqual(writes, [(0x1000, bytes.fromhex('9090'))])
+            config = folder / 'patches.json'
+            config.write_text('{"enabled": ["extra.xml/Off"], "disabled": ["extra.xml/On"]}')
+            writes = compile_external(external_selection(found, config), SEGMENTS)
+            self.assertEqual(writes, [(0x2000, (0x12345678).to_bytes(4, 'little'))])
+
+    def test_built_in_file_is_not_external(self):
+        self.assertEqual(external_patches(XML.parent), [])
 
 
 if __name__ == '__main__':

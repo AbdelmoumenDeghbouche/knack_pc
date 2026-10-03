@@ -234,6 +234,10 @@ const Shader::RuntimeInfo& PipelineCache::BuildRuntimeInfo(PipelineSelection& se
         const auto& cs_pgm = liverpool->GetCsRegs();
         info.props.num_user_data = cs_pgm.settings.num_user_regs;
         info.props.num_allocated_vgprs = cs_pgm.settings.num_vgprs * 4;
+        info.props.fp_denorm_mode32 = cs_pgm.settings.fp_denorm_mode32;
+        info.props.fp_denorm_mode16_64 = cs_pgm.settings.fp_denorm_mode64;
+        info.props.fp_round_mode32 = cs_pgm.settings.fp_round_mode32;
+        info.props.fp_round_mode16_64 = cs_pgm.settings.fp_round_mode64;
         info.hw.cs.workgroup_size = {cs_pgm.num_thread_x.full, cs_pgm.num_thread_y.full,
                                      cs_pgm.num_thread_z.full};
         info.hw.cs.tgid_enable = {cs_pgm.IsTgidEnabled(0), cs_pgm.IsTgidEnabled(1),
@@ -326,6 +330,14 @@ PipelineCache::PipelineCache(const Instance& instance_, Scheduler& scheduler_,
         .supports_shader_subgroup_clock = instance_.IsShaderSubgroupClockSupported(),
         .needs_manual_interpolation = instance.IsFragmentShaderBarycentricSupported() &&
                                       instance.GetDriverID() == vk::DriverId::eNvidiaProprietary,
+        // bbport: older NVIDIA (Pascal) has no barycentrics; BB_INTERP_INT_FIX=0/1 overrides.
+        .needs_integer_interpolation_fix = [&] {
+            if (const char* env = std::getenv("BB_INTERP_INT_FIX")) {
+                return env[0] == '1';
+            }
+            return !instance.IsFragmentShaderBarycentricSupported() &&
+                   instance.GetDriverID() == vk::DriverId::eNvidiaProprietary;
+        }(),
         .needs_lds_barriers = instance.GetDriverID() == vk::DriverId::eNvidiaProprietary ||
                               instance.GetDriverID() == vk::DriverId::eMesaKosmickrisp,
         .needs_buffer_offsets = instance.StorageMinAlignment() > 4,
@@ -624,7 +636,7 @@ bool PipelineCache::RefreshGraphicsKey(PipelineSelection& sel) {
         key.mrt_mask |= 1u << mv;
         key.num_color_attachments = mv + 1;
         auto& color_buffer = key.color_buffers[mv];
-        color_buffer.data_format = AmdGpu::DataFormat::Format16_16_16_16;
+        color_buffer.data_format = AmdGpu::DataFormat::Format32_32_32_32;
         color_buffer.num_format = AmdGpu::NumberFormat::Float;
         color_buffer.swizzle = AmdGpu::IdentityMapping;
         key.write_masks[mv] = vk::ColorComponentFlagBits::eR | vk::ColorComponentFlagBits::eG |
