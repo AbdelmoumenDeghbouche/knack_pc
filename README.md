@@ -1,7 +1,7 @@
 THIS PROJECT IS NOT RELATED TO SHADPS4. ALL QUESTIONS RELATED TO THIS PROJECT SHOULD BE SENT TO THE DISCORD SERVER https://discord.gg/KYZRKk9CB, NOT TO THE SHADPS4 SERVER.
 
 
-# bbport — a native Linux port of Bloodborne
+# bbport — a native Linux and windows port of Bloodborne
 
 **English** · [Русский](README.ru.md)
 
