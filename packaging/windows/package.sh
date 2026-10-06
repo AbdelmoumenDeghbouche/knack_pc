@@ -7,7 +7,7 @@
 set -euo pipefail
 cd -- "$(dirname -- "$0")/../.."
 source ./msys2-env.sh
-[[ -f out/bb-probe.exe && -f out/bb-gpu-capabilities.exe ]] || { echo 'Build first: bash build.sh' >&2; exit 1; }
+[[ -f out/bb-probe.exe && -f out/bb-gpu-capabilities.exe && -f out/bb-play.exe ]] || { echo 'Build first: bash build.sh' >&2; exit 1; }
 
 # A Windows Python (not MSYS2's) for PyInstaller.
 python=${WINPYTHON:-}
@@ -42,6 +42,7 @@ if [[ -d $dest/user ]]; then mv -- "$dest/user" out/package-user; fi
 rm -rf -- dist/bbport-windows
 mkdir -p "$dest/bin" "$dest/launcher"
 cp -r out/pyi-dist/Bloodborne/. "$dest/"
+llvm-strip -o "$dest/Play Bloodborne.exe" out/bb-play.exe
 cp launcher/bloodborne.ico launcher/bloodborne.png "$dest/launcher/"
 # The executables without debug information (out/ keeps the symbols for crash reports).
 for exe in bb-probe.exe bb-gpu-capabilities.exe; do

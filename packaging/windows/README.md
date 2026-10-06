@@ -32,6 +32,9 @@ bash packaging/windows/package.sh  # dist/bbport-windows/ and .zip: Bloodborne.e
 The package freezes the launcher with PyInstaller (a private venv in `out/pyenv`, from a
 python.org Python) into `Bloodborne.exe`, which also runs `run.py` (`--run`), the preparation
 scripts (`--script`) and the game without the window (`--play`): players need no Python.
+`Play Bloodborne.exe` (`packaging/windows/play.c`) is a small native program that runs
+`Bloodborne.exe --play` from its folder and waits for it, for players who want to start the
+game directly with the saved settings.
 `patches.py` applies the 1.09 patches only to a 1.09 game (`BB_FORCE_PATCHES=1` overrides);
 `run.py` then runs other versions at 30 FPS with live resolution changes.
 From a source tree it adds `C:\msys64\clang64\bin` (or `$MSYS2_ROOT`) to `PATH` for the DLLs.

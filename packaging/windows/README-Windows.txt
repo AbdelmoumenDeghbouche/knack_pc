@@ -15,8 +15,10 @@ Starting
 - Bloodborne.exe opens the launcher. On "Game & effects" pick your game folder, adjust the
   settings, press PLAY. The "Play" page checks the game version, saves, graphics card and
   FSR 4 assets.
-- Bloodborne.exe --play starts the game with the saved settings, without the launcher (for
-  Steam: "Add a Non-Steam Game" -> Bloodborne.exe, launch options --play). Its log goes to
+- Play Bloodborne.exe starts the game straight away with the settings saved in the launcher,
+  without opening it. Set things up once in Bloodborne.exe, then use Play Bloodborne.exe (or a
+  shortcut to it, or add it to Steam with "Add a Non-Steam Game"). If no game folder is chosen
+  yet it opens the launcher. Bloodborne.exe --play does the same. The log goes to
   user\last_run.log.
 - Advanced -> "Desktop shortcut" puts Bloodborne on the desktop.
 - Advanced -> "Launcher language": English, Russian, Arabic, Spanish, Portuguese, French,

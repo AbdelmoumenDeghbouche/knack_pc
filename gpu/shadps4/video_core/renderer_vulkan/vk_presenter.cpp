@@ -578,6 +578,13 @@ void Presenter::Present(Frame* frame, bool is_reusing_frame, bool is_game_frame)
         }
     };
 
+    // bbport: a minimized window has no pixels on Windows (0x0); keep the swapchain and skip
+    // presenting until the window is restored.
+    if (window.GetWidth() == 0 || window.GetHeight() == 0) {
+        free_frame();
+        return;
+    }
+
     // Recreate the swapchain if the window was resized.
     if (window.GetWidth() != swapchain.GetWidth() || window.GetHeight() != swapchain.GetHeight()) {
         swapchain.Recreate(window.GetWidth(), window.GetHeight());
@@ -721,7 +728,7 @@ void Presenter::Present(Frame* frame, bool is_reusing_frame, bool is_game_frame)
     // Present to swapchain.
     {
         std::scoped_lock submit_lock{Scheduler::submit_mutex};
-        if (!swapchain.Present()) {
+        if (!swapchain.Present() && window.GetWidth() != 0 && window.GetHeight() != 0) {
             swapchain.Recreate(window.GetWidth(), window.GetHeight());
         }
     }
@@ -772,6 +779,9 @@ Frame* Presenter::GetRenderFrame() {
 }
 
 void Presenter::SetExpectedGameSize(s32 width, s32 height) {
+    if (width <= 0 || height <= 0) {
+        return; // no surface (minimized window): keep the last frame size
+    }
     const float ratio = (float)width / (float)height;
 
     expected_frame_height = height;

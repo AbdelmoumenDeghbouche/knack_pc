@@ -1181,7 +1181,7 @@ def play_without_window(settings):
     attach_stdio()
     log_dir = Path(settings.get('user_dir') or DATA_DIR / 'user')
     log_dir.mkdir(parents=True, exist_ok=True)
-    with open(log_dir / 'last_run.log', 'w', encoding='utf-8') as log:
+    with open(log_dir / 'last_run.log', 'w', encoding='utf-8', buffering=1) as log:
         process = subprocess.Popen(run_command(), cwd=PORT_DIR, env=game_environment(settings),
                                    stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
                                    stderr=subprocess.STDOUT, creationflags=NO_WINDOW)
@@ -1202,7 +1202,8 @@ def main():
         sys.exit(run_role(args))
     settings = {**APP_DEFAULTS, **load_json(CONFIG_FILE, {})}
     LANG = settings.get('ui_language') or windows_language()
-    if '--play' in args:
+    # Without a usable game folder there is nothing to play yet: open the launcher instead.
+    if '--play' in args and (Path(settings['game_dir'] or '.') / 'eboot.bin').is_file():
         sys.exit(play_without_window(settings))
     try:
         ctypes.windll.shcore.SetProcessDpiAwareness(1)  # sharp text on scaled displays
