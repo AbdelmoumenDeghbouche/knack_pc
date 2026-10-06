@@ -12,9 +12,7 @@
 > [packaging/windows/README.md](packaging/windows/README.md).
 >
 > Порт для Linux и почти вся работа над ним — [deadinside28](https://github.com/deadinside28/bloodborne_pc);
-> порт для Windows — [Supermedo](https://github.com/Supermedo). Если он вам пригодился:
->
-> [![Buy Me a Coffee](https://img.shields.io/badge/Buy%20me%20a%20coffee-c8a96a?logo=buymeacoffee&logoColor=black)](https://buymeacoffee.com/mohmmadpodt)
+> порт для Windows — [Supermedo](https://github.com/Supermedo).
 
 bbport запускает оригинальный исполняемый файл *Bloodborne* для PlayStation 4 (CUSA03173,
 версия игры 1.09) прямо на ПК с Linux x86-64. Это не универсальный эмулятор: собственный

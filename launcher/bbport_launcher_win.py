@@ -21,7 +21,6 @@ import subprocess
 import sys
 import threading
 import urllib.request
-import webbrowser
 
 FROZEN = getattr(sys, 'frozen', False)
 PORT_DIR = Path(sys.executable).resolve().parent if FROZEN else Path(__file__).resolve().parent.parent
@@ -29,7 +28,6 @@ sys.path.insert(0, str(PORT_DIR / 'scripts'))
 DATA_DIR = Path(os.environ.get('BB_DATA_DIR', PORT_DIR))
 CONFIG_DIR = Path(os.environ.get('APPDATA', Path.home())) / 'bbport-launcher'
 CONFIG_FILE = CONFIG_DIR / 'settings.json'
-COFFEE_URL = 'https://buymeacoffee.com/mohmmadpodt'
 PATCH_VERSION = '01.09'
 MAX_LOG_LINES = 6000
 NO_WINDOW = getattr(subprocess, 'CREATE_NO_WINDOW', 0)
@@ -530,17 +528,6 @@ class Launcher:
             item.bind('<Leave>', lambda _e, n=name: n != self.current_page and self.nav[n].configure(bg=BG))
             self.nav[name] = item
         tk.Frame(side, bg=BG).pack(fill='both', expand=True)
-        coffee = tk.Label(side, text='☕  ' + _('Buy me a coffee', 'Угостить кофе'), bg=GOLD, fg=BG,
-                          font=('Segoe UI', 10, 'bold'), padx=10, pady=7, cursor='hand2',
-                          wraplength=self.px(160), justify='center')
-        coffee.pack(fill='x', padx=(22, 18), pady=(0, 6))
-        coffee.bind('<Button-1>', lambda _e: webbrowser.open(COFFEE_URL))
-        coffee.bind('<Enter>', lambda _e: coffee.configure(bg='#dcc08a'))
-        coffee.bind('<Leave>', lambda _e: coffee.configure(bg=GOLD))
-        tk.Label(side, text=_('Enjoying the Windows port? A coffee keeps it going.',
-                              'Нравится порт для Windows? Чашка кофе помогает его развивать.'),
-                 bg=BG, fg=MUTED, font=('Segoe UI', 8), justify='left', wraplength=self.px(180)).pack(
-            anchor='w', padx=22, pady=(0, 16))
         tk.Label(side, text=_('In the game: Insert or L3+R3\nopens the port\'s menu.',
                               'В игре: Insert или L3+R3\nоткрывает меню порта.'),
                  bg=BG, fg=MUTED, font=('Segoe UI', 9), justify='left', wraplength=self.px(210)).pack(
@@ -819,11 +806,6 @@ class Launcher:
                                                 'Слои валидации Vulkan (нужен Vulkan SDK; сильно замедляет)'))
         self.row(f, _('Extra variables', 'Доп. переменные'), ttk.Entry(f, textvariable=self.var('extra_env', 'app'), width=58),
                  _('NAME=value pairs separated by spaces (README lists them).', 'Пары ИМЯ=значение через пробел (список в README).'))
-        self.section(f, _('Support', 'Поддержка'))
-        self.row(f, 'Buy Me a Coffee', ttk.Button(f, text='☕  ' + _('Buy me a coffee', 'Угостить кофе'),
-                                                  command=lambda: webbrowser.open(COFFEE_URL)),
-                 _('Enjoying the Windows port? A coffee keeps it going.',
-                   'Нравится порт для Windows? Чашка кофе помогает его развивать.') + '\n' + COFFEE_URL)
 
     def build_log(self):
         tk, ttk = self.tk, self.ttk

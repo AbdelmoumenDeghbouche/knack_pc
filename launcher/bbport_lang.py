@@ -79,8 +79,6 @@ KEYS = [
     'NAME=value pairs separated by spaces (README lists them).', 'System',
     # Log and folders
     'Copy', 'Clear', 'Browse…', 'Open',
-    # Support
-    'Support', 'Buy me a coffee', 'Enjoying the Windows port? A coffee keeps it going.',
 ]
 
 TRANSLATIONS = {
@@ -154,7 +152,6 @@ TRANSLATIONS = {
         'طبقات التحقق Vulkan (تحتاج Vulkan SDK؛ أبطأ بكثير)', 'متغيرات إضافية',
         'أزواج NAME=value مفصولة بمسافات (القائمة في README).', 'لغة النظام',
         'نسخ', 'مسح', 'استعراض…', 'فتح',
-        'الدعم', 'اشترِ لي قهوة', 'أعجبتك نسخة ويندوز؟ فنجان قهوة يساعد على استمرارها.',
     ],
     'es': [
         'Jugar', 'Gráficos', 'Pantalla y FPS', 'Juego y efectos', 'Mods y parches', 'Avanzado', 'Registro',
@@ -226,7 +223,6 @@ TRANSLATIONS = {
         'Capas de validación de Vulkan (necesita el Vulkan SDK; mucho más lento)', 'Variables extra',
         'Pares NOMBRE=valor separados por espacios (lista en el README).', 'Sistema',
         'Copiar', 'Borrar', 'Examinar…', 'Abrir',
-        'Apoyo', 'Invítame a un café', '¿Te gusta el port para Windows? Un café ayuda a mantenerlo.',
     ],
     'pt': [
         'Jogar', 'Gráficos', 'Tela e FPS', 'Jogo e efeitos', 'Mods e patches', 'Avançado', 'Registro',
@@ -298,7 +294,6 @@ TRANSLATIONS = {
         'Camadas de validação do Vulkan (precisa do Vulkan SDK; muito mais lento)', 'Variáveis extras',
         'Pares NOME=valor separados por espaços (lista no README).', 'Sistema',
         'Copiar', 'Limpar', 'Procurar…', 'Abrir',
-        'Apoio', 'Me pague um café', 'Curtiu o port para Windows? Um café ajuda a mantê-lo.',
     ],
     'fr': [
         'Jouer', 'Graphismes', 'Affichage et FPS', 'Jeu et effets', 'Mods et patchs', 'Avancé', 'Journal',
@@ -370,7 +365,6 @@ TRANSLATIONS = {
         'Couches de validation Vulkan (Vulkan SDK requis ; bien plus lent)', 'Variables supplémentaires',
         'Paires NOM=valeur séparées par des espaces (liste dans le README).', 'Système',
         'Copier', 'Effacer', 'Parcourir…', 'Ouvrir',
-        'Soutien', 'Offrez-moi un café', 'Le portage Windows vous plaît ? Un café aide à le faire vivre.',
     ],
     'de': [
         'Spielen', 'Grafik', 'Anzeige & FPS', 'Spiel & Effekte', 'Mods & Patches', 'Erweitert', 'Protokoll',
@@ -442,7 +436,6 @@ TRANSLATIONS = {
         'Vulkan-Validierungsschichten (braucht das Vulkan SDK; viel langsamer)', 'Zusätzliche Variablen',
         'NAME=Wert-Paare durch Leerzeichen getrennt (Liste im README).', 'System',
         'Kopieren', 'Leeren', 'Durchsuchen…', 'Öffnen',
-        'Unterstützen', 'Spendier mir einen Kaffee', 'Gefällt dir der Windows-Port? Ein Kaffee hält ihn am Laufen.',
     ],
     'it': [
         'Gioca', 'Grafica', 'Schermo e FPS', 'Gioco ed effetti', 'Mod e patch', 'Avanzate', 'Registro',
@@ -514,7 +507,6 @@ TRANSLATIONS = {
         'Livelli di validazione Vulkan (serve il Vulkan SDK; molto più lento)', 'Variabili extra',
         'Coppie NOME=valore separate da spazi (elenco nel README).', 'Sistema',
         'Copia', 'Cancella', 'Sfoglia…', 'Apri',
-        'Supporto', 'Offrimi un caffè', 'Ti piace il port per Windows? Un caffè aiuta a mandarlo avanti.',
     ],
     'pl': [
         'Graj', 'Grafika', 'Ekran i FPS', 'Gra i efekty', 'Mody i łatki', 'Zaawansowane', 'Dziennik',
@@ -586,7 +578,6 @@ TRANSLATIONS = {
         'Warstwy walidacji Vulkan (wymaga Vulkan SDK; dużo wolniej)', 'Dodatkowe zmienne',
         'Pary NAZWA=wartość rozdzielone spacjami (lista w README).', 'Systemowy',
         'Kopiuj', 'Wyczyść', 'Przeglądaj…', 'Otwórz',
-        'Wsparcie', 'Postaw mi kawę', 'Podoba ci się port na Windows? Kawa pomaga go rozwijać.',
     ],
     'tr': [
         'Oyna', 'Grafik', 'Ekran ve FPS', 'Oyun ve efektler', 'Modlar ve yamalar', 'Gelişmiş', 'Günlük',
@@ -658,7 +649,6 @@ TRANSLATIONS = {
         'Vulkan doğrulama katmanları (Vulkan SDK gerekir; çok daha yavaş)', 'Ek değişkenler',
         'Boşlukla ayrılmış AD=değer çiftleri (liste README’de).', 'Sistem',
         'Kopyala', 'Temizle', 'Gözat…', 'Aç',
-        'Destek', 'Bana bir kahve ısmarla', 'Windows portunu beğendin mi? Bir kahve devam etmesine yardım eder.',
     ],
     'zh': [
         '开始', '图形', '显示与帧率', '游戏与效果', '模组与补丁', '高级', '日志',
@@ -730,7 +720,6 @@ TRANSLATIONS = {
         'Vulkan 验证层（需要 Vulkan SDK；会慢很多）', '额外变量',
         '以空格分隔的 名称=值 对（列表见 README）。', '跟随系统',
         '复制', '清除', '浏览…', '打开',
-        '支持', '请我喝杯咖啡', '喜欢这个 Windows 移植版吗？一杯咖啡可以让它持续更新。',
     ],
     'ja': [
         'プレイ', 'グラフィック', '表示とFPS', 'ゲームとエフェクト', 'MODとパッチ', '詳細設定', 'ログ',
@@ -802,7 +791,6 @@ TRANSLATIONS = {
         'Vulkan 検証レイヤー（Vulkan SDK が必要。大幅に遅くなります）', '追加の変数',
         'スペース区切りの 名前=値 のペア（一覧は README）。', 'システム',
         'コピー', 'クリア', '参照…', '開く',
-        'サポート', 'コーヒーをおごる', 'Windows 版が気に入りましたか？コーヒー 1 杯が開発の支えになります。',
     ],
     'ko': [
         '플레이', '그래픽', '디스플레이 및 FPS', '게임 및 효과', '모드 및 패치', '고급', '로그',
@@ -874,7 +862,6 @@ TRANSLATIONS = {
         'Vulkan 검증 레이어 (Vulkan SDK 필요, 훨씬 느림)', '추가 변수',
         '공백으로 구분한 이름=값 쌍 (목록은 README).', '시스템',
         '복사', '지우기', '찾아보기…', '열기',
-        '후원', '커피 한 잔 사 주기', 'Windows 포트가 마음에 드셨나요? 커피 한 잔이 계속 개발하는 힘이 됩니다.',
     ],
 }
 

@@ -14,8 +14,8 @@ THIS PROJECT IS NOT RELATED TO SHADPS4. ALL QUESTIONS RELATED TO THIS PROJECT SH
 >
 > The Linux port and almost all of the work behind it are by
 > [deadinside28](https://github.com/deadinside28/bloodborne_pc); the Windows port is by
-> [Supermedo](https://github.com/Supermedo). If it helps you:
->
+> [Supermedo](https://github.com/Supermedo).
+
 bbport runs the original PlayStation 4 executable of *Bloodborne* (CUSA03173, game version
 1.09) directly on an x86-64 Linux PC. It is not a general emulator. The game's own x86-64 code
 executes natively; a small runtime written for this one game replaces the PS4 system libraries;
