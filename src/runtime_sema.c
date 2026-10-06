@@ -5,7 +5,6 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#ifndef _WIN32
 #include <pthread.h>
 #include <errno.h>
 #include <time.h>
@@ -35,9 +34,16 @@ static Sema *find(uint32_t id) {
 static void host_check(int e) {
     if (e) { fprintf(stderr,"STOP: semaphore host error %d\n",e); exit(21); }
 }
+/* Waits use this clock for their deadlines. winpthreads condition variables accept only
+ * CLOCK_REALTIME (pthread_condattr_setclock(CLOCK_MONOTONIC) fails with EINVAL). */
+#ifdef _WIN32
+#define WAIT_CLOCK CLOCK_REALTIME
+#else
+#define WAIT_CLOCK CLOCK_MONOTONIC
+#endif
 static uint64_t now_ns(void) {
     struct timespec t;
-    if (clock_gettime(CLOCK_MONOTONIC,&t)) { perror("clock_gettime"); exit(1); }
+    if (clock_gettime(WAIT_CLOCK,&t)) { perror("clock_gettime"); exit(1); }
     return (uint64_t)t.tv_sec*1000000000+(uint64_t)t.tv_nsec;
 }
 static ABI int32_t sem_create(uint32_t *out,const char *name,uint32_t attr,
@@ -70,7 +76,7 @@ static int32_t wait_count(uint32_t id,int32_t need,uint32_t *timeout,int block) 
         Waiter w={.need=need};
         pthread_condattr_t attr;
         host_check(pthread_condattr_init(&attr));
-        host_check(pthread_condattr_setclock(&attr,CLOCK_MONOTONIC));
+        host_check(pthread_condattr_setclock(&attr,WAIT_CLOCK));
         host_check(pthread_cond_init(&w.event,&attr));
         host_check(pthread_condattr_destroy(&attr));
         Waiter **tail=&s->first;
@@ -176,8 +182,4 @@ void runtime_sema_report(void) {
            created,deleted,acquired,signaled,timed_out);
     pthread_mutex_unlock(&lock);
 }
-#else
-uintptr_t runtime_sema_resolve(const char *name) { (void)name; return 0; }
-void runtime_sema_report(void) { puts("Runtime: Windows semaphore backend not implemented"); }
-unsigned runtime_sema_waiters(uint32_t id) { (void)id; return 0; }
-#endif
+

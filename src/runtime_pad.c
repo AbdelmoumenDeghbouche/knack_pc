@@ -168,8 +168,14 @@ static void read_inject(void) {
     last_check=now;
     struct stat st;
     if (stat(path,&st)!=0) return;
+#ifdef _WIN32
+    /* Whole-second mtimes: the size tells two edits within a second apart. */
+    if (st.st_mtime==mtime.tv_sec && st.st_size==mtime.tv_nsec) return;
+    mtime=(struct timespec){st.st_mtime,(long)st.st_size};
+#else
     if (st.st_mtim.tv_sec==mtime.tv_sec && st.st_mtim.tv_nsec==mtime.tv_nsec) return;
     mtime=st.st_mtim;
+#endif
     FILE *f=fopen(path,"r");
     if (!f) return;
     static const struct { const char *name; uint32_t ps; } names[]={

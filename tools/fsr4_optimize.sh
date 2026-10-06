@@ -21,7 +21,8 @@ build() { # build <original.spv> <rewrite.pl> <entry point>
         return
     fi
     spirv-cross "$spv" --vulkan-semantics --entry "$entry" --output "$tmp/in.comp"
-    perl "$rewrite" < "$tmp/in.comp" > "$tmp/out.comp"
+    # Windows builds of spirv-cross write CRLF; the rewrites match LF lines.
+    tr -d '\r' < "$tmp/in.comp" | perl "$rewrite" > "$tmp/out.comp"
     glslangValidator -V --target-env vulkan1.3 -S comp -e "$entry" --source-entrypoint main \
         "$tmp/out.comp" -o "$tmp/out.spv" >/dev/null
     mv "$tmp/out.spv" "$out"

@@ -101,16 +101,67 @@ def mod_files(folder):
             yield relative, source
 
 
+# Windows without the symlink privilege (Developer Mode off): directories become junctions,
+# files hard links (copies across volumes). Those are not symlinks, so the overlay remembers
+# what it linked and where to.
+LINKED = {}
+
+
+def make_link(link, target):
+    try:
+        link.symlink_to(target, target_is_directory=target.is_dir())
+        return
+    except OSError:
+        if os.name != 'nt':
+            raise
+    if target.is_dir():
+        import _winapi
+        _winapi.CreateJunction(str(target), str(link))
+    else:
+        try:
+            os.link(target, link)
+        except OSError:
+            shutil.copy2(target, link)
+    LINKED[str(link)] = target
+
+
+def symlinks_work(directory):
+    probe = Path(tempfile.mkdtemp(prefix='link-test-', dir=directory))
+    try:
+        (probe / 'link').symlink_to(probe, target_is_directory=True)
+        return True
+    except OSError:
+        return False
+    finally:
+        shutil.rmtree(probe, ignore_errors=True)
+
+
+def is_link(path):
+    return path.is_symlink() or str(path) in LINKED or (hasattr(path, 'is_junction') and path.is_junction())
+
+
+def link_target(path):
+    return LINKED.get(str(path)) or path.resolve(strict=True)
+
+
+def remove_link(path):
+    if hasattr(path, 'is_junction') and path.is_junction():
+        os.rmdir(path)
+    else:
+        path.unlink()
+    LINKED.pop(str(path), None)
+
+
 def expand(directory):
     """Materialize one directory level; never write through a directory link."""
-    if directory.is_symlink():
-        target = directory.resolve(strict=True)
+    if is_link(directory):
+        target = link_target(directory)
         if not target.is_dir():
             raise ValueError(f'File/directory conflict at {directory.name}')
-        directory.unlink()
+        remove_link(directory)
         directory.mkdir()
         for entry in target.iterdir():
-            (directory / entry.name).symlink_to(entry, target_is_directory=entry.is_dir())
+            make_link(directory / entry.name, entry)
     elif directory.exists() and not directory.is_dir():
         raise ValueError(f'File/directory conflict at {directory.name}')
     else:
@@ -135,10 +186,13 @@ def build_overlay(game, out, mods):
         return game
     out = Path(out).resolve()
     out.mkdir(parents=True, exist_ok=True)
+    if os.name == 'nt' and not symlinks_work(out) and out.drive.casefold() != game.drive.casefold():
+        # Hard links only reach files on the same volume: the overlay goes beside the game.
+        out = game.parent
     overlay = Path(tempfile.mkdtemp(prefix='mod-game-', dir=out))
     try:
         for entry in game.iterdir():
-            (overlay / entry.name).symlink_to(entry, target_is_directory=entry.is_dir())
+            make_link(overlay / entry.name, entry)
         replaced = added = 0
         for relative, source in replacements:
             # Each component takes the game's spelling when it exists in another case.
@@ -147,14 +201,14 @@ def build_overlay(game, out, mods):
                 parent = child(parent, part)
                 expand(parent)
             destination = child(parent, relative.parts[-1])
-            if destination.is_symlink():
-                replaced += destination.resolve().is_relative_to(game)
-                destination.unlink()
+            if is_link(destination):
+                replaced += link_target(destination).is_relative_to(game)
+                remove_link(destination)
             elif destination.exists():
                 raise ValueError(f'File/directory conflict: {relative}')
             else:
                 added += 1
-            destination.symlink_to(source)
+            make_link(destination, source)
         print(f'Mods: {replaced} game files replaced, {added} added', file=sys.stderr)
         return overlay
     except BaseException:

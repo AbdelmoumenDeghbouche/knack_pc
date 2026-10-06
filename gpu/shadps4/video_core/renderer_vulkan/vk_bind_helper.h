@@ -20,9 +20,13 @@ class BindHelper {
 public:
     using Task = void (*)(void*);
 
+    bool running = false;
+
+public:
     explicit BindHelper(bool enabled) {
         if (enabled) {
             thread = std::jthread([this](std::stop_token stop) { Run(stop); });
+            running = true;
         }
     }
 
@@ -35,7 +39,7 @@ public:
     }
 
     [[nodiscard]] bool Available() const noexcept {
-        return thread.joinable();
+        return running; // bbport: not thread.joinable(), two system calls on Windows
     }
 
     /// True on the helper thread (its callees must not join it).

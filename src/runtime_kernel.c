@@ -6,16 +6,17 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#ifndef _WIN32
 #include <errno.h>
 #include <pthread.h>
 #include <sched.h>
 #include <time.h>
 #include <unistd.h>
-#include <sys/random.h>
-#include <sys/resource.h>
 #include <sys/time.h>
 #include <x86intrin.h>
+#ifndef _WIN32
+#include <sys/random.h>
+#include <sys/resource.h>
+#endif
 #define ERR(n) ((int32_t)(UINT32_C(0x80020000)|(n)))
 #define PAGE 16384
 
@@ -90,7 +91,11 @@ static ABI uint64_t tsc_frequency(void) {
     if (!tsc_hz) {
         struct timespec a,b,nap={0,20000000};
         clock_gettime(CLOCK_MONOTONIC,&a); uint64_t t0=__rdtsc();
+#ifdef _WIN32
+        (void)nap; compat_sleep_ns(20000000);
+#else
         nanosleep(&nap,NULL);
+#endif
         clock_gettime(CLOCK_MONOTONIC,&b); uint64_t t1=__rdtsc();
         uint64_t ns=(uint64_t)(b.tv_sec-a.tv_sec)*1000000000+(uint64_t)(b.tv_nsec-a.tv_nsec);
         tsc_hz=(t1-t0)*1000000000/(ns ? ns : 1);
@@ -102,8 +107,12 @@ uint64_t runtime_process_time_us(void) { return process_time(); }
 uint64_t runtime_process_time_counter(void) { return process_time_counter(); }
 uint64_t runtime_tsc_frequency(void) { return tsc_frequency(); }
 static int sleep_ns(uint64_t ns) {
+#ifdef _WIN32
+    compat_sleep_ns(ns);
+#else
     struct timespec t={.tv_sec=(time_t)(ns/1000000000),.tv_nsec=(long)(ns%1000000000)};
     while (nanosleep(&t,&t)) if (errno!=EINTR) return errno;
+#endif
     return 0;
 }
 static ABI int32_t kernel_usleep(uint32_t usec) { sleep_ns((uint64_t)usec*1000); return 0; }
@@ -121,8 +130,13 @@ static ABI int32_t kernel_nanosleep(const GuestTimespec *rq,GuestTimespec *rem) 
 typedef struct { int32_t minuteswest, dsttime; } GuestTimezone;
 static ABI int32_t kernel_gettimezone(GuestTimezone *tz) {
     if (!tz) return ERR(22);
-    time_t now=time(NULL); struct tm local; localtime_r(&now,&local);
+    time_t now=time(NULL);
+#ifdef _WIN32
+    tz->minuteswest=(int32_t)(-compat_utc_offset(now)/60); tz->dsttime=0;
+#else
+    struct tm local; localtime_r(&now,&local);
     tz->minuteswest=(int32_t)(-local.tm_gmtoff/60); tz->dsttime=0;
+#endif
     return 0;
 }
 static ABI int32_t posix_gettimeofday(GuestTimeval *tv,GuestTimezone *tz) {
@@ -181,12 +195,19 @@ static ABI int32_t guest_sigfillset(GuestSigset *set) { if (!set) return fail_po
 static ABI int32_t guest_sigemptyset(GuestSigset *set) { if (!set) return fail_posix(EINVAL); memset(set,0,sizeof(*set)); return 0; }
 typedef struct { GuestTimeval utime, stime; int64_t rest[14]; } GuestRusage;
 static ABI int32_t guest_getrusage(int who,GuestRusage *out) {
-    struct rusage r;
     if (!out || (who!=0 && who!=1)) return fail_posix(EINVAL);
-    getrusage(who==0 ? RUSAGE_SELF : RUSAGE_THREAD,&r);
     memset(out,0,sizeof(*out));
+#ifdef _WIN32
+    int64_t user=0,kernel=0;
+    compat_cpu_times(who,&user,&kernel);
+    out->utime=(GuestTimeval){user/1000000,user%1000000};
+    out->stime=(GuestTimeval){kernel/1000000,kernel%1000000};
+#else
+    struct rusage r;
+    getrusage(who==0 ? RUSAGE_SELF : RUSAGE_THREAD,&r);
     out->utime=(GuestTimeval){r.ru_utime.tv_sec,r.ru_utime.tv_usec};
     out->stime=(GuestTimeval){r.ru_stime.tv_sec,r.ru_stime.tv_usec};
+#endif
     return 0;
 }
 static ABI int32_t guest_sysctl(const int32_t *name,uint32_t namelen,void *old,uint64_t *oldlen,const void *new_value,uint64_t newlen) {
@@ -194,7 +215,11 @@ static ABI int32_t guest_sysctl(const int32_t *name,uint32_t namelen,void *old,u
     if (!name || namelen<2 || new_value) return fail_posix(EINVAL);
     if (name[0]==1 && name[1]==37) { /* kern.arandom */
         if (!old || !oldlen) return fail_posix(EINVAL);
+#ifdef _WIN32
+        if (compat_random(old,(size_t)*oldlen)) return fail_posix(EIO);
+#else
         if (getrandom(old,(size_t)*oldlen,0)<0) return fail_posix(errno);
+#endif
         return 0;
     }
     if (name[0]==6 && (name[1]==7 || name[1]==3)) { /* hw.pagesize / hw.ncpu */
@@ -295,8 +320,3 @@ static const RuntimeExport exports[]={
     {"pthread_setspecific",posix_key_set}, {"pthread_getspecific",key_get},
 };
 uintptr_t runtime_kernel_resolve(const char *name) { return RUNTIME_LOOKUP(exports,name); }
-#else
-uintptr_t runtime_kernel_resolve(const char *name) { (void)name; return 0; }
-int32_t runtime_guest_errno(int e) { return e ? 5 : 0; }
-void runtime_thread_keys_cleanup(void) {}
-#endif

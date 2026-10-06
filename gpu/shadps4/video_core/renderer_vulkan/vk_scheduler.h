@@ -714,7 +714,7 @@ public:
     /// records directly (Record() included, so callers may mix both) until the next
     /// KickRecording() or submission.
     [[gnu::noinline]] vk::CommandBuffer CommandBuffer() {
-        if (recorder_thread.joinable() && !direct_mode) {
+        if (recording_threaded && !direct_mode) {
             SyncRecording();
             direct_mode = true;
             direct_recordings.fetch_add(1, std::memory_order_relaxed);
@@ -730,7 +730,7 @@ public:
     /// everything it uses (capture by value): it may run later on the recording thread.
     template <typename Func>
     void Record(Func&& func) {
-        if (!recorder_thread.joinable() || direct_mode) {
+        if (!recording_threaded || direct_mode) {
             func(current_cmdbuf);
             return;
         }
@@ -750,7 +750,7 @@ public:
 
     /// True when Record() defers commands (and RecordData() copies into chunks).
     [[nodiscard]] bool IsRecordingDeferred() const noexcept {
-        return recorder_thread.joinable() && !direct_mode &&
+        return recording_threaded && !direct_mode &&
                !BbToggle::Disabled(BbToggle::ThreadedRecording);
     }
 
@@ -919,6 +919,9 @@ private:
     std::atomic<u64> deferred_signals_issued{0}; ///< by the thread recording (A or B)
     std::shared_ptr<std::atomic<u64>> deferred_signals_done =
         std::make_shared<std::atomic<u64>>(0);
+    // bbport: whether recorder_thread runs, read on every Record(). std::jthread::joinable()
+    // compares thread ids, which on Windows (libc++ over winpthreads) costs two system calls.
+    bool recording_threaded{false};
     std::jthread recorder_thread;
     tracy::VkCtxScope* profiler_scope{};
 };

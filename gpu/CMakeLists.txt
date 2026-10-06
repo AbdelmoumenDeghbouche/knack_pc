@@ -43,14 +43,40 @@ endif()
 find_package(Vulkan REQUIRED)
 find_package(fmt REQUIRED)
 find_package(Boost REQUIRED)
-find_package(magic_enum REQUIRED)
+# bbport (Windows): MSYS2 has no magic_enum/miniz packages; the submodules are used instead.
+find_package(magic_enum QUIET)
+if (NOT magic_enum_FOUND)
+    add_library(magic_enum INTERFACE)
+    add_library(magic_enum::magic_enum ALIAS magic_enum)
+    target_include_directories(magic_enum INTERFACE third_party/magic_enum/include
+                                                    third_party/magic_enum/include/magic_enum)
+endif()
 find_package(tsl-robin-map REQUIRED)
-find_package(VulkanMemoryAllocator CONFIG REQUIRED)
+find_package(VulkanMemoryAllocator CONFIG QUIET)
+if (NOT VulkanMemoryAllocator_FOUND)
+    # MSYS2 ships the header (include/vma/vk_mem_alloc.h) without a CMake package.
+    find_path(VMA_INCLUDE_DIR vk_mem_alloc.h PATH_SUFFIXES vma REQUIRED)
+    add_library(VulkanMemoryAllocator INTERFACE)
+    add_library(GPUOpen::VulkanMemoryAllocator ALIAS VulkanMemoryAllocator)
+    target_include_directories(VulkanMemoryAllocator INTERFACE ${VMA_INCLUDE_DIR})
+endif()
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(XXHASH REQUIRED IMPORTED_TARGET libxxhash)
 pkg_check_modules(SDL3 REQUIRED IMPORTED_TARGET sdl3)
-pkg_check_modules(X11 REQUIRED IMPORTED_TARGET x11)
-find_package(miniz REQUIRED)
+if (NOT WIN32)
+    pkg_check_modules(X11 REQUIRED IMPORTED_TARGET x11)
+endif()
+find_package(miniz QUIET)
+if (NOT miniz_FOUND)
+    set(BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
+    set(BUILD_TESTS OFF CACHE BOOL "" FORCE)
+    set(BUILD_FUZZERS OFF CACHE BOOL "" FORCE)
+    set(BUILD_SHARED_LIBS OFF)
+    set(CMAKE_POLICY_VERSION_MINIMUM 3.5)
+    add_subdirectory(third_party/miniz EXCLUDE_FROM_ALL)
+    unset(CMAKE_POLICY_VERSION_MINIMUM)
+    add_library(miniz::miniz ALIAS miniz)
+endif()
 find_package(Zydis REQUIRED)
 find_program(GLSLANG_COMPILER NAMES glslang glslangValidator REQUIRED)
 
@@ -116,7 +142,14 @@ set(COMMON
 file(GLOB AVPLAYER CONFIGURE_DEPENDS shadps4/core/libraries/avplayer/*.cpp)
 pkg_check_modules(FFMPEG REQUIRED IMPORTED_TARGET libavformat libavcodec libavutil libswscale libswresample)
 file(GLOB SHIM_SOURCES CONFIGURE_DEPENDS shim/*.cpp shim/*/*.cpp)
-add_library(bbgpu SHARED ${VIDEO_CORE} ${RECOMPILER} ${COMMON} ${SHIM_SOURCES}
+# Windows: a DLL cannot leave the runtime_* symbols for bb-probe.exe to resolve, so the
+# library is static there and linked into the executable.
+if (WIN32)
+    set(BBGPU_KIND STATIC)
+else()
+    set(BBGPU_KIND SHARED)
+endif()
+add_library(bbgpu ${BBGPU_KIND} ${VIDEO_CORE} ${RECOMPILER} ${COMMON} ${SHIM_SOURCES}
     shadps4/core/libraries/gnmdriver/gnmdriver.cpp
     shadps4/core/libraries/videoout/driver.cpp shadps4/core/libraries/videoout/video_out.cpp
     shadps4/core/libraries/kernel/equeue.cpp ${AVPLAYER}
@@ -136,10 +169,44 @@ target_include_directories(bbgpu PRIVATE shim shadps4 ${SHADER_INCLUDE} third_pa
 target_compile_definitions(bbgpu PRIVATE BOOST_ASIO_STANDALONE NDEBUG)
 target_compile_options(bbgpu PRIVATE -Wno-deprecated-declarations -Wno-missing-field-initializers)
 # Runtime symbols (runtime_memory_*, runtime_process_*) resolve against bb-probe.
-target_link_options(bbgpu PRIVATE -Wl,--allow-shlib-undefined)
+if (NOT WIN32)
+    target_link_options(bbgpu PRIVATE -Wl,--allow-shlib-undefined)
+endif()
 target_link_libraries(bbgpu PRIVATE ffx-vulkan::portable ffx-vulkan::fsr4-v07-vulkan)
 target_link_libraries(bbgpu PUBLIC Vulkan::Headers fmt::fmt Boost::headers magic_enum::magic_enum
-    tsl::robin_map GPUOpen::VulkanMemoryAllocator PkgConfig::XXHASH PkgConfig::SDL3 PkgConfig::X11 PkgConfig::FFMPEG miniz::miniz Zydis::Zydis sirit)
+    tsl::robin_map GPUOpen::VulkanMemoryAllocator PkgConfig::XXHASH PkgConfig::SDL3 PkgConfig::FFMPEG miniz::miniz Zydis::Zydis sirit)
+if (WIN32)
+    # Guest code is entered with the System V ABI; NOMINMAX/WIN32_LEAN_AND_MEAN keep
+    # <windows.h> out of the way of std::min/max and the Vulkan/SDL headers.
+    target_compile_definitions(bbgpu PUBLIC NOMINMAX WIN32_LEAN_AND_MEAN)
+    target_compile_options(bbgpu PRIVATE -include ${CMAKE_CURRENT_SOURCE_DIR}/shim/bb_win_compat.h)
+    target_include_directories(bbgpu PRIVATE third_party/xbyak)
+    target_link_libraries(bbgpu PUBLIC Vulkan::Vulkan ws2_32 bcrypt ntdll synchronization winmm)
+else()
+    target_link_libraries(bbgpu PUBLIC PkgConfig::X11)
+endif()
+
+# bbport (Windows): bbgpu is a static library there, so the loader and the HLE runtime are
+# linked here, where CMake knows its dependencies (build.sh builds them with ninja).
+if (WIN32)
+    enable_language(RC)
+    file(GLOB BB_RUNTIME CONFIGURE_DEPENDS ../src/runtime*.c)
+    file(GLOB BB_ATRAC9 CONFIGURE_DEPENDS ../third_party/LibAtrac9/C/src/*.c)
+    add_library(atrac9 STATIC ${BB_ATRAC9})
+    target_compile_options(atrac9 PRIVATE -w)
+    set_target_properties(atrac9 PROPERTIES C_STANDARD 99 INTERPROCEDURAL_OPTIMIZATION OFF)
+    add_executable(bb-probe ../src/probe.c ${BB_RUNTIME} ../src/compat_win.c ../src/vulkan_smoke.c
+        ../packaging/windows/bb-probe.rc)
+    set_target_properties(bb-probe PROPERTIES C_STANDARD 11 C_EXTENSIONS OFF)
+    target_compile_options(bb-probe PRIVATE $<$<COMPILE_LANGUAGE:C>:-Wall -Wextra -Werror>)
+    target_include_directories(bb-probe PRIVATE .. ../src)
+    target_link_libraries(bb-probe PRIVATE bbgpu atrac9 onecore bcrypt ws2_32 -pthread)
+    # The PS4 range (64 GiB - 1 TiB) must stay free: no high-entropy ASLR for heaps and stacks.
+    # The guest main thread runs on the process stack: 16 MiB, committed (no stack probes).
+    target_link_options(bb-probe PRIVATE -Wl,--disable-high-entropy-va "SHELL:-Xlinker --stack -Xlinker 16777216,16777216")
+    add_executable(bb-gpu-capabilities ../tools/gpu_capabilities.c ../packaging/windows/bb-gpu-capabilities.rc)
+    target_link_libraries(bb-gpu-capabilities PRIVATE Vulkan::Vulkan)
+endif()
 
 # Explicit test targets; neither launches the game nor needs a Vulkan device.
 add_executable(motion-history-test EXCLUDE_FROM_ALL ../tests/test_motion_history.cpp)

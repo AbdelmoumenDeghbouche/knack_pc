@@ -102,9 +102,9 @@ static auto UserPaths = [] {
             user_dir = std::filesystem::path(getenv("HOME")) / ".local" / "share" / "shadPS4";
         }
 #elif _WIN32
-        TCHAR appdata[MAX_PATH] = {0};
-        SHGetFolderPath(NULL, CSIDL_APPDATA, NULL, 0, appdata);
-        user_dir = std::filesystem::path(appdata) / "shadPS4";
+        // bbport: never shadPS4's %APPDATA% folder (an installed shadPS4 owns it); this runs
+        // before main, so the portable folder is created here (run.py sets BB_GPU_USER_DIR).
+        std::filesystem::create_directories(user_dir);
 #endif
     }
 

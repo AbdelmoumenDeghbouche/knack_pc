@@ -5,6 +5,19 @@ THIS PROJECT IS NOT RELATED TO SHADPS4. ALL QUESTIONS RELATED TO THIS PROJECT SH
 
 **English** · [Русский](README.ru.md)
 
+> ### Windows version
+> This fork adds a native **Windows 10/11** build of bbport with a launcher (`Bloodborne.exe`)
+> that holds every setting in one window, in 13 languages. Download the ready-to-play zip from
+> [Releases](https://github.com/Supermedo/bloodborne_pc/releases), unpack it, start
+> `Bloodborne.exe` and pick your game folder. Building it yourself and what changed for Windows:
+> [packaging/windows/README.md](packaging/windows/README.md).
+>
+> The Linux port and almost all of the work behind it are by
+> [deadinside28](https://github.com/deadinside28/bloodborne_pc); the Windows port is by
+> [Supermedo](https://github.com/Supermedo). If it helps you:
+>
+> [![Buy Me a Coffee](https://img.shields.io/badge/Buy%20me%20a%20coffee-c8a96a?logo=buymeacoffee&logoColor=black)](https://buymeacoffee.com/mohmmadpodt)
+
 bbport runs the original PlayStation 4 executable of *Bloodborne* (CUSA03173, game version
 1.09) directly on an x86-64 Linux PC. It is not a general emulator. The game's own x86-64 code
 executes natively; a small runtime written for this one game replaces the PS4 system libraries;
@@ -89,6 +102,14 @@ or the launcher (pick the game folder, settings, *Start*):
 ```bash
 bash launcher/bb-launcher.sh         # launcher/install-desktop.sh adds it to the app menu
 ```
+
+**Windows** (10 1903+ / 11, 64-bit): build in an MSYS2 CLANG64 shell with the same
+`bash build.sh`, run with `python run.py` or the Tkinter launcher
+(`launcher/bbport_launcher_win.py`), and `bash packaging/windows/package.sh` makes a
+self-contained folder with `Bloodborne.exe` (players need no Python). Details and the
+differences from Linux (TLS, guest memory, exceptions):
+[packaging/windows/README.md](packaging/windows/README.md). Tested on an NVIDIA RTX 5080
+(FSR 3.1 and FSR 4, game versions 1.00 and 1.09).
 
 By default the game folder is expected next to the repository (`../CUSA03173`). Saves and the
 shader cache go to `user/` (the launcher lets you choose another folder); settings to
@@ -205,7 +226,7 @@ More in [docs/](docs); recent changes: [docs/CHANGES_2026-10-02.md](docs/CHANGES
 | `src/` | Loader (`probe.c`) and the HLE runtime |
 | `scripts/` | Offline preparation of the game image, module linking, patch compiler |
 | `gpu/` | Renderer library: vendored shadPS4 video core with this port's changes (`gpu/VENDOR.txt`), shims, ImGui menu, FSR 4.1.1 runtime (`gpu/shadps4/video_core/renderer_vulkan/fsr411`) |
-| `launcher/`, `packaging/` | GTK4 launcher; Nix package and AppImage |
+| `launcher/`, `packaging/` | GTK4 launcher; Nix package and AppImage; Windows launcher (`bbport_launcher_win.py`, translations in `bbport_lang.py`) and package (`packaging/windows/`) |
 | `patches/` | Community patches for Bloodborne |
 | `tools/` | Developer tools: scripted runs, A/B toggles, FSR benchmark helpers, FSR 4 shader rewrites, `fsr4cap` (FSR 4.1.1 recording/extraction) |
 | `tests/` | Loader, runtime, patch and renderer tests |
@@ -240,3 +261,17 @@ FSR 4 v07 provider), AMD FidelityFX SDK (MIT), [LibAtrac9](https://github.com/Th
 FSR 4.1.1 assets). Game patches by Kyo, Lance McDonald, auser1337, illusion, emoose and other
 community members (`patches/Bloodborne.xml`). AMD's FSR 4 DLLs and model data are not
 distributed here.
+
+The Windows build also uses:
+[magic_enum](https://github.com/Neargye/magic_enum) (MIT), [miniz](https://github.com/richgel999/miniz) (MIT),
+[xbyak](https://github.com/herumi/xbyak) (BSD-3-Clause), [SDL3](https://github.com/libsdl-org/SDL) (zlib),
+[FFmpeg](https://ffmpeg.org), [Vulkan Memory Allocator](https://github.com/GPUOpen-LibrariesAndSDKs/VulkanMemoryAllocator) (MIT),
+[glslang](https://github.com/KhronosGroup/glslang), [SPIRV-Tools](https://github.com/KhronosGroup/SPIRV-Tools),
+[fmt](https://github.com/fmtlib/fmt), [Boost](https://www.boost.org), [robin-map](https://github.com/Tessil/robin-map),
+[xxHash](https://github.com/Cyan4973/xxHash), [Zydis](https://github.com/zyantific/zydis), all built with
+[MSYS2](https://www.msys2.org) CLANG64 ([LLVM/Clang](https://llvm.org), libc++, mingw-w64 winpthreads).
+The launcher is frozen with [PyInstaller](https://pyinstaller.org) and the icon is drawn with
+[Pillow](https://python-pillow.org). FSR 4 assets for the in-launcher download come from
+[FireBurn/Q2RTX](https://github.com/FireBurn/Q2RTX). The Windows guest memory layout follows the
+placeholder approach of shadPS4's Windows memory manager. The Bloodborne-style icon is original
+artwork, not taken from the game.

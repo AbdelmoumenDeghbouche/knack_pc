@@ -3,7 +3,9 @@
 
 #include <chrono>
 #include <pthread.h>
+#ifndef _WIN32
 #include <sys/resource.h>
+#endif
 #include <time.h>
 #include "bbport_copy.h"
 #include "bbport_toggles.h"
@@ -102,11 +104,13 @@ void Liverpool::ProcessCommands() {
 
 void Liverpool::Process(std::stop_token stoken) {
     Common::SetCurrentThreadName("shadPS4:GpuCommandProcessor");
+#ifndef _WIN32
     if (clockid_t clock; pthread_getcpuclockid(pthread_self(), &clock) == 0) {
         BbStats::gpu_thread_clock.store(static_cast<int>(clock));
     }
+#endif
     gpu_id = std::this_thread::get_id();
-#ifdef __linux__
+#if defined(__linux__) || defined(_WIN32)
     gpu_tid = gettid();
 #endif
 
@@ -1326,6 +1330,7 @@ Liverpool::Task Liverpool::ProcessGraphics(std::span<const u32> dcb, std::span<c
     }
     if (seq != NoSeq && BbStats::enabled) {
         BbStats::submissions.fetch_add(1, std::memory_order_relaxed);
+#ifndef _WIN32 // bbport: per-thread rusage statistics are Linux-only
         if (rusage usage{}; getrusage(RUSAGE_THREAD, &usage) == 0) {
             BbStats::gpu_user_us.store(u64(usage.ru_utime.tv_sec) * 1000000 + usage.ru_utime.tv_usec,
                                        std::memory_order_relaxed);
@@ -1335,6 +1340,7 @@ Liverpool::Task Liverpool::ProcessGraphics(std::span<const u32> dcb, std::span<c
             BbStats::gpu_vol_switches.store(usage.ru_nvcsw, std::memory_order_relaxed);
             BbStats::gpu_minor_faults.store(usage.ru_minflt, std::memory_order_relaxed);
         }
+#endif
     }
 
     FIBER_EXIT;

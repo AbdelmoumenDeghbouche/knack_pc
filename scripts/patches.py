@@ -41,6 +41,15 @@ EFFECTS={
 MODEL_LOD={'-2':'Model LOD -2 (Highest)','1':'Model LOD 1 (Lower)','2':'Model LOD 2 (Lowest)'}
 
 
+def game_app_version(game):
+    """APP_VER of the game folder's param.sfo ("01.09"), or None when it cannot be read."""
+    try:
+        from prepare import sfo
+        return sfo((Path(game) / 'sce_sys/param.sfo').read_bytes()).get('APP_VER')
+    except (OSError, ValueError, ImportError):
+        return None
+
+
 def validate_patch_requirements(names, game):
     if 'Restore Debug Camera' in names and 'Enemy Control' in names:
         raise ValueError('Restore Debug Camera conflicts with Enemy Control; enable only one')
@@ -264,6 +273,15 @@ def main():
             settings['preset']=os.environ['BB_UPSCALE_PRESET']
         size=render_size(settings)
         if size: print(f'{size[0]}x{size[1]}')
+        return
+    # The patches are byte writes at the addresses of one game version: on another version they
+    # would corrupt code. Such a game runs unpatched (run.sh/run.py then choose 30 FPS).
+    version=game_app_version(a.game_dir)
+    if version and version!=a.app_version and not os.environ.get('BB_FORCE_PATCHES'):
+        blob=struct.pack('<8sQQ',b'BBPATCH2',EBOOT_BASE,0)
+        (a.out/'patches.bin').write_bytes(blob)
+        print(f'Patches: game version {version}, patches are for {a.app_version}: none applied '
+              '(30 FPS, no effect or resolution patches)')
         return
     names=FPS_PRESETS[a.fps]+[n.strip() for n in a.extra.split(';') if n.strip()]
     names+=[n for n in effect_patches(read_settings(a.settings)) if n not in names]

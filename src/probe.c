@@ -48,10 +48,8 @@ static uint64_t read64(FILE *f) {
 }
 static size_t round_page(size_t size) { return (size + page_size - 1) & ~(page_size - 1); }
 static void *allocate(size_t size) {
-#ifndef _WIN32
     void *low=runtime_low_map(size,PROT_READ|PROT_WRITE);
     if (low) return low;
-#endif
 #ifdef _WIN32
     void *p = VirtualAlloc(NULL, size, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
     if (!p) fail("VirtualAlloc failed");
@@ -99,6 +97,98 @@ __asm__(".text\n.globl enter_on_stack\nenter_on_stack:\n"
         " mov %rbp,%rsp\n pop %rbp\n ret\n");
 #endif
 static ABI void guest_exit(void) { puts("Runtime: process finalizer callback reached"); }
+#ifdef _WIN32
+static void describe_address(char *out, size_t size, uintptr_t address) {
+    HMODULE module=NULL;
+    char name[MAX_PATH]="?";
+    if (image && address-(uintptr_t)image<0x20000000) { snprintf(out,size,"guest offset 0x%" PRIxPTR,address-(uintptr_t)image); return; }
+    if (GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS|GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,(LPCSTR)address,&module) && module) {
+        GetModuleFileNameA(module,name,sizeof(name));
+        const char *base=strrchr(name,'\\');
+        snprintf(out,size,"%s+0x%" PRIxPTR,base ? base+1 : name,address-(uintptr_t)module);
+        return;
+    }
+    snprintf(out,size,"%p",(void *)address);
+}
+static int fatal_reported;
+static LONG fatal_exception(EXCEPTION_POINTERS *info) {
+    if (__atomic_exchange_n(&fatal_reported,1,__ATOMIC_ACQ_REL)) { Sleep(INFINITE); }
+    const EXCEPTION_RECORD *record=info->ExceptionRecord;
+    const CONTEXT *c=info->ContextRecord;
+    char where[MAX_PATH+64];
+    describe_address(where,sizeof(where),(uintptr_t)c->Rip);
+    if (record->ExceptionCode==EXCEPTION_ACCESS_VIOLATION && record->NumberParameters>=2)
+        fprintf(stderr,"Fault: %s access to %p at %s (thread %lu)\n",
+                record->ExceptionInformation[0]==1 ? "write" : record->ExceptionInformation[0]==8 ? "execute" : "read",
+                (void *)record->ExceptionInformation[1],where,GetCurrentThreadId());
+    else
+        fprintf(stderr,"Fault: exception 0x%08lx at %s (thread %lu)\n",record->ExceptionCode,where,GetCurrentThreadId());
+    fprintf(stderr,"  rax=%016llx rbx=%016llx rcx=%016llx rdx=%016llx\n  rsi=%016llx rdi=%016llx rbp=%016llx rsp=%016llx\n",
+            c->Rax,c->Rbx,c->Rcx,c->Rdx,c->Rsi,c->Rdi,c->Rbp,c->Rsp);
+    if (gpu_enabled) bbgpu_dump_guest_writes(info);
+    /* rbp chain (guest and host code keep frame pointers). */
+    uintptr_t rbp=(uintptr_t)c->Rbp;
+    for (int depth=0; depth<24 && rbp; ++depth) {
+        uintptr_t frame[2];
+        SIZE_T got=0;
+        if (!ReadProcessMemory(GetCurrentProcess(),(void *)rbp,frame,sizeof(frame),&got) || got!=sizeof(frame) || frame[0]<=rbp) break;
+        describe_address(where,sizeof(where),frame[1]);
+        fprintf(stderr,"  #%d %s\n",depth,where);
+        rbp=frame[0];
+    }
+    fflush(NULL);
+    TerminateProcess(GetCurrentProcess(),3);
+    return EXCEPTION_CONTINUE_SEARCH;
+}
+static LONG CALLBACK vectored_fault(EXCEPTION_POINTERS *info) {
+    const EXCEPTION_RECORD *record=info->ExceptionRecord;
+    DWORD code=record->ExceptionCode;
+    if (code==EXCEPTION_ACCESS_VIOLATION && record->NumberParameters>=2) {
+        /* GPU page tracking (write-protected guest pages) is resolved first. */
+        if (gpu_enabled && bbgpu_handle_fault(info,(void *)record->ExceptionInformation[1])) return EXCEPTION_CONTINUE_EXECUTION;
+        if (runtime_fault_recover) {
+            /* A speculative guest memory read (GPU draw preparation) faulted: the thread resumes
+             * in bb_longjmp, outside the exception dispatcher, back at its recovery point. */
+            unsigned long long *buffer=*runtime_fault_recover;
+            runtime_fault_recover=NULL;
+            CONTEXT *c=info->ContextRecord;
+            c->Rsp=((c->Rsp-128)&~(DWORD64)15)-40;
+            c->Rcx=(DWORD64)(uintptr_t)buffer;
+            c->Rdx=1;
+            c->Rip=(DWORD64)(uintptr_t)bb_longjmp;
+            return EXCEPTION_CONTINUE_EXECUTION;
+        }
+    }
+    if (code==EXCEPTION_ACCESS_VIOLATION || code==EXCEPTION_ILLEGAL_INSTRUCTION || code==EXCEPTION_PRIV_INSTRUCTION ||
+        code==EXCEPTION_STACK_OVERFLOW || code==EXCEPTION_INT_DIVIDE_BY_ZERO || code==EXCEPTION_DATATYPE_MISALIGNMENT) {
+        /* Faults in guest code, the loader or the runtime end the process with a report; drivers
+         * and system libraries may handle their own exceptions. */
+        uintptr_t rip=(uintptr_t)info->ContextRecord->Rip;
+        HMODULE self=GetModuleHandleA(NULL), module=NULL;
+        int ours=(image && rip-(uintptr_t)image<0x20000000) ||
+                 (GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS|GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,(LPCSTR)rip,&module) && module==self) ||
+                 !module;
+        if (ours) return fatal_exception(info);
+    }
+    return EXCEPTION_CONTINUE_SEARCH;
+}
+static LONG WINAPI unhandled_fault(EXCEPTION_POINTERS *info) { return fatal_exception(info); }
+/* Guest code reads its TCB with `mov rax, gs:[0]` (link_*.py rewrote fs:[0]); on Windows
+ * the displacement becomes the TEB TLS slot that holds the guest TCB (runtime_thread.c). */
+uint32_t runtime_thread_tcb_offset(void);
+static uint64_t patch_tcb_loads(const Segment *segments, uint64_t count) {
+    static const unsigned char load[]={0x65,0x48,0x8b,0x04,0x25,0,0,0,0};
+    uint32_t displacement=runtime_thread_tcb_offset();
+    uint64_t patched=0;
+    for (uint64_t s=0;s<count;++s) {
+        if (!(segments[s].flags&1) || segments[s].size<sizeof(load)) continue;
+        unsigned char *at=image+segments[s].address, *end=at+segments[s].size-sizeof(load);
+        for (; at<=end; ++at)
+            if (at[0]==0x65 && !memcmp(at,load,sizeof(load))) { memcpy(at+5,&displacement,4); ++patched; at+=sizeof(load)-1; }
+    }
+    return patched;
+}
+#endif
 #ifndef _WIN32
 static void fault(int sig, siginfo_t *info, void *context) {
     /* GPU page tracking (write-protected guest pages) is resolved first. */
@@ -142,6 +232,7 @@ static void fault(int sig, siginfo_t *info, void *context) {
     _exit(128 + sig);
 }
 #endif
+#ifndef _WIN32
 /* Watchdog: dump RIP and the rbp frame chain of every thread (guest offsets
  * when inside the image). Reads use process_vm_readv so bad frames cannot fault. */
 static uintptr_t exe_base;
@@ -187,6 +278,7 @@ static void watchdog(int sig, siginfo_t *info, void *context) {
     usleep(100000);
     _exit(128 + sig);
 }
+#endif
 /* param.sfo lookup: string or integer value of key, 0 when absent. */
 static int sfo_value(const char *path, const char *key, char *text, size_t text_size, uint32_t *number) {
     FILE *f=fopen(path,"rb");
@@ -257,8 +349,25 @@ static void apply_patches(const char *path, Segment *segments, uint64_t ns, cons
  * released before the new process opens its own. */
 void runtime_restart(void) {
     fflush(NULL);
+#ifdef _WIN32
+    /* run.py sets BB_RESTART_COMMAND: the launch command line, started again (new patches). */
+    const char *command=getenv("BB_RESTART_COMMAND");
+    puts("Runtime: restarting through run.py");
+    if (!command || !*command) { fputs("runtime_restart: BB_RESTART_COMMAND is not set\n",stderr); _exit(1); }
+    char *line=_strdup(command);
+    /* Same output handles: a launcher reading the game's log keeps reading the new launch. */
+    STARTUPINFOA startup={.cb=sizeof(startup),.dwFlags=STARTF_USESTDHANDLES,
+                          .hStdInput=GetStdHandle(STD_INPUT_HANDLE),.hStdOutput=GetStdHandle(STD_OUTPUT_HANDLE),
+                          .hStdError=GetStdHandle(STD_ERROR_HANDLE)};
+    PROCESS_INFORMATION process;
+    if (!line || !CreateProcessA(NULL,line,NULL,NULL,TRUE,0,NULL,NULL,&startup,&process)) {
+        fprintf(stderr,"runtime_restart: CreateProcess failed (%lu)\n",GetLastError()); _exit(1);
+    }
+    CloseHandle(process.hThread); CloseHandle(process.hProcess);
+    /* The new launch waits for this process's GPU device to go away (run.py --after). */
+    TerminateProcess(GetCurrentProcess(),0);
+#else
     puts("Runtime: restarting through run.sh");
-#ifndef _WIN32
     syscall(SYS_close_range, 3u, ~0u, 0u);
     execlp("bash", "bash", "run.sh", (char *)NULL);
     perror("runtime_restart: exec");
@@ -275,6 +384,12 @@ int main(int argc, char **argv) {
     mallopt(M_MMAP_THRESHOLD,32*1024*1024);
 #endif
     if (argc == 2 && !strcmp(argv[1], "--vulkan-only")) return vulkan_smoke();
+#ifdef _WIN32
+    /* The PS4 user range must stay free of host allocations (GPU driver, heaps), and the guest
+     * TCB needs one of the 64 TEB TLS slots before DLLs (Vulkan drivers) take them. */
+    runtime_memory_reserve();
+    runtime_thread_tcb_offset();
+#endif
     int cpu_only = 0, strict_imports = 0;
     unsigned timeout_seconds = 10;
     const char *content_profile=NULL, *app0=NULL, *user_dir=NULL, *patch_file=NULL;
@@ -315,6 +430,9 @@ int main(int argc, char **argv) {
     bbgpu_register_kernel();
 #ifdef _WIN32
     SYSTEM_INFO system_info; GetSystemInfo(&system_info); page_size = system_info.dwPageSize;
+    AddVectoredExceptionHandler(1, vectored_fault);
+    SetUnhandledExceptionFilter(unhandled_fault);
+    (void)timeout_seconds; /* no watchdog on Windows */
 #else
     page_size = (size_t)sysconf(_SC_PAGESIZE);
     struct sigaction sa = {0}; sa.sa_sigaction = fault; sa.sa_flags = SA_SIGINFO;
@@ -472,6 +590,9 @@ int main(int argc, char **argv) {
         memcpy(image + relocs[i].target, &value, 8);
     }
     if (patch_file) apply_patches(patch_file, segments, ns, relocs, nr);
+#ifdef _WIN32
+    printf("Guest TCB loads redirected to the TEB TLS slot: %" PRIu64 "\n", patch_tcb_loads(segments, ns));
+#endif
     protect(traps, round_page((import_count + 1) * 32), 5);
     protect(image, round_page(size), 0);
     int executable_entry = 0;

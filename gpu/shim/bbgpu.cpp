@@ -3,7 +3,9 @@
 #include "bbport_overlay.h"
 #include "bbport_settings.h"
 #include "bbport_copy.h"
+#ifndef _WIN32
 #include <sys/resource.h>
+#endif
 #include "bbport_toggles.h"
 #include <algorithm>
 #include <atomic>
@@ -211,7 +213,11 @@ extern "C" int bbgpu_init(const BbGpuConfig* config) {
     StartProfileWriter();
 #endif
     g_sdk_version = config->sdk_version;
+#ifdef _WIN32
+    if (config->user_dir && !std::getenv("BB_GPU_USER_DIR")) _putenv_s("BB_GPU_USER_DIR", config->user_dir);
+#else
     if (config->user_dir) setenv("BB_GPU_USER_DIR", config->user_dir, 0);
+#endif
     Core::Emulator::FillElfInfo(*config);
     const std::string title = config->title ? config->title : "Bloodborne";
     const s32 width = config->width, height = config->height;

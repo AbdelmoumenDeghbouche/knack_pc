@@ -393,7 +393,14 @@ bool Rasterizer::UseDrawPipe() const {
 }
 
 bool Rasterizer::OnStageA() const {
+#ifdef _WIN32
+    // bbport (Windows): libc++ compares std::thread::id through winpthreads' pthread_equal,
+    // which asks the kernel (GetThreadId) for both threads: two system calls per check, many
+    // per draw. The numeric thread id comes from the TEB.
+    return static_cast<u32>(gettid()) == liverpool->GetGpuCommandProcessorThreadId();
+#else
     return std::this_thread::get_id() == liverpool->GetGpuCommandProcessorThread();
+#endif
 }
 
 namespace {
@@ -550,10 +557,20 @@ void Rasterizer::PostDraw(const Pipeline* pipeline, const PreparedDraw* used_pre
     }
     std::array<u16, AmdGpu::RegDirty::NumBlocks> blocks;
     u32 num_blocks = 0;
+#ifdef __GLIBCXX__
     for (size_t block = dirty.blocks._Find_first(); block < dirty.blocks.size();
          block = dirty.blocks._Find_next(block)) {
         blocks[num_blocks++] = static_cast<u16>(block);
     }
+#else
+    if (dirty.blocks.any()) {
+        for (size_t block = 0; block < dirty.blocks.size(); ++block) {
+            if (dirty.blocks.test(block)) {
+                blocks[num_blocks++] = static_cast<u16>(block);
+            }
+        }
+    }
+#endif
     const auto stages =
         pipeline ? pipeline->GetStages() : std::span<const Shader::Info* const>{};
     // Constants: copied here into the ring, the recording thread only binds them.
@@ -3491,7 +3508,7 @@ std::thread::id Rasterizer::GetGpuCommandProcessorThread() {
     return liverpool->GetGpuCommandProcessorThread();
 }
 
-#ifdef __linux__
+#if defined(__linux__) || defined(_WIN32)
 u32 Rasterizer::GetGpuCommandProcessorThreadId() {
     return liverpool->GetGpuCommandProcessorThreadId();
 }

@@ -6,7 +6,9 @@
 #include <cstdio>
 #include <cstdlib>
 #include <unordered_map>
+#ifndef _WIN32
 #include <dlfcn.h>
+#endif
 #include <functional>
 
 #include "bbport_copy.h"
@@ -31,6 +33,7 @@ Scheduler::Scheduler(const Instance& instance, bool threaded_recording)
     if (threaded_recording && !(env && env[0] == '0')) {
         record_chunk = AcquireChunk();
         recorder_thread = std::jthread(std::bind_front(&Scheduler::RecorderThread, this));
+        recording_threaded = true;
     }
 #if TRACY_GPU_ENABLED
     profiler_scope = reinterpret_cast<tracy::VkCtxScope*>(std::malloc(sizeof(tracy::VkCtxScope)));
@@ -104,7 +107,7 @@ void Scheduler::BeginRendering(const RenderState& new_state) {
         .pStencilAttachment = db.has_stencil ? &stencil_attachment : nullptr,
     };
 
-    if (!recorder_thread.joinable()) {
+    if (!recording_threaded) {
         current_cmdbuf.beginRendering(rendering_info);
         return;
     }
@@ -152,8 +155,12 @@ void Scheduler::TraceDirectRecording(void* caller) {
     }
     std::ranges::sort(top, std::greater{});
     for (size_t i = 0; i < std::min<size_t>(top.size(), 8); ++i) {
+#ifdef _WIN32
+        struct { const char* dli_fname; void* dli_fbase; } info{nullptr, nullptr};
+#else
         Dl_info info{};
         dladdr(top[i].second, &info);
+#endif
         std::printf("Recorder sync caller: %llu x %s+0x%lx\n",
                     static_cast<unsigned long long>(top[i].first),
                     info.dli_fname ? info.dli_fname : "?",
@@ -219,7 +226,7 @@ void Scheduler::WaitHostCopies() {
 }
 
 void Scheduler::KickRecording(bool force) {
-    if (!recorder_thread.joinable()) {
+    if (!recording_threaded) {
         return;
     }
     // Callers kick where nobody holds the raw command buffer: deferral resumes.
@@ -254,7 +261,7 @@ void Scheduler::KickRecording(bool force) {
 }
 
 void Scheduler::SyncRecording() {
-    if (!recorder_thread.joinable()) {
+    if (!recording_threaded) {
         return;
     }
     KickRecording(true);

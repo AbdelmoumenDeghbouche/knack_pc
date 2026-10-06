@@ -7,7 +7,9 @@
 #include <chrono>
 #include <cstdio>
 #include <time.h>
+#ifndef _WIN32
 #include <sys/resource.h>
+#endif
 #include "common/assert.h"
 #include "bbport_toggles.h"
 #include "video_core/renderer_vulkan/vk_frame_capture.h"
@@ -331,9 +333,11 @@ void VideoOutDriver::Flip(const Request& req) {
         last_twf = twf;
         const u64 copy_ns = BbStats::t_copy.load(), copy_bytes = BbStats::copy_bytes.load();
         u64 proc_flt = 0;
+#ifndef _WIN32
         if (rusage usage{}; getrusage(RUSAGE_SELF, &usage) == 0) {
             proc_flt = usage.ru_minflt;
         }
+#endif
         const u64 t_now[6] = {BbStats::t_resident.load(), BbStats::t_protect.load(),
                               BbStats::t_image_create.load(), BbStats::t_refresh.load(),
                               BbStats::t_staging.load(), BbStats::t_host_wait.load()};

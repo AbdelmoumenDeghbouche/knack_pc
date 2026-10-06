@@ -37,6 +37,9 @@
 #include <system_error>
 #include <vector>
 #include <vk_mem_alloc.h>
+#ifdef MemoryBarrier
+#undef MemoryBarrier // bbport: winnt.h macro (through fmt), clashes with vk::MemoryBarrier
+#endif
 
 namespace Vulkan {
 
@@ -313,8 +316,49 @@ static vk::Format GetFrameViewFormat(const Libraries::VideoOut::PixelFormat form
     return {};
 }
 
+// bbport: raw copy of an image for BB_FRAME_DUMP_TRIGGER, written once the GPU is done.
+static void DumpRaw(const Instance& instance, Scheduler& scheduler, vk::CommandBuffer cmdbuf,
+                    vk::Image image, vk::ImageLayout layout, u32 w, u32 h, const char* name,
+                    int index) {
+    const VkBufferCreateInfo buffer_ci{.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
+                                       .size = VkDeviceSize(w) * h * 4,
+                                       .usage = VK_BUFFER_USAGE_TRANSFER_DST_BIT};
+    const VmaAllocationCreateInfo alloc_ci{
+        .flags = VMA_ALLOCATION_CREATE_MAPPED_BIT | VMA_ALLOCATION_CREATE_HOST_ACCESS_RANDOM_BIT,
+        .usage = VMA_MEMORY_USAGE_AUTO_PREFER_HOST};
+    VkBuffer buffer{};
+    VmaAllocation allocation{};
+    VmaAllocationInfo info{};
+    if (vmaCreateBuffer(instance.GetAllocator(), &buffer_ci, &alloc_ci, &buffer, &allocation,
+                        &info) != VK_SUCCESS) {
+        return;
+    }
+    cmdbuf.copyImageToBuffer(image, layout, buffer,
+                             vk::BufferImageCopy{.imageSubresource = {vk::ImageAspectFlagBits::eColor, 0, 0, 1},
+                                                 .imageExtent = {w, h, 1}});
+    const char* dir = std::getenv("BB_DUMP_DIR");
+    char path[512];
+    std::snprintf(path, sizeof(path), "%s/%s_%03d_%ux%u.raw", dir && *dir ? dir : "out/dump", name,
+                  index, w, h);
+    scheduler.DeferPriorityOperation([allocator = instance.GetAllocator(), buffer, allocation, info,
+                                      size = buffer_ci.size, file = std::string{path}] {
+        vmaInvalidateAllocation(allocator, allocation, 0, VK_WHOLE_SIZE);
+        if (FILE* f = std::fopen(file.c_str(), "wb")) {
+            std::fwrite(info.pMappedData, 1, size, f);
+            std::fclose(f);
+        }
+        vmaDestroyBuffer(allocator, buffer, allocation);
+    });
+}
+
 Frame* Presenter::PrepareFrame(const Libraries::VideoOut::BufferAttributeGroup& attribute,
                                VAddr cpu_address) {
+    // bbport: BB_FRAME_DUMP_TRIGGER=<file>: when the file exists it is removed and this frame's
+    // guest display buffer and presented image are written to BB_DUMP_DIR (default out/dump)
+    // as raw 32-bit pixels (menus and movies included; the upscaler dumps scene frames only).
+    static const char* frame_dump_trigger = std::getenv("BB_FRAME_DUMP_TRIGGER");
+    static int frame_dump_index = 0;
+    const bool frame_dump = frame_dump_trigger && std::remove(frame_dump_trigger) == 0;
     // bbport: scaled upscaler presets: the output-size display buffer drawn by the port.
     TemporalUpscaler::Display display{};
     const bool upscaled = rasterizer->GetUpscaler().DisplayOverride(cpu_address, display);
@@ -385,6 +429,14 @@ Frame* Presenter::PrepareFrame(const Libraries::VideoOut::BufferAttributeGroup& 
         cmdbuf.pipelineBarrier2({.imageMemoryBarrierCount = 1, .pImageMemoryBarriers = &to_read});
     } else {
         auto& image = texture_cache.GetImage(image_id);
+        if (frame_dump) {
+            runtime.Transit(&image, vk::ImageLayout::eTransferSrcOptimal,
+                            vk::PipelineStageFlagBits2::eTransfer, vk::AccessFlagBits2::eTransferRead);
+            runtime.FlushBarriers();
+            DumpRaw(instance, draw_scheduler, cmdbuf, image.GetImage(),
+                    vk::ImageLayout::eTransferSrcOptimal, image.info.size.width,
+                    image.info.size.height, "display", frame_dump_index);
+        }
         image_view = *image.FindView(view_info).image_view;
         image_size = vk::Extent2D{image.info.size.width, image.info.size.height};
         runtime.Transit(&image, vk::ImageLayout::eShaderReadOnlyOptimal,
@@ -402,8 +454,17 @@ Frame* Presenter::PrepareFrame(const Libraries::VideoOut::BufferAttributeGroup& 
     pp_settings.srgb_input =
         attribute.attrib.pixel_format == Libraries::VideoOut::PixelFormat::A2R10G10B10Srgb;
     pp_pass.Render(cmdbuf, image_view, image_size, *frame, pp_settings);
-
-
+    if (frame_dump) {
+        // The presented image as the swapchain blit reads it (General after the pass).
+        const vk::MemoryBarrier2 done{.srcStageMask = vk::PipelineStageFlagBits2::eAllCommands,
+                                      .srcAccessMask = vk::AccessFlagBits2::eMemoryWrite,
+                                      .dstStageMask = vk::PipelineStageFlagBits2::eTransfer,
+                                      .dstAccessMask = vk::AccessFlagBits2::eTransferRead};
+        cmdbuf.pipelineBarrier2({.memoryBarrierCount = 1, .pMemoryBarriers = &done});
+        DumpRaw(instance, draw_scheduler, cmdbuf, frame->image, vk::ImageLayout::eGeneral,
+                frame->width, frame->height, "output", frame_dump_index);
+        ++frame_dump_index;
+    }
 
     // Flush frame creation commands.
     frame->ready_semaphore = draw_scheduler.GetWorkSemaphore()->Handle();

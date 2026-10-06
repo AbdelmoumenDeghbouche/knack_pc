@@ -6,12 +6,32 @@
 #pragma once
 
 #include <algorithm>
+#include <thread>
+#ifdef _WIN32
+#include <bit>
+#include <windows.h>
+#else
 #include <sched.h>
 #include <sys/resource.h>
-#include <thread>
 #include <unistd.h>
+#endif
 
 namespace BbThreads {
+#ifdef _WIN32
+/// Hardware threads available to the process (its affinity mask).
+inline unsigned Available() {
+    DWORD_PTR process = 0, system = 0;
+    if (GetProcessAffinityMask(GetCurrentProcess(), &process, &system) && process) {
+        return std::max(1, std::popcount(static_cast<unsigned long long>(process)));
+    }
+    return std::max(1u, std::thread::hardware_concurrency());
+}
+
+/// The calling thread only runs when cores are otherwise idle (lowest Windows priority).
+inline void MakeBackground() {
+    SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_IDLE);
+}
+#else
 
 /// Hardware threads available to the process.
 inline unsigned Available() {
@@ -30,5 +50,6 @@ inline void MakeBackground() {
         setpriority(PRIO_PROCESS, static_cast<id_t>(gettid()), 19);
     }
 }
+#endif
 
 } // namespace BbThreads
