@@ -34,12 +34,10 @@ out/pyenv/Scripts/python.exe -m PyInstaller --noconfirm --clean --log-level WARN
     --workpath out/pyi-work --specpath out/pyi-work --paths "$(cygpath -w "$PWD/scripts")" "${hidden[@]}" \
     "$(cygpath -w "$PWD/launcher/bbport_launcher_win.py")"
 
-dest=dist/bbport-windows
-# A fresh folder: a previous package may hold generated files from test runs. Saves played from
-# it (user/) are kept aside and put back after the zip is made, so they never ship.
-rm -rf -- out/package-user
-if [[ -d $dest/user ]]; then mv -- "$dest/user" out/package-user; fi
-rm -rf -- dist/bbport-windows
+# The package is assembled in a fresh staging folder and zipped from there; dist/bbport-windows
+# (a playable copy that may hold saves and settings) is only refreshed afterwards.
+dest=out/stage/bbport-windows
+rm -rf -- out/stage
 mkdir -p "$dest/bin" "$dest/launcher"
 cp -r out/pyi-dist/Bloodborne/. "$dest/"
 llvm-strip -o "$dest/Play Bloodborne.exe" out/bb-play.exe
@@ -57,7 +55,22 @@ cp -r scripts patches "$dest/"
 cp run.py LICENSE README.md packaging/windows/README-Windows.txt "$dest/"
 if [[ -d fsr4_shaders ]]; then cp -r fsr4_shaders "$dest/"; fi
 find "$dest" -name __pycache__ -prune -exec rm -r {} +
-(cd dist && rm -f bbport-windows.zip && powershell -NoProfile -Command \
-    "Compress-Archive -Path bbport-windows -DestinationPath bbport-windows.zip")
-if [[ -d out/package-user ]]; then mv -- out/package-user "$dest/user"; fi
+mkdir -p dist
+rm -f dist/bbport-windows.zip
+(cd out/stage && powershell -NoProfile -Command \
+    "Compress-Archive -Path bbport-windows -DestinationPath ../../dist/bbport-windows.zip")
+
+# Refresh dist/bbport-windows, keeping what players create there (saves, settings, mods), and
+# only while nothing runs from it: deleting a running launcher's files breaks it.
+play=dist/bbport-windows
+running=$(powershell -NoProfile -Command \
+    "@(Get-Process | Where-Object { \$_.Path -like '$(cygpath -w "$PWD/$play")\\*' }).Count" | tr -d '\r')
+if [[ ${running:-0} != 0 ]]; then
+    echo "dist/bbport-windows is in use ($running processes): not refreshed; the zip is ready." >&2
+else
+    mkdir -p "$play"
+    find "$play" -mindepth 1 -maxdepth 1 ! -name user ! -name mods ! -name bbport.ini \
+        ! -name mods.json ! -name patches.json -exec rm -rf {} +
+    cp -r "$dest/." "$play/"
+fi
 du -sh "$dest" dist/bbport-windows.zip
