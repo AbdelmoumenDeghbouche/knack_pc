@@ -16,11 +16,17 @@ import json
 import os
 from pathlib import Path
 import queue
+import re
 import runpy
+import shutil
 import subprocess
 import sys
+import tempfile
 import threading
+import time
 import urllib.request
+import webbrowser
+import zipfile
 
 FROZEN = getattr(sys, 'frozen', False)
 PORT_DIR = Path(sys.executable).resolve().parent if FROZEN else Path(__file__).resolve().parent.parent
@@ -31,6 +37,13 @@ CONFIG_FILE = CONFIG_DIR / 'settings.json'
 PATCH_VERSION = '01.09'
 MAX_LOG_LINES = 6000
 NO_WINDOW = getattr(subprocess, 'CREATE_NO_WINDOW', 0)
+# This build; GitHub release tags are windows-v<VERSION>.
+VERSION = '1.2'
+RELEASES_API = 'https://api.github.com/repos/Supermedo/bloodborne_pc/releases/latest'
+RELEASES_PAGE = 'https://github.com/Supermedo/bloodborne_pc/releases/latest'
+UPDATE_DIR = Path(tempfile.gettempdir()) / 'bbport-update'
+# Never copied over an installation by an update (the package does not hold them either).
+USER_FILES = ('user', 'out', 'mods', 'bbport.ini', 'mods.json', 'patches.json', 'last_run.log')
 
 
 # ---------------------------------------------------------------------------------------------
@@ -153,7 +166,8 @@ APP_DEFAULTS = {'ui_language': '', 'game_dir': str(PORT_DIR.parent / 'CUSA03173'
                 'player_name': '', 'fullscreen': False, 'hdr': False, 'present_mode': 'Mailbox',
                 'fps_mode': 'uncap', 'frame_cap': '', 'draw_pipe': '', 'readbacks': '',
                 'frames_ahead': '', 'frame_stats': False, 'gpu_profile': False,
-                'vk_validation': False, 'extra_env': '', 'close_on_play': False}
+                'vk_validation': False, 'extra_env': '', 'close_on_play': False,
+                'check_updates': True}
 
 UPSCALERS = [('fsr4', ('FSR 4 (best quality)', 'FSR 4 (лучшее качество)')),
              ('fsr411', ('FSR 4.1.1 (needs fsr4_411 assets)', 'FSR 4.1.1 (нужны ассеты fsr4_411)')),
@@ -332,6 +346,8 @@ class Launcher:
         root.protocol('WM_DELETE_WINDOW', self.close)
         root.after(100, self.drain_output)
         threading.Thread(target=self.detect_gpu, daemon=True).start()
+        if self.app.get('check_updates', True):
+            threading.Thread(target=self.check_update, daemon=True).start()
 
     def px(self, size):
         return int(size * self.dpi)
@@ -530,7 +546,8 @@ class Launcher:
         side.pack(side='left', fill='y')
         side.pack_propagate(False)
         tk.Label(side, text='BLOODBORNE', bg=BG, fg=GOLD, font=('Georgia', 16)).pack(anchor='w', padx=22, pady=(24, 0))
-        tk.Label(side, text=_('native port · Windows', 'нативный порт · Windows'), bg=BG, fg=MUTED,
+        self.side = side
+        tk.Label(side, text=_('native port · Windows', 'нативный порт · Windows') + f'  ·  v{VERSION}', bg=BG, fg=MUTED,
                  font=('Segoe UI', 9)).pack(anchor='w', padx=22, pady=(0, 20))
         self.nav, self.current_page = {}, None
         for name, title in (('play', _('Play', 'Играть')), ('graphics', _('Graphics', 'Графика')),
@@ -546,10 +563,11 @@ class Launcher:
             item.bind('<Leave>', lambda _e, n=name: n != self.current_page and self.nav[n].configure(bg=BG))
             self.nav[name] = item
         tk.Frame(side, bg=BG).pack(fill='both', expand=True)
-        tk.Label(side, text=_('In the game: Insert or L3+R3\nopens the port\'s menu.',
-                              'В игре: Insert или L3+R3\nоткрывает меню порта.'),
-                 bg=BG, fg=MUTED, font=('Segoe UI', 9), justify='left', wraplength=self.px(210)).pack(
-            anchor='w', padx=22, pady=(0, 18))
+        self.update_box = None
+        self.side_note = tk.Label(side, text=_('In the game: Insert or L3+R3\nopens the port\'s menu.',
+                                               'В игре: Insert или L3+R3\nоткрывает меню порта.'),
+                                  bg=BG, fg=MUTED, font=('Segoe UI', 9), justify='left', wraplength=self.px(210))
+        self.side_note.pack(anchor='w', padx=22, pady=(0, 18))
 
         right = tk.Frame(self.root, bg=PANEL)
         right.pack(side='left', fill='both', expand=True)
@@ -824,11 +842,19 @@ class Launcher:
         self.row(f, _('Launcher language', 'Язык лаунчера'), self.choice(f, 'ui_language', 'app', UI_LANGUAGES),
                  _('Applies when the launcher opens again.', 'Применится при следующем открытии лаунчера.'))
         self.check(f, 'close_on_play', 'app', _('Close the launcher when the game starts', 'Закрывать лаунчер при запуске игры'))
+        self.check(f, 'check_updates', 'app', _('Check for updates when the launcher opens',
+                                                'Проверять обновления при открытии лаунчера'))
         holder = ttk.Frame(f)
         holder.grid(row=self.next_row(f), column=0, columnspan=2, sticky='w', pady=(10, 0))
         ttk.Button(holder, text=_('Desktop shortcut', 'Ярлык на рабочем столе'), command=self.shortcut).pack(side='left')
         ttk.Button(holder, text=_('Port folder', 'Папка порта'), command=lambda: self.open_path(DATA_DIR)).pack(side='left', padx=6)
         ttk.Button(holder, text='bbport.ini', command=lambda: self.open_path(ini_path())).pack(side='left')
+        holder = ttk.Frame(f)
+        holder.grid(row=self.next_row(f), column=0, columnspan=2, sticky='w', pady=(10, 0))
+        ttk.Button(holder, text=_('Check for updates', 'Проверить обновления'),
+                   command=lambda: threading.Thread(target=self.check_update, args=(True,), daemon=True).start()
+                   ).pack(side='left')
+        ttk.Label(holder, text=f'v{VERSION}', style='Muted.TLabel').pack(side='left', padx=10)
         holder = ttk.Frame(f)
         holder.grid(row=self.next_row(f), column=0, columnspan=2, sticky='w', pady=(10, 0))
         ttk.Button(holder, text=_('Clear shader cache', 'Очистить кэш шейдеров'), command=self.clear_cache).pack(side='left')
@@ -1156,6 +1182,97 @@ class Launcher:
             path.mkdir(parents=True, exist_ok=True)
         os.startfile(str(path))
 
+    # ---- updates -------------------------------------------------------------------------------
+    def check_update(self, manual=False):
+        """Helper thread: asks GitHub for the newest release and offers it when it is newer."""
+        try:
+            version, url, page = latest_release()
+        except (OSError, ValueError, KeyError) as failure:
+            if manual:
+                self.ui_calls.put(lambda error=failure: self.messagebox.showerror(
+                    'Bloodborne', _('Could not check for updates: {}', 'Не удалось проверить обновления: {}').format(error)))
+            return
+
+        def show():
+            if version_tuple(version) > version_tuple(VERSION):
+                self.offer_update(version, url, page)
+            elif manual:
+                self.messagebox.showinfo('Bloodborne', _('You have the latest version ({}).',
+                                                         'У вас последняя версия ({}).').format(VERSION))
+        self.ui_calls.put(show)
+
+    def offer_update(self, version, url, page):
+        if self.update_box:
+            return
+        tk, ttk = self.tk, self.ttk
+        text = _('Version {} is available.', 'Доступна версия {}.').format(version)
+        box = tk.Frame(self.side, bg=CARD, highlightthickness=1, highlightbackground=GOLD)
+        self.update_label = tk.Label(box, text=text, bg=CARD, fg=GOLD, font=('Segoe UI', 10, 'bold'),
+                                     wraplength=self.px(160), justify='left')
+        self.update_label.pack(anchor='w', padx=10, pady=(8, 6))
+        buttons = tk.Frame(box, bg=CARD)
+        buttons.pack(fill='x', padx=10, pady=(0, 10))
+        self.update_button = ttk.Button(buttons, text=_('Update', 'Обновить'),
+                                        command=lambda: self.install_update(version, url, page))
+        self.update_button.pack(fill='x')
+        ttk.Button(buttons, text=_("What's new", 'Что нового'), command=lambda: webbrowser.open(page)).pack(
+            fill='x', pady=(4, 0))
+        box.pack(fill='x', padx=(22, 18), pady=(0, 14), before=self.side_note)
+        self.update_box = box
+        if not self.process:
+            self.status.configure(text=text, fg=GOLD)
+
+    def install_update(self, version, url, page):
+        if self.process:
+            self.messagebox.showinfo('Bloodborne', _('Close the game before updating.', 'Закройте игру перед обновлением.'))
+            return
+        if not FROZEN or not url:  # a source tree updates with git
+            webbrowser.open(page)
+            return
+        if not self.messagebox.askyesno('Bloodborne', _(
+                'Install version {} now? The launcher closes, installs it and opens again. Saves and settings are kept.',
+                'Установить версию {} сейчас? Лаунчер закроется, установит её и откроется снова. Сохранения и '
+                'настройки останутся.').format(version)):
+            return
+        self.update_button.configure(state='disabled')
+
+        def progress(percent):
+            self.update_label.configure(text=_('Downloading version {}… {}%', 'Загрузка версии {}… {}%').format(
+                version, percent))
+
+        def work():
+            try:
+                shutil.rmtree(UPDATE_DIR, ignore_errors=True)
+                UPDATE_DIR.mkdir(parents=True, exist_ok=True)
+                archive = UPDATE_DIR / 'update.zip'
+                request = urllib.request.Request(url, headers={'User-Agent': 'bbport-launcher'})
+                with urllib.request.urlopen(request, timeout=60) as response, open(archive, 'wb') as out:
+                    total, done, shown = int(response.headers.get('Content-Length') or 0), 0, -1
+                    while chunk := response.read(1 << 20):
+                        out.write(chunk)
+                        done += len(chunk)
+                        percent = done * 100 // total if total else 0
+                        if percent != shown:
+                            shown = percent
+                            self.ui_calls.put(lambda p=percent: progress(p))
+                with zipfile.ZipFile(archive) as package:
+                    package.extractall(UPDATE_DIR / 'new')
+                archive.unlink()
+                new = next((p.parent for p in (UPDATE_DIR / 'new').rglob('Bloodborne.exe')), None)
+                if not new:
+                    raise OSError('Bloodborne.exe is missing from the download')
+                # The new launcher copies itself over this installation once this one has closed.
+                subprocess.Popen([str(new / 'Bloodborne.exe'), '--install-update', str(PORT_DIR), str(os.getpid())],
+                                 cwd=str(new), stdin=subprocess.DEVNULL, creationflags=NO_WINDOW)
+                self.ui_calls.put(self.root.destroy)
+            except (OSError, zipfile.BadZipFile) as failure:
+                def failed(error=failure):
+                    self.update_button.configure(state='normal')
+                    self.update_label.configure(text=_('Version {} is available.', 'Доступна версия {}.').format(version))
+                    self.messagebox.showerror('Bloodborne', _('Update failed: {}', 'Не удалось обновить: {}').format(error))
+                self.ui_calls.put(failed)
+        threading.Thread(target=work, daemon=True).start()
+
     def clear_cache(self):
         """Shader and pipeline caches; they are rebuilt while playing."""
         if self.process:
@@ -1235,6 +1352,49 @@ def play_without_window(settings):
         return process.wait()
 
 
+def version_tuple(text):
+    return tuple(int(number) for number in re.findall(r'\d+', text or ''))
+
+
+def latest_release():
+    """(version, zip URL, page URL) of the newest GitHub release."""
+    request = urllib.request.Request(RELEASES_API, headers={'Accept': 'application/vnd.github+json',
+                                                            'User-Agent': 'bbport-launcher'})
+    with urllib.request.urlopen(request, timeout=15) as response:
+        release = json.load(response)
+    version = '.'.join(re.findall(r'\d+', release['tag_name']))
+    url = next((asset['browser_download_url'] for asset in release.get('assets', [])
+                if asset.get('name', '').lower().endswith('.zip')), None)
+    return version, url, release.get('html_url') or RELEASES_PAGE
+
+
+def install_update(target, wait_pid):
+    """--install-update TARGET PID, run by the downloaded version from its temporary folder:
+    waits for the old launcher to close, copies this version over TARGET (never the saves,
+    settings or mods) and starts it."""
+    target = Path(target)
+    kernel = ctypes.windll.kernel32
+    handle = kernel.OpenProcess(0x00100000, False, int(wait_pid))  # SYNCHRONIZE
+    if handle:
+        kernel.WaitForSingleObject(handle, 60000)
+        kernel.CloseHandle(handle)
+    ignore = shutil.ignore_patterns(*USER_FILES)
+    for attempt in range(30):
+        try:
+            shutil.copytree(PORT_DIR, target, dirs_exist_ok=True, ignore=ignore)
+            break
+        except OSError:  # a file still in use: the old launcher is closing
+            time.sleep(1)
+    else:
+        ctypes.windll.user32.MessageBoxW(None, _(
+            'Could not install the update. Download it from the releases page.',
+            'Не удалось установить обновление. Скачайте его со страницы релизов.'), 'Bloodborne', 0x10)
+        webbrowser.open(RELEASES_PAGE)
+        return 1
+    subprocess.Popen([str(target / 'Bloodborne.exe')], cwd=str(target))
+    return 0
+
+
 def main():
     global LANG
     args = sys.argv[1:]
@@ -1242,6 +1402,10 @@ def main():
         sys.exit(run_role(args))
     settings = {**APP_DEFAULTS, **load_json(CONFIG_FILE, {})}
     LANG = settings.get('ui_language') or windows_language()
+    if args[:1] == ['--install-update'] and len(args) == 3:
+        sys.exit(install_update(args[1], args[2]))
+    if FROZEN and UPDATE_DIR not in PORT_DIR.parents:
+        shutil.rmtree(UPDATE_DIR, ignore_errors=True)  # what a finished update left behind
     # Without a usable game folder there is nothing to play yet: open the launcher instead.
     if '--play' in args and (Path(settings['game_dir'] or '.') / 'eboot.bin').is_file():
         sys.exit(play_without_window(settings))
