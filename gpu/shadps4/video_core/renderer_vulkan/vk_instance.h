@@ -53,6 +53,11 @@ public:
         return vk13_features.subgroupSizeControl;
     }
 
+    /// Largest VkBuffer the driver allows (2 GiB on AMD's Windows driver).
+    u64 GetMaxBufferSize() const {
+        return vk13_props.maxBufferSize;
+    }
+
     vk::PhysicalDevice GetPhysicalDevice() const {
         return physical_device;
     }

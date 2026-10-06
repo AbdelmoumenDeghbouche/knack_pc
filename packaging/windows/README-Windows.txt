@@ -32,6 +32,17 @@ Data
 - Settings: bbport.ini next to Bloodborne.exe; launcher options in %APPDATA%\bbport-launcher.
 - Generated files (prepared game image, patches): out\.
 
+Cheats
+- The "Cheats" page has cheats (never die, enemies do not see or hear you, Rally never fades,
+  control the targeted enemy) and gameplay tweaks (no Rally, camera further away, no camera
+  auto-rotation, run with less stick tilt, ragdoll physics). They are game patches for 1.09,
+  applied when the game starts.
+
+Problems
+- Black screen at start: Advanced -> "Clear shader cache", then start again (the first minutes
+  stutter while the cache is rebuilt).
+- Send user\last_run.log with any bug report.
+
 Upscaling
 - FSR 3.1 works on every GPU. FSR 4 needs its assets in fsr4_shaders\ (included in this
   package, or Graphics -> "Download FSR 4 assets"); GPUs without the required shader features

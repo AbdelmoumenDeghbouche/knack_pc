@@ -36,6 +36,16 @@ inline constexpr Effect Effects[] = {
     {"skip_intro", "Пропуск заставок при запуске", false},
     {"debug_camera", "Свободная камера (Cross + L3)", false},
     {"debug_menu", "Debug menu (нужны файлы шрифтов)", false},
+    {"cheat_no_death", "Чит: бессмертие (не ниже 1 HP)", false},
+    {"cheat_stealth", "Чит: враги не замечают", false},
+    {"cheat_silent", "Чит: враги не слышат", false},
+    {"cheat_rally_no_decay", "Чит: Rally не угасает", false},
+    {"cheat_enemy_control", "Чит: управление врагом (R3 / L3)", false},
+    {"tweak_no_rally", "Без Rally (возврата HP)", false},
+    {"tweak_camera_distance", "Камера дальше", false},
+    {"tweak_no_camera_rotation", "Без автоповорота камеры", false},
+    {"tweak_easy_run", "Бег с меньшим наклоном стика", false},
+    {"tweak_ragdoll", "Физика тел как в Dark Souls", false},
 };
 inline constexpr int EffectCount = int(sizeof(Effects) / sizeof(Effects[0]));
 /// Live output resolutions: the upscaler's output and the UI host targets.

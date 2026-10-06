@@ -151,9 +151,20 @@ bool WriteVector(const BlobType type, std::filesystem::path&& path_, std::vector
                     LOG_ERROR(Render, "Failed to add {} to the archive", path.string().c_str());
                 }
             } else {
+                // bbport: write beside and rename into place, so a game that ends during the
+                // write (the queue is not drained at exit) never leaves a truncated blob that
+                // the next start would load.
                 using namespace Common::FS;
-                const auto file = IOFile{path, FileAccessMode::Create};
-                file.Write(v);
+                auto temp{path};
+                temp += ".tmp";
+                {
+                    const auto file = IOFile{temp, FileAccessMode::Create};
+                    if (!file.IsOpen() || file.Write(v) != v.size()) {
+                        return;
+                    }
+                }
+                std::error_code error;
+                std::filesystem::rename(temp, path, error);
             }
         }};
         std::scoped_lock lock{m_request};

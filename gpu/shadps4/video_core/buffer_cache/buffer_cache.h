@@ -38,9 +38,11 @@ class PageManager;
 
 class BufferCache {
     static constexpr u64 ADDRESS_SPACE_BITS = 40;
-    static constexpr u64 ARENA_PAGE_BITS = 32;
-    static constexpr u64 ARENA_PAGE_SIZE = u64{1} << ARENA_PAGE_BITS;
-    static constexpr u64 NUM_ARENA_PAGES = u64{1} << (ADDRESS_SPACE_BITS - ARENA_PAGE_BITS);
+    // bbport: arena pages are 4 GiB unless the driver's buffer size limit is lower (AMD's
+    // Windows driver: 2 GiB); an arena spans up to two pages, so they shrink to half the limit.
+    static constexpr u64 MAX_ARENA_PAGE_BITS = 32;
+    static constexpr u64 MIN_ARENA_PAGE_BITS = 30;
+    static constexpr u64 MAX_ARENA_PAGES = u64{1} << (ADDRESS_SPACE_BITS - MIN_ARENA_PAGE_BITS);
     static constexpr u64 MIN_BLOCK_SIZE = 16_KB;
 
 public:
@@ -165,7 +167,10 @@ private:
     std::unique_ptr<FaultManager> fault_manager;
     std::unique_ptr<Buffer> bda_pagetable_buffer;
 
-    std::array<const Buffer*, NUM_ARENA_PAGES> address_space{};
+    std::array<const Buffer*, MAX_ARENA_PAGES> address_space{};
+    u64 arena_page_bits{MAX_ARENA_PAGE_BITS};
+    u64 arena_page_size{u64{1} << MAX_ARENA_PAGE_BITS};
+    u64 num_arena_pages{u64{1} << (ADDRESS_SPACE_BITS - MAX_ARENA_PAGE_BITS)};
     std::deque<Buffer> arenas;
     std::vector<ArenaBinds> pending_binds;
     Vulkan::Semaphore memory_semaphore;

@@ -126,11 +126,28 @@ EXTRAS = [
     ('debug_menu', ('Game debug menu (left touchpad / Tab; needs the debug fonts)',
                     'Debug menu (левый touchpad / Tab; нужны шрифты)'), False),
 ]
-INI_FLAGS = {'sharpen', 'object_motion', 'show_fps', *(k for k, _t, _o in EFFECTS + EXTRAS)}
+# Cheats and gameplay tweaks: game patches for 1.09 (patches.py EFFECTS), off by default.
+CHEATS = [
+    ('cheat_no_death', ('Never die (health stops at 1 HP)', 'Бессмертие (здоровье не ниже 1 HP)'), False),
+    ('cheat_stealth', ('Enemies do not see you (unless attacked)', 'Враги не видят вас (пока не атакованы)'), False),
+    ('cheat_silent', ('Enemies do not hear you', 'Враги не слышат вас'), False),
+    ('cheat_rally_no_decay', ('Rally never fades', 'Rally не угасает'), False),
+    ('cheat_enemy_control', ('Control the targeted enemy (R3; L3 to go back; not with the free camera)',
+                             'Управление выбранным врагом (R3; L3 — назад; не вместе со свободной камерой)'), False),
+]
+TWEAKS = [
+    ('tweak_no_rally', ('No Rally (hits do not give health back)', 'Без Rally (удары не возвращают здоровье)'), False),
+    ('tweak_camera_distance', ('Camera further from the character', 'Камера дальше от персонажа'), False),
+    ('tweak_no_camera_rotation', ('No camera auto-rotation while moving', 'Без автоповорота камеры при движении'), False),
+    ('tweak_easy_run', ('Run with less stick tilt (about 70%)', 'Бег при меньшем наклоне стика (около 70%)'), False),
+    ('tweak_ragdoll', ('Dark Souls-style ragdoll physics (corpses fly further)',
+                       'Физика тел как в Dark Souls (тела отлетают дальше)'), False),
+]
+INI_FLAGS = {'sharpen', 'object_motion', 'show_fps', *(k for k, _t, _o in EFFECTS + EXTRAS + CHEATS + TWEAKS)}
 INI_DEFAULTS = {'upscaler': 'fsr4', 'preset': '1', 'sharpen': '1', 'sharpness': '0.50',
                 'object_motion': '1', 'show_fps': '1', 'output_res': '1920x1080', 'model_lod': '0',
                 'live_resolution': 'auto',
-                **{key: '1' if on else '0' for key, _t, on in EFFECTS + EXTRAS}}
+                **{key: '1' if on else '0' for key, _t, on in EFFECTS + EXTRAS + CHEATS + TWEAKS}}
 APP_DEFAULTS = {'ui_language': '', 'game_dir': str(PORT_DIR.parent / 'CUSA03173'), 'user_dir': '',
                 'mods_dir': '', 'mods_enabled': True, 'patches_dir': '', 'language': '1',
                 'player_name': '', 'fullscreen': False, 'hdr': False, 'present_mode': 'Mailbox',
@@ -518,7 +535,8 @@ class Launcher:
         self.nav, self.current_page = {}, None
         for name, title in (('play', _('Play', 'Играть')), ('graphics', _('Graphics', 'Графика')),
                             ('display', _('Display & FPS', 'Экран и FPS')), ('game', _('Game & effects', 'Игра и эффекты')),
-                            ('mods', _('Mods & patches', 'Моды и патчи')), ('advanced', _('Advanced', 'Дополнительно')),
+                            ('cheats', _('Cheats', 'Читы')), ('mods', _('Mods & patches', 'Моды и патчи')),
+                            ('advanced', _('Advanced', 'Дополнительно')),
                             ('log', _('Log', 'Журнал'))):
             item = tk.Label(side, text='    ' + title, bg=BG, fg=TEXT, anchor='w', font=('Segoe UI', 11),
                             pady=10, cursor='hand2')
@@ -552,6 +570,7 @@ class Launcher:
         self.build_graphics()
         self.build_display()
         self.build_game()
+        self.build_cheats()
         self.build_mods()
         self.build_advanced()
         self.build_log()
@@ -757,6 +776,23 @@ class Launcher:
         self.note(f, _('Effects and extras are game patches for version 1.09, applied at start.',
                        'Эффекты и дополнения — патчи игры для версии 1.09, применяются при запуске.'))
 
+    def build_cheats(self):
+        f = self.scrolled_page('cheats', _('Cheats', 'Читы'),
+                               _('Game patches for version 1.09, applied at start. Leave them off for a normal '
+                                 'play-through.', 'Патчи игры для версии 1.09, применяются при запуске. Для обычного '
+                                 'прохождения оставьте их выключенными.'))
+        self.version_warning(f)
+        self.section(f, _('Cheats', 'Читы'), top=4)
+        for key, title, _on in CHEATS:
+            self.check(f, key, 'ini', _(*title))
+        self.section(f, _('Gameplay tweaks', 'Изменения игрового процесса'))
+        for key, title, _on in TWEAKS:
+            self.check(f, key, 'ini', _(*title))
+        # Enemy control and the free camera share their buttons: one at a time.
+        control, camera = self.var('cheat_enemy_control', 'ini'), self.var('debug_camera', 'ini')
+        control.trace_add('write', lambda *_a: control.get() and camera.set(False))
+        camera.trace_add('write', lambda *_a: camera.get() and control.set(False))
+
     def build_mods(self):
         f = self.scrolled_page('mods', _('Mods & patches', 'Моды и патчи'),
                                _('The game files are never changed: mods are layered over them at start.',
@@ -793,6 +829,12 @@ class Launcher:
         ttk.Button(holder, text=_('Desktop shortcut', 'Ярлык на рабочем столе'), command=self.shortcut).pack(side='left')
         ttk.Button(holder, text=_('Port folder', 'Папка порта'), command=lambda: self.open_path(DATA_DIR)).pack(side='left', padx=6)
         ttk.Button(holder, text='bbport.ini', command=lambda: self.open_path(ini_path())).pack(side='left')
+        holder = ttk.Frame(f)
+        holder.grid(row=self.next_row(f), column=0, columnspan=2, sticky='w', pady=(10, 0))
+        ttk.Button(holder, text=_('Clear shader cache', 'Очистить кэш шейдеров'), command=self.clear_cache).pack(side='left')
+        ttk.Label(holder, text=_('If the game only shows a black screen, this usually helps.',
+                                 'Если игра показывает только чёрный экран, обычно это помогает.'),
+                  style='Muted.TLabel').pack(side='left', padx=10)
         self.section(f, _('Performance', 'Производительность'))
         self.row(f, _('Two-stage GPU pipeline', 'Двухстадийный конвейер GPU'), self.choice(f, 'draw_pipe', 'app', DRAW_PIPE),
                  _('20–30% faster; switch it off if the game is unstable.', 'Быстрее на 20–30%; при нестабильности выключите.'))
@@ -1113,6 +1155,17 @@ class Launcher:
         elif not path.exists():
             path.mkdir(parents=True, exist_ok=True)
         os.startfile(str(path))
+
+    def clear_cache(self):
+        """Shader and pipeline caches; they are rebuilt while playing."""
+        if self.process:
+            return
+        import shutil
+        cache = Path(self.app['user_dir'] or DATA_DIR / 'user') / 'cache'
+        shutil.rmtree(cache, ignore_errors=True)
+        self.messagebox.showinfo('Bloodborne', _('Shader cache cleared. The next start stutters for a few minutes while '
+                                                 'it is rebuilt.', 'Кэш шейдеров очищен. Следующий запуск несколько '
+                                                 'минут будет подтормаживать, пока кэш собирается заново.'))
 
     def shortcut(self):
         """Bloodborne.lnk on the desktop."""

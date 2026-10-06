@@ -156,15 +156,29 @@ Image::Image(const Vulkan::Instance& instance, Vulkan::Runtime& runtime_,
 
     constexpr auto tiling = vk::ImageTiling::eOptimal;
     const auto supported_format = instance.GetSupportedFormat(info.pixel_format, format_features);
-    const vk::PhysicalDeviceImageFormatInfo2 format_info{
+    vk::PhysicalDeviceImageFormatInfo2 format_info{
         .format = supported_format,
         .type = ConvertImageType(info.type),
         .tiling = tiling,
         .usage = usage_flags,
         .flags = flags,
     };
-    const auto image_format_properties =
+    auto image_format_properties =
         instance.GetPhysicalDevice().getImageFormatProperties2(format_info);
+    // bbport: storage usage is speculative (see ImageUsageFlags). Drivers that refuse it for a
+    // format (AMD's Windows driver for BC6H) get the image without it: creating the unsupported
+    // combination anyway loses the device a few frames later.
+    if (image_format_properties.result == vk::Result::eErrorFormatNotSupported &&
+        (usage_flags & vk::ImageUsageFlagBits::eStorage)) {
+        format_info.usage = usage_flags & ~vk::ImageUsageFlagBits::eStorage;
+        image_format_properties = instance.GetPhysicalDevice().getImageFormatProperties2(format_info);
+        if (image_format_properties.result == vk::Result::eSuccess) {
+            usage_flags = format_info.usage;
+            format_features = FormatFeatureFlags(usage_flags);
+        } else {
+            format_info.usage = usage_flags;
+        }
+    }
     if (image_format_properties.result == vk::Result::eErrorFormatNotSupported) {
         LOG_ERROR(Render_Vulkan, "image format {} type {} is not supported (flags {}, usage {})",
                   vk::to_string(supported_format), vk::to_string(format_info.type),
