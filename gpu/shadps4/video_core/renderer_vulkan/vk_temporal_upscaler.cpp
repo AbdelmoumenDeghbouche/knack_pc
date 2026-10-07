@@ -728,8 +728,8 @@ void TemporalUpscaler::ExtraSharpen(vk::CommandBuffer cmdbuf, vk::Image target, 
     }
     const auto device = instance.GetDevice();
     if (extra_sharpen_width != w || extra_sharpen_height != h) {
-        // Retired command buffers may still read the old copy.
-        scheduler.Finish();
+        // Retired command buffers may still read the old copy. `cmdbuf` stays open.
+        scheduler.WaitSubmitted();
         extra_sharpen_view.reset();
         extra_sharpen_image = VideoCore::UniqueImage(device, instance.GetAllocator());
         extra_sharpen_image.Create(vk::ImageCreateInfo{

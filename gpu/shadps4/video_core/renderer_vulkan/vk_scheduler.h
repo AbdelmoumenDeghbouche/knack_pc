@@ -682,6 +682,11 @@ public:
     /// Sends the current execution context to the GPU and waits for it to complete.
     void Finish();
 
+    /// bbport: waits for the work submitted so far but leaves the command buffer being
+    /// recorded open, so a CommandBuffer() the caller holds stays valid (Finish() submits it:
+    /// recording into a submitted buffer crashes AMD's driver).
+    void WaitSubmitted();
+
     /// Waits for the given tick to trigger on the GPU.
     void Wait(u64 tick);
 

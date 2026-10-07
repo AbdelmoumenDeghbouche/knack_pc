@@ -332,6 +332,13 @@ void Scheduler::Finish() {
     Wait(presubmit_tick);
 }
 
+void Scheduler::WaitSubmitted() {
+    const u64 tick = CurrentTick();
+    if (tick > 1) {
+        Wait(tick - 1);
+    }
+}
+
 void Scheduler::Wait(u64 tick) {
     if (tick >= work_semaphore.CurrentTick()) {
         // Make sure we are not waiting for the current tick without signalling

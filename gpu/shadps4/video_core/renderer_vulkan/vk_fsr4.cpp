@@ -79,11 +79,17 @@ struct Fsr4Upscaler::Impl {
         Destroy();
     }
 
-    void Destroy() {
+    /// `recording`: called while a frame's command buffer is being recorded; it is left open
+    /// (Finish() would submit it under the caller).
+    void Destroy(bool recording = false) {
         if (!backend_ok && !context_ok) {
             return;
         }
-        scheduler.Finish();
+        if (recording) {
+            scheduler.WaitSubmitted();
+        } else {
+            scheduler.Finish();
+        }
         if (context_ok) {
             ffxFsr4V07DestroyContext(&context, nullptr);
             context_ok = false;
@@ -283,9 +289,9 @@ struct Fsr4Upscaler::Impl {
         const int preset = std::clamp(f.preset, 0, 4);
         if (!context_ok || preset != model || f.output.width != out_width ||
             f.output.height != out_height) {
-            Destroy();
+            Destroy(true);
             if (!CreateBackend(preset, f.output.width, f.output.height)) {
-                Destroy();
+                Destroy(true);
                 return false;
             }
         }

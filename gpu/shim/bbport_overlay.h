@@ -5,6 +5,7 @@
 
 #pragma once
 
+#include <string>
 #include "common/types.h"
 #include "video_core/renderer_vulkan/vk_common.h"
 
@@ -31,7 +32,11 @@ bool Visible();
 /// Present thread: draws into `view` (layout ColorAttachmentOptimal).
 void Render(vk::CommandBuffer cmdbuf, vk::ImageView view, vk::Extent2D extent);
 
-/// The menu is open: the game's input is held neutral.
+/// The menu is open or a text entry is shown: the game's input is held neutral.
 bool CapturesInput();
+
+/// Window thread: the game's text dialog (sceImeDialog). Shown as a box on screen until
+/// `active` is false; typing goes to the window (sdl_window), the box only displays it.
+void SetTextEntry(bool active, const std::string& prompt, const std::string& text);
 
 } // namespace BbOverlay

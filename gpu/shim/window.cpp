@@ -77,6 +77,7 @@ void WindowSDL::UpdateTextTitle() {
     const std::string title = text_active ? base_title + " \u2014 " + text_prompt + ": " + text + "_  (Enter = OK, Esc = cancel)"
                                           : base_title;
     SDL_SetWindowTitle(window, title.c_str());
+    BbOverlay::SetTextEntry(text_active, text_prompt, text);
 }
 
 bool WindowSDL::PollEvents() {
@@ -107,6 +108,17 @@ bool WindowSDL::PollEvents() {
                 text_active = false;
                 SDL_StopTextInput(window);
             }
+            UpdateTextTitle();
+            continue;
+        }
+        // The controller finishes the text dialog too: Cross (A) accepts, Circle (B) cancels.
+        if (text_active && event.type == SDL_EVENT_GAMEPAD_BUTTON_DOWN &&
+            (event.gbutton.button == SDL_GAMEPAD_BUTTON_SOUTH ||
+             event.gbutton.button == SDL_GAMEPAD_BUTTON_EAST)) {
+            std::scoped_lock lock{text_mutex};
+            text_state = event.gbutton.button == SDL_GAMEPAD_BUTTON_SOUTH ? 1 : 2;
+            text_active = false;
+            SDL_StopTextInput(window);
             UpdateTextTitle();
             continue;
         }

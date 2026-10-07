@@ -2,6 +2,7 @@
 #include "bbport_overlay.h"
 
 #include <atomic>
+#include <cfloat>
 #include <chrono>
 #include <cmath>
 #include <cstdio>
@@ -51,6 +52,9 @@ bool initialized = false;
 std::atomic<bool> menu_open{false};
 bool l3_down = false, r3_down = false;
 bool dirty = false; // settings changed while open: saved on close
+// The game's text dialog (SetTextEntry), guarded by imgui_mutex.
+bool text_entry_active = false;
+std::string text_entry_prompt, text_entry_text;
 float base_scale = 1.0f;
 
 // Present rate for the FPS counter.
@@ -389,6 +393,30 @@ void Menu() {
     }
 }
 
+// The game's text dialog: what is typed, and how to finish (keyboard or controller).
+void TextEntryBox() {
+    const ImGuiViewport* viewport = ImGui::GetMainViewport();
+    ImGui::SetNextWindowPos(ImVec2(viewport->WorkPos.x + viewport->WorkSize.x * 0.5f,
+                                   viewport->WorkPos.y + viewport->WorkSize.y * 0.42f),
+                            ImGuiCond_Always, ImVec2(0.5f, 0.5f));
+    ImGui::SetNextWindowSizeConstraints(ImVec2(viewport->WorkSize.x * 0.32f, 0.0f),
+                                        ImVec2(viewport->WorkSize.x * 0.8f, FLT_MAX));
+    ImGui::SetNextWindowBgAlpha(0.92f);
+    ImGui::Begin("##text_entry", nullptr,
+                 ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_AlwaysAutoResize |
+                     ImGuiWindowFlags_NoInputs | ImGuiWindowFlags_NoNav |
+                     ImGuiWindowFlags_NoFocusOnAppearing);
+    ImGui::TextColored(ImVec4(0.85f, 0.72f, 0.45f, 1.0f), "%s", text_entry_prompt.c_str());
+    ImGui::Separator();
+    ImGui::SetWindowFontScale(1.4f);
+    ImGui::Text("%s_", text_entry_text.c_str());
+    ImGui::SetWindowFontScale(1.0f);
+    ImGui::Separator();
+    ImGui::TextDisabled("Keyboard: type, Backspace to erase, Enter = OK, Esc = cancel");
+    ImGui::TextDisabled("Controller: Cross (A) = OK, Circle (B) = cancel");
+    ImGui::End();
+}
+
 void FpsCounter() {
     const ImGuiViewport* viewport = ImGui::GetMainViewport();
     const float pad = 12.0f * base_scale;
@@ -579,11 +607,18 @@ bool HandleEvent(const SDL_Event& event) {
 }
 
 bool Visible() {
-    return initialized && (menu_open || BbSettings::Get().show_fps);
+    return initialized && (menu_open || text_entry_active || BbSettings::Get().show_fps);
 }
 
 bool CapturesInput() {
-    return menu_open;
+    return menu_open || text_entry_active;
+}
+
+void SetTextEntry(bool active, const std::string& prompt, const std::string& text) {
+    std::scoped_lock lock{imgui_mutex};
+    text_entry_active = active;
+    text_entry_prompt = prompt;
+    text_entry_text = text;
 }
 
 void Render(vk::CommandBuffer cmdbuf, vk::ImageView view, vk::Extent2D extent) {
@@ -617,6 +652,9 @@ void Render(vk::CommandBuffer cmdbuf, vk::ImageView view, vk::Extent2D extent) {
     }
     if (BbSettings::Get().show_fps && !menu_open) {
         FpsCounter();
+    }
+    if (text_entry_active) {
+        TextEntryBox();
     }
     ImGui::Render();
 

@@ -258,10 +258,12 @@ static ABI int32_t ime_init(const ImeParam *param, const void *extended) {
     utf16_to_utf8(param->title,128,prompt,sizeof(prompt));
     const char *preset=getenv("BB_IME_TEXT");
     if (preset) { ime_complete(0,preset); return 0; }
-    if (!bbgpu_text_input_begin(initial,prompt[0] ? prompt : "Text")) {
-        const char *name=getenv("BB_USER_NAME");
-        ime_complete(0,name ? name : initial[0] ? initial : "Hunter");
-    } else printf("Runtime: ImeDialog opened: type in the game window, Enter to confirm, Esc to cancel\n");
+    /* An empty field starts with the player name (launcher) or "Hunter": a controller alone
+     * can accept it (the port has no on-screen keyboard). */
+    const char *name=getenv("BB_USER_NAME");
+    const char *start=initial[0] ? initial : name && *name ? name : "Hunter";
+    if (!bbgpu_text_input_begin(start,prompt[0] ? prompt : "Text")) ime_complete(0,start);
+    else printf("Runtime: ImeDialog opened: shown on screen; keyboard Enter or Cross accepts, Esc or Circle cancels\n");
     return 0;
 }
 static ABI int32_t ime_status(void) {
