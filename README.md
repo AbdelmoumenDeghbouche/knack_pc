@@ -271,5 +271,10 @@ The Windows build also uses:
 The launcher is frozen with [PyInstaller](https://pyinstaller.org) and the icon is drawn with
 [Pillow](https://python-pillow.org). FSR 4 assets for the in-launcher download come from
 [FireBurn/Q2RTX](https://github.com/FireBurn/Q2RTX). The Windows guest memory layout follows the
-placeholder approach of shadPS4's Windows memory manager. The Bloodborne-style icon is original
+placeholder approach of shadPS4's Windows memory manager. DLSS runs through
+`bbport_dlss.dll` (`gpu/dlss_bridge`, MIT), adapted from the DLSS bridge of
+[IFreemz/shadPS4-Bloodborne-DLSS-FSR](https://github.com/IFreemz/shadPS4-Bloodborne-DLSS-FSR) and
+built against the [NVIDIA DLSS SDK](https://github.com/NVIDIA/DLSS); NVIDIA's `nvngx_dlss.dll` is
+redistributed under its license (`licenses/NVIDIA-DLSS-LICENSE.txt` in the package). NVIDIA, GeForce
+RTX and DLSS are trademarks of NVIDIA Corporation. The port itself contains no NVIDIA code. The Bloodborne-style icon is original
 artwork, not taken from the game.
