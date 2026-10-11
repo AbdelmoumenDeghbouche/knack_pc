@@ -219,7 +219,9 @@ bool Instance::CreateDevice() {
         vk::PhysicalDeviceWorkgroupMemoryExplicitLayoutFeaturesKHR,
         vk::PhysicalDeviceImage2DViewOf3DFeaturesEXT, vk::PhysicalDeviceShaderClockFeaturesKHR,
         vk::PhysicalDeviceComputeShaderDerivativesFeaturesKHR,
-        vk::PhysicalDeviceShaderMixedFloatDotProductFeaturesVALVE>();
+        vk::PhysicalDeviceShaderMixedFloatDotProductFeaturesVALVE,
+        vk::PhysicalDevicePipelineBinaryFeaturesKHR,
+        vk::PhysicalDeviceMaintenance5FeaturesKHR>();
     features = feature_chain.get().features;
 
     const vk::StructureChain properties_chain = physical_device.getProperties2<
@@ -274,6 +276,10 @@ bool Instance::CreateDevice() {
 
     // Optional
     maintenance_5 = add_extension(VK_KHR_MAINTENANCE_5_EXTENSION_NAME);
+    pipeline_binaries = maintenance_5 &&
+        feature_chain.get<vk::PhysicalDeviceMaintenance5FeaturesKHR>().maintenance5 &&
+        feature_chain.get<vk::PhysicalDevicePipelineBinaryFeaturesKHR>().pipelineBinaries &&
+        add_extension(VK_KHR_PIPELINE_BINARY_EXTENSION_NAME);
     maintenance_8 = add_extension(VK_KHR_MAINTENANCE_8_EXTENSION_NAME);
     attachment_feedback_loop = add_extension(VK_EXT_ATTACHMENT_FEEDBACK_LOOP_LAYOUT_EXTENSION_NAME);
     if (attachment_feedback_loop) {
@@ -525,6 +531,9 @@ bool Instance::CreateDevice() {
         vk::PhysicalDeviceMaintenance5FeaturesKHR{
             .maintenance5 = true,
         },
+        vk::PhysicalDevicePipelineBinaryFeaturesKHR{
+            .pipelineBinaries = true,
+        },
         vk::PhysicalDeviceMaintenance8FeaturesKHR{
             .maintenance8 = true,
         },
@@ -597,6 +606,9 @@ bool Instance::CreateDevice() {
     if (!maintenance_5) {
         device_chain.unlink<vk::PhysicalDeviceMaintenance5FeaturesKHR>();
     }
+    if (!pipeline_binaries) {
+        device_chain.unlink<vk::PhysicalDevicePipelineBinaryFeaturesKHR>();
+    }
     if (!maintenance_8) {
         device_chain.unlink<vk::PhysicalDeviceMaintenance8FeaturesKHR>();
     }
@@ -634,6 +646,21 @@ bool Instance::CreateDevice() {
     device = std::move(dev);
 
     VULKAN_HPP_DEFAULT_DISPATCHER.init(*device);
+    if (pipeline_binaries) {
+        const auto& dispatch = VULKAN_HPP_DEFAULT_DISPATCHER;
+        const bool callable = dispatch.vkGetPipelineKeyKHR && dispatch.vkCreatePipelineBinariesKHR &&
+            dispatch.vkGetPipelineBinaryDataKHR && dispatch.vkDestroyPipelineBinaryKHR &&
+            dispatch.vkReleaseCapturedPipelineDataKHR;
+        if (!callable || device->getPipelineKeyKHR(nullptr, &pipeline_binary_global_key) !=
+                             vk::Result::eSuccess ||
+            !pipeline_binary_global_key.keySize ||
+            pipeline_binary_global_key.keySize > VK_MAX_PIPELINE_BINARY_KEY_SIZE_KHR) {
+            pipeline_binary_global_key.keySize = 0;
+            LOG_WARNING(Render_Vulkan, "Pipeline binary cache unavailable; using normal compilation");
+        } else {
+            LOG_INFO(Render_Vulkan, "Pipeline binary disk cache enabled");
+        }
+    }
     if (Dlss* dlss = Dlss::Get()) {
         dlss->Initialize(*instance, physical_device, *device);
     }

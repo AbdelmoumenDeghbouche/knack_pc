@@ -11,7 +11,13 @@
 #include <shared_mutex>
 #include <thread>
 #include <unordered_map>
+#include <fstream>
+#ifdef _WIN32
+#include <windows.h>
+#endif
 #include "common/serdes.h"
+#include "common/scope_exit.h"
+#include "video_core/renderer_vulkan/vk_pipeline_serialization.h"
 #include "common/thread.h"
 #include "gow3_overlay.h"
 #include "core/emulator_settings.h"
@@ -31,6 +37,352 @@ static constexpr u32 PipelineKeyVersion = 5u; // gow3: Info layout (ImageResourc
 } // namespace Serialization
 
 namespace Vulkan {
+
+namespace PipelineBinaryCache {
+bool ValidKey(const Key& key) {
+    return !key.empty() && key.size() <= VK_MAX_PIPELINE_BINARY_KEY_SIZE_KHR;
+}
+std::vector<u8> Encode(const Key& global, const Key& pipeline, u64 graphics_hash,
+                       const std::vector<Binary>& binaries) {
+    if (!ValidKey(global) || !ValidKey(pipeline) || binaries.empty() ||
+        binaries.size() > MaxBinaries) {
+        return {};
+    }
+    std::vector<u8> bytes;
+    const auto append = [&](const auto& value) {
+        const auto* p = reinterpret_cast<const u8*>(&value);
+        bytes.insert(bytes.end(), p, p + sizeof(value));
+    };
+    const auto blob = [&](const auto& data) {
+        append(u32(data.size()));
+        bytes.insert(bytes.end(), data.begin(), data.end());
+    };
+    append(u32{0x31425047}); // GPB1, little-endian Windows/Linux cache format.
+    append(u32{1});
+    append(graphics_hash);
+    blob(global);
+    blob(pipeline);
+    append(u32(binaries.size()));
+    for (const auto& binary : binaries) {
+        if (!ValidKey(binary.key) || binary.data.empty() || binary.data.size() > MaxFileSize ||
+            bytes.size() + binary.key.size() + binary.data.size() + 16 > MaxFileSize) {
+            return {};
+        }
+        blob(binary.key);
+        blob(binary.data);
+    }
+    append(u64{XXH3_64bits(bytes.data(), bytes.size())});
+    return bytes;
+}
+std::optional<std::vector<Binary>> Decode(std::span<const u8> bytes, const Key& global,
+                                          const Key& pipeline, u64 graphics_hash) {
+    if (bytes.size() < 8 || bytes.size() > MaxFileSize || !ValidKey(global) ||
+        !ValidKey(pipeline)) {
+        return std::nullopt;
+    }
+    u64 checksum;
+    std::memcpy(&checksum, bytes.data() + bytes.size() - 8, 8);
+    bytes = bytes.first(bytes.size() - 8);
+    if (checksum != XXH3_64bits(bytes.data(), bytes.size())) {
+        return std::nullopt;
+    }
+    size_t offset = 0;
+    const auto read = [&](auto& value) {
+        if (sizeof(value) > bytes.size() - offset) {
+            return false;
+        }
+        std::memcpy(&value, bytes.data() + offset, sizeof(value));
+        offset += sizeof(value);
+        return true;
+    };
+    const auto blob = [&](auto& data, size_t limit) {
+        u32 size;
+        if (!read(size) || !size || size > limit || size > bytes.size() - offset) {
+            return false;
+        }
+        data.assign(bytes.begin() + offset, bytes.begin() + offset + size);
+        offset += size;
+        return true;
+    };
+    u32 magic, version, count;
+    u64 stored_hash;
+    Key stored_global, stored_pipeline;
+    if (!read(magic) || magic != 0x31425047 || !read(version) || version != 1 ||
+        !read(stored_hash) || stored_hash != graphics_hash || !blob(stored_global, 32) ||
+        stored_global != global || !blob(stored_pipeline, 32) || stored_pipeline != pipeline ||
+        !read(count) || !count || count > MaxBinaries) {
+        return std::nullopt;
+    }
+    std::vector<Binary> binaries(count);
+    for (auto& binary : binaries) {
+        if (!blob(binary.key, 32) || !blob(binary.data, MaxFileSize)) {
+            return std::nullopt;
+        }
+    }
+    return offset == bytes.size() ? std::optional{std::move(binaries)} : std::nullopt;
+}
+bool Save(const std::filesystem::path& file, std::span<const u8> bytes) {
+    if (bytes.empty() || bytes.size() > MaxFileSize) {
+        return false;
+    }
+    std::error_code error;
+    std::filesystem::create_directories(file.parent_path(), error);
+    if (error) {
+        return false;
+    }
+    // Unique siblings avoid concurrent writers truncating one another's temporary data.
+    static std::atomic<u64> sequence{0};
+    auto temp = file;
+    temp += "." + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()) +
+            "." + std::to_string(sequence++) + ".tmp";
+    bool written = false;
+    {
+        std::ofstream stream(temp, std::ios::binary | std::ios::trunc);
+        if (stream) {
+            stream.write(reinterpret_cast<const char*>(bytes.data()), bytes.size());
+            stream.flush();
+            written = bool(stream);
+            stream.close();
+            written = written && !stream.fail();
+        }
+    }
+    bool renamed = false;
+    if (written) {
+#ifdef _WIN32
+        renamed = MoveFileExW(temp.c_str(), file.c_str(), MOVEFILE_REPLACE_EXISTING) != 0;
+#else
+        std::filesystem::rename(temp, file, error);
+        renamed = !error;
+#endif
+    }
+    if (!renamed) {
+        std::filesystem::remove(temp, error);
+    }
+    return renamed;
+}
+std::optional<std::vector<Binary>> Load(const std::filesystem::path& file, const Key& global,
+                                        const Key& pipeline, u64 graphics_hash) {
+    std::ifstream stream(file, std::ios::binary | std::ios::ate);
+    if (!stream) {
+        return std::nullopt;
+    }
+    const auto size = stream.tellg();
+    if (size <= 0 || size > std::streamoff(MaxFileSize)) {
+        return std::nullopt;
+    }
+    std::vector<u8> bytes(static_cast<size_t>(size));
+    stream.seekg(0);
+    if (!stream.read(reinterpret_cast<char*>(bytes.data()), bytes.size())) {
+        return std::nullopt;
+    }
+    return Decode(bytes, global, pipeline, graphics_hash);
+}
+} // namespace PipelineBinaryCache
+
+namespace {
+std::atomic<u64> binary_hits{}, binary_misses{}, binary_rejected{}, binary_saved{}, binary_errors{};
+std::atomic<u64> binary_restore_ns{}, binary_compile_ns{};
+std::atomic<u64> binary_restore_calls{}, binary_compile_calls{};
+PipelineBinaryCache::Key BinaryKey(const vk::PipelineBinaryKeyKHR& key) {
+    if (!key.keySize || key.keySize > VK_MAX_PIPELINE_BINARY_KEY_SIZE_KHR) {
+        return {};
+    }
+    return {key.key.begin(), key.key.begin() + key.keySize};
+}
+} // namespace
+
+void ReportPipelineBinaryCache() {
+    const auto hits = binary_hits.load();
+    const auto misses = binary_misses.load();
+    std::printf("Pipeline binary cache: %llu hits, %llu compiled, %llu rejected, %llu saved, "
+                "%llu cache errors (restore %.3f ms, compile %.3f ms each)\n",
+                static_cast<unsigned long long>(hits), static_cast<unsigned long long>(misses),
+                static_cast<unsigned long long>(binary_rejected.load()),
+                static_cast<unsigned long long>(binary_saved.load()),
+                static_cast<unsigned long long>(binary_errors.load()),
+                binary_restore_ns.load() / 1e6 / std::max(u64{1}, binary_restore_calls.load()),
+                binary_compile_ns.load() / 1e6 / std::max(u64{1}, binary_compile_calls.load()));
+}
+
+vk::ResultValue<vk::UniquePipeline> CreateCachedGraphicsPipeline(
+    vk::Device device, vk::PipelineCache cache, const vk::GraphicsPipelineCreateInfo& info,
+    const GraphicsPipelineKey& key, const vk::PipelineBinaryKeyKHR& global_key,
+    const std::filesystem::path& directory) {
+    using namespace PipelineBinaryCache;
+    const auto& dispatch = VULKAN_HPP_DEFAULT_DISPATCHER;
+    const bool enabled = global_key.keySize && EmulatorSettings.IsPipelineCacheEnabled();
+    const auto create = [&](vk::PipelineCache used_cache, const auto& used_info, bool restored) {
+        const auto started = std::chrono::steady_clock::now();
+        auto result = device.createGraphicsPipelineUnique(used_cache, used_info);
+        const auto ns = u64(std::chrono::duration_cast<std::chrono::nanoseconds>(
+                                std::chrono::steady_clock::now() - started)
+                                .count());
+        extern std::atomic<u64> g_gow3_pipeline_driver_ns;
+        g_gow3_pipeline_driver_ns += ns;
+        if (enabled) {
+            (restored ? binary_restore_ns : binary_compile_ns) += ns;
+            ++(restored ? binary_restore_calls : binary_compile_calls);
+        }
+        return result;
+    };
+    if (!enabled) {
+        return create(cache, info, false);
+    }
+    SCOPE_EXIT {
+        const auto count = binary_hits.load() + binary_misses.load();
+        if (count && count % 256 == 0) {
+            ReportPipelineBinaryCache();
+        }
+    };
+    const auto global = BinaryKey(global_key);
+    const auto graphics_hash = u64(std::hash<GraphicsPipelineKey>{}(key));
+    vk::PipelineCreateFlags2CreateInfoKHR flags{
+        .pNext = info.pNext,
+        .flags = vk::PipelineCreateFlags2{static_cast<VkPipelineCreateFlags>(info.flags)} |
+                 vk::PipelineCreateFlagBits2::eCaptureDataKHR,
+    };
+    auto captured_info = info;
+    captured_info.pNext = &flags;
+    vk::PipelineCreateInfoKHR key_info{.pNext = &captured_info};
+    vk::PipelineBinaryKeyKHR pipeline_key;
+    if (device.getPipelineKeyKHR(&key_info, &pipeline_key) != vk::Result::eSuccess ||
+        !ValidKey(global) || !ValidKey(BinaryKey(pipeline_key))) {
+        ++binary_errors;
+        ++binary_misses;
+        return create(cache, info, false);
+    }
+    const auto pipeline_id = BinaryKey(pipeline_key);
+    std::string name;
+    for (const auto byte : pipeline_id) {
+        name += fmt::format("{:02x}", byte);
+    }
+    // Exact driver keys distinguish normal, line and squaring variants across sessions.
+    const auto file = directory / fmt::format("{:016x}_{}.bin", graphics_hash, name);
+    std::vector<VkPipelineBinaryKHR> handles;
+    const auto destroy = [&] {
+        for (auto handle : handles) {
+            if (handle) {
+                dispatch.vkDestroyPipelineBinaryKHR(device, handle, nullptr);
+            }
+        }
+        handles.clear();
+    };
+    SCOPE_EXIT { destroy(); };
+    try {
+        if (auto binaries = Load(file, global, pipeline_id, graphics_hash)) {
+            std::vector<VkPipelineBinaryKeyKHR> keys(binaries->size());
+            std::vector<VkPipelineBinaryDataKHR> data(binaries->size());
+            for (size_t i = 0; i < binaries->size(); ++i) {
+                keys[i].sType = VK_STRUCTURE_TYPE_PIPELINE_BINARY_KEY_KHR;
+                keys[i].keySize = u32((*binaries)[i].key.size());
+                std::ranges::copy((*binaries)[i].key, keys[i].key);
+                data[i] = {(*binaries)[i].data.size(), (*binaries)[i].data.data()};
+            }
+            VkPipelineBinaryKeysAndDataKHR stored{u32(keys.size()), keys.data(), data.data()};
+            VkPipelineBinaryCreateInfoKHR binary_info{
+                VK_STRUCTURE_TYPE_PIPELINE_BINARY_CREATE_INFO_KHR};
+            binary_info.pKeysAndDataInfo = &stored;
+            handles.resize(keys.size());
+            VkPipelineBinaryHandlesInfoKHR output{
+                VK_STRUCTURE_TYPE_PIPELINE_BINARY_HANDLES_INFO_KHR};
+            output.pipelineBinaryCount = u32(handles.size());
+            output.pPipelineBinaries = handles.data();
+            if (dispatch.vkCreatePipelineBinariesKHR(device, &binary_info, nullptr, &output) ==
+                VK_SUCCESS) {
+                VkPipelineBinaryInfoKHR restored{VK_STRUCTURE_TYPE_PIPELINE_BINARY_INFO_KHR};
+                restored.pNext = &flags;
+                restored.binaryCount = u32(handles.size());
+                restored.pPipelineBinaries = handles.data();
+                // CAPTURE_DATA is only for compilation, never for binary-backed creation.
+                flags.flags =
+                    vk::PipelineCreateFlags2{static_cast<VkPipelineCreateFlags>(info.flags)};
+                auto restored_info = info;
+                restored_info.pNext = &restored;
+                auto result = create(nullptr, restored_info, true);
+                if (result.result == vk::Result::eSuccess) {
+                    ++binary_hits;
+                    return result;
+                }
+            }
+            ++binary_rejected;
+            destroy();
+        }
+    } catch (const std::exception&) {
+        ++binary_errors;
+        destroy();
+    }
+    ++binary_misses;
+    flags.flags = vk::PipelineCreateFlags2{static_cast<VkPipelineCreateFlags>(info.flags)} |
+                  vk::PipelineCreateFlagBits2::eCaptureDataKHR;
+    auto result = create(nullptr, captured_info, false);
+    if (result.result != vk::Result::eSuccess) {
+        ++binary_errors;
+        return create(cache, info, false);
+    }
+    VkReleaseCapturedPipelineDataInfoKHR release{
+        VK_STRUCTURE_TYPE_RELEASE_CAPTURED_PIPELINE_DATA_INFO_KHR};
+    release.pipeline = *result.value;
+    SCOPE_EXIT {
+        if (dispatch.vkReleaseCapturedPipelineDataKHR(device, &release, nullptr) != VK_SUCCESS) {
+            ++binary_errors;
+        }
+    };
+    try {
+        VkPipelineBinaryCreateInfoKHR binary_info{
+            VK_STRUCTURE_TYPE_PIPELINE_BINARY_CREATE_INFO_KHR};
+        binary_info.pipeline = *result.value;
+        VkPipelineBinaryHandlesInfoKHR output{VK_STRUCTURE_TYPE_PIPELINE_BINARY_HANDLES_INFO_KHR};
+        if (dispatch.vkCreatePipelineBinariesKHR(device, &binary_info, nullptr, &output) !=
+                VK_SUCCESS ||
+            !output.pipelineBinaryCount || output.pipelineBinaryCount > MaxBinaries) {
+            ++binary_errors;
+            return result;
+        }
+        handles.resize(output.pipelineBinaryCount);
+        output.pPipelineBinaries = handles.data();
+        if (dispatch.vkCreatePipelineBinariesKHR(device, &binary_info, nullptr, &output) !=
+            VK_SUCCESS) {
+            ++binary_errors;
+            return result;
+        }
+        std::vector<Binary> binaries;
+        size_t total_size = 0;
+        for (const auto handle : handles) {
+            VkPipelineBinaryDataInfoKHR data_info{VK_STRUCTURE_TYPE_PIPELINE_BINARY_DATA_INFO_KHR};
+            data_info.pipelineBinary = handle;
+            vk::PipelineBinaryKeyKHR binary_key;
+            size_t size = 0;
+            auto* raw_key = reinterpret_cast<VkPipelineBinaryKeyKHR*>(&binary_key);
+            if (dispatch.vkGetPipelineBinaryDataKHR(device, &data_info, raw_key, &size, nullptr) !=
+                    VK_SUCCESS ||
+                !size || size > MaxFileSize || total_size + size > MaxFileSize ||
+                !ValidKey(BinaryKey(binary_key))) {
+                ++binary_errors;
+                return result;
+            }
+            total_size += size;
+            Binary binary{BinaryKey(binary_key), std::vector<u8>(size)};
+            if (dispatch.vkGetPipelineBinaryDataKHR(device, &data_info, raw_key, &size,
+                                                    binary.data.data()) != VK_SUCCESS ||
+                size > binary.data.size()) {
+                ++binary_errors;
+                return result;
+            }
+            binary.key = BinaryKey(binary_key);
+            binary.data.resize(size);
+            binaries.push_back(std::move(binary));
+        }
+        const auto encoded = Encode(global, pipeline_id, graphics_hash, binaries);
+        if (Save(file, encoded)) {
+            ++binary_saved;
+        } else {
+            ++binary_errors;
+        }
+    } catch (const std::exception&) {
+        ++binary_errors;
+    }
+    return result;
+}
 
 // gow3: GOW3_PARALLEL_WARMUP=1. The cache store is still read and the shader modules created in
 // order on the calling thread (program_cache and its permutation checks are not thread-safe);
@@ -569,6 +921,7 @@ void PipelineCache::WarmUp(const std::function<void(u32, u32)>& progress) {
                 std::chrono::duration<double>(std::chrono::steady_clock::now() - started).count(),
                 warmup_threads);
     LOG_INFO(Render, "Preloaded {} pipelines", num_pipelines);
+    ReportPipelineBinaryCache();
     if (num_total_pipelines > num_pipelines) {
         LOG_WARNING(Render, "{} stale pipelines were found. Consider re-generating the cache",
                     num_total_pipelines - num_pipelines);
@@ -839,6 +1192,15 @@ void PipelineCache::PumpWarmUp() {
                 warm.loaded, warm.total.load(),
                 std::chrono::duration<double>(now - warm.started).count(), warm.threads);
     LOG_INFO(Render, "Preloaded {} pipelines in the background", warm.loaded);
+    ReportPipelineBinaryCache();
+    extern std::atomic<u64> g_gow3_pipeline_total_ns, g_gow3_pipeline_driver_ns;
+    extern std::atomic<u32> g_gow3_pipelines_built;
+    const u32 built = std::max(1u, g_gow3_pipelines_built.load());
+    std::printf("Pipeline build time: %u graphics pipelines, %.1f ms each (driver %.1f ms, the rest "
+                "%.1f ms), %.1f s in all\n",
+                built, g_gow3_pipeline_total_ns / 1e6 / built, g_gow3_pipeline_driver_ns / 1e6 / built,
+                (g_gow3_pipeline_total_ns - g_gow3_pipeline_driver_ns) / 1e6 / built,
+                g_gow3_pipeline_total_ns / 1e9);
     // The idle threads stay parked (StopWarmUp).
     warm.finished = true;
     Gow3Overlay::SetBackgroundLoading(0, 0);

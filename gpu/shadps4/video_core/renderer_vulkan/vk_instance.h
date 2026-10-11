@@ -67,6 +67,10 @@ public:
         return *device;
     }
 
+    const vk::PipelineBinaryKeyKHR& GetPipelineBinaryGlobalKey() const {
+        return pipeline_binary_global_key;
+    }
+
     /// Returns the VMA allocator handle
     VmaAllocator GetAllocator() const {
         return allocator;
@@ -562,6 +566,8 @@ private:
     bool shader_atomic_float2{};
     bool workgroup_memory_explicit_layout{};
     bool maintenance_5{};
+    bool pipeline_binaries{};
+    vk::PipelineBinaryKeyKHR pipeline_binary_global_key{};
     bool maintenance_8{};
     bool attachment_feedback_loop{};
     bool image_2d_view_of_3d{};

@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #include <algorithm>
+#include <atomic>
+#include <chrono>
 #include <utility>
 #include <boost/container/small_vector.hpp>
 
@@ -12,12 +14,24 @@
 #include "video_core/renderer_vulkan/vk_blend_rewrite.h"
 #include "video_core/renderer_vulkan/vk_graphics_pipeline.h"
 #include "video_core/renderer_vulkan/vk_instance.h"
+#include "video_core/renderer_vulkan/vk_pipeline_serialization.h"
+#include "common/elf_info.h"
 #include "video_core/renderer_vulkan/vk_scheduler.h"
 #include "video_core/renderer_vulkan/vk_shader_util.h"
 
 namespace Vulkan {
 
 using Shader::Backend::SPIRV::AuxShaderType;
+
+// gow3: where pipeline construction time goes (reported when the background warm-up ends).
+std::atomic<u64> g_gow3_pipeline_total_ns, g_gow3_pipeline_driver_ns;
+std::atomic<u32> g_gow3_pipelines_built;
+namespace {
+using Clock = std::chrono::steady_clock;
+u64 NsSince(Clock::time_point start) {
+    return u64(std::chrono::duration_cast<std::chrono::nanoseconds>(Clock::now() - start).count());
+}
+} // namespace
 
 static constexpr std::array LogicalStageToStageBit = {
     vk::ShaderStageFlagBits::eFragment,
@@ -37,6 +51,7 @@ GraphicsPipeline::GraphicsPipeline(
     std::span<const vk::ShaderModule> modules, SerializationSupport& sdata, bool preloading)
     : Pipeline{instance, scheduler, desc_heap, profile, pipeline_cache}, key{key_},
       fetch_shader{std::move(fetch_shader_)} {
+    const auto started = Clock::now();
     const vk::Device device = instance.GetDevice();
     std::ranges::copy(infos, stages.begin());
     BuildDescSetLayout(preloading);
@@ -413,8 +428,11 @@ GraphicsPipeline::GraphicsPipeline(
         .layout = *pipeline_layout,
     };
 
+    const auto binary_directory = Common::FS::GetUserPath(Common::FS::PathType::CacheDir) /
+        Common::ElfInfo::Instance().GameSerial() / "pipeline-binaries";
     auto [pipeline_result, pipe] =
-        device.createGraphicsPipelineUnique(pipeline_cache, pipeline_info);
+        CreateCachedGraphicsPipeline(device, pipeline_cache, pipeline_info, key,
+                                     instance.GetPipelineBinaryGlobalKey(), binary_directory);
     ASSERT_MSG(pipeline_result == vk::Result::eSuccess, "Failed to create graphics pipeline: {}",
                vk::to_string(pipeline_result));
     pipeline = std::move(pipe);
@@ -427,12 +445,15 @@ GraphicsPipeline::GraphicsPipeline(
         auto square_info = pipeline_info;
         square_info.pColorBlendState = &square_blending;
         auto [square_result, square] =
-            device.createGraphicsPipelineUnique(pipeline_cache, square_info);
+            CreateCachedGraphicsPipeline(device, pipeline_cache, square_info, key,
+                                         instance.GetPipelineBinaryGlobalKey(), binary_directory);
         ASSERT_MSG(square_result == vk::Result::eSuccess,
                    "Failed to create the squaring pipeline: {}", vk::to_string(square_result));
         square_pipeline = std::move(square);
         SetObjectName(device, *square_pipeline, "Graphics Pipeline {} squaring pass", debug_str);
     }
+    g_gow3_pipeline_total_ns += NsSince(started);
+    ++g_gow3_pipelines_built;
 }
 
 GraphicsPipeline::~GraphicsPipeline() = default;
