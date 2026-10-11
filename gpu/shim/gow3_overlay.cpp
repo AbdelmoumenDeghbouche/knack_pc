@@ -24,6 +24,7 @@ extern Gow3ActorSlot gow3_actor_slots[2];
 extern "C" void runtime_restart(void); // src/probe.c: starts run.py again, ends this process
 #include "common/elf_info.h"
 #include "imgui.h"
+#include "imgui_internal.h" // RegisterUserTexture (save pictures)
 #include "imgui_impl_vulkan.h"
 #include "video_core/renderer_vulkan/vk_instance.h"
 #include "video_core/renderer_vulkan/vk_scheduler.h"
@@ -76,6 +77,11 @@ std::string choice_title;
 std::vector<std::string> choice_items;
 int choice_index = 0;
 std::atomic<int> choice_result{-1}; // -1 open, -2 cancelled, else the chosen index
+// Save pictures: decoded by BeginChoice, made textures on the present thread (null = none).
+// Closed lists' textures wait in choice_retired until the backend has destroyed them.
+std::vector<Gow3Png::Image> choice_pictures;
+std::vector<ImTextureData*> choice_textures, choice_retired;
+std::atomic<bool> choice_retiring{false};
 float base_scale = 1.0f;
 
 // Present rate for the FPS counter.
@@ -688,12 +694,38 @@ void ChoiceBox() {
                      ImGuiWindowFlags_NoFocusOnAppearing);
     ImGui::TextColored(ImVec4(0.85f, 0.72f, 0.45f, 1.0f), "%s", choice_title.c_str());
     ImGui::Separator();
+    // Save pictures are 228x128; rows without one keep the text aligned when others have one.
+    const bool pictures = std::any_of(choice_textures.begin(), choice_textures.end(),
+                                      [](ImTextureData* tex) { return tex != nullptr; });
+    const ImVec2 picture_size(228.0f * base_scale, 128.0f * base_scale);
     for (int i = 0; i < int(choice_items.size()); ++i) {
-        if (i == choice_index) {
+        const bool selected = i == choice_index;
+        ImGui::BeginGroup();
+        ImTextureData* tex = i < int(choice_textures.size()) ? choice_textures[i] : nullptr;
+        if (tex) {
+            ImGui::Image(tex->GetTexRef(), picture_size);
+        } else if (pictures) {
+            ImGui::Dummy(picture_size);
+        }
+        if (pictures) {
+            ImGui::SameLine();
+        }
+        if (selected) {
             ImGui::TextColored(ImVec4(1.0f, 0.9f, 0.55f, 1.0f), "> %s", choice_items[i].c_str());
-            ImGui::SetScrollHereY();
         } else {
             ImGui::Text("  %s", choice_items[i].c_str());
+        }
+        ImGui::EndGroup();
+        if (selected) {
+            if (pictures) {
+                const ImVec2 min = ImGui::GetItemRectMin(), max = ImGui::GetItemRectMax();
+                const float pad = 3.0f * base_scale;
+                ImGui::GetWindowDrawList()->AddRect(ImVec2(min.x - pad, min.y - pad),
+                                                    ImVec2(max.x + pad, max.y + pad),
+                                                    IM_COL32(255, 230, 140, 255), 0.0f, 0,
+                                                    2.0f * base_scale);
+            }
+            ImGui::SetScrollHereY();
         }
     }
     ImGui::Separator();
@@ -808,7 +840,8 @@ void Init(const Vulkan::Instance& instance, vk::Format format, u32 image_count) 
     info.Device = instance.GetDevice();
     info.QueueFamily = instance.GetGraphicsQueueFamilyIndex();
     info.Queue = instance.GetGraphicsQueue();
-    info.DescriptorPoolSize = 16;
+    // Font atlas plus the save list pictures (up to 33, and a closed list's until freed).
+    info.DescriptorPoolSize = 128;
     info.MinImageCount = std::max(image_count, 2u);
     info.ImageCount = std::max(image_count, 2u);
     info.UseDynamicRendering = true;
@@ -842,6 +875,47 @@ void UpdateTextInput(SDL_Window* window) {
     }
 }
 
+// imgui_mutex held. The backend frees a texture some frames after its last use.
+void RetireChoiceTextures() {
+    for (ImTextureData* tex : choice_textures) {
+        if (tex) {
+            tex->WantDestroyNextFrame = true;
+            choice_retired.push_back(tex);
+        }
+    }
+    choice_textures.clear();
+    choice_pictures.clear();
+    choice_retiring = !choice_retired.empty();
+}
+
+// imgui_mutex held, before NewFrame: new pictures become textures, destroyed ones are freed.
+void UpdateChoiceTextures() {
+    if (!choice_pictures.empty()) {
+        choice_textures.assign(choice_pictures.size(), nullptr);
+        for (size_t i = 0; i < choice_pictures.size(); ++i) {
+            const Gow3Png::Image& picture = choice_pictures[i];
+            if (picture.rgba.empty()) {
+                continue;
+            }
+            ImTextureData* tex = IM_NEW(ImTextureData)();
+            tex->Create(ImTextureFormat_RGBA32, picture.width, picture.height);
+            std::memcpy(tex->GetPixels(), picture.rgba.data(), picture.rgba.size());
+            ImGui::RegisterUserTexture(tex);
+            choice_textures[i] = tex;
+        }
+        choice_pictures.clear();
+    }
+    std::erase_if(choice_retired, [](ImTextureData* tex) {
+        if (tex->Status != ImTextureStatus_Destroyed) {
+            return false;
+        }
+        ImGui::UnregisterUserTexture(tex);
+        IM_DELETE(tex);
+        return true;
+    });
+    choice_retiring = !choice_retired.empty();
+}
+
 // The save list takes the keys and buttons that move and confirm; the rest stays with the game
 // (held neutral by CapturesInput).
 bool HandleChoiceEvent(const SDL_Event& event) {
@@ -866,6 +940,7 @@ bool HandleChoiceEvent(const SDL_Event& event) {
     if (finish) {
         choice_result = finish == 1 && count ? choice_index : -2;
         choice_active = false;
+        RetireChoiceTextures();
     }
     return true;
 }
@@ -1008,7 +1083,8 @@ void SetLoading(bool active, u32 done, u32 total) {
 
 bool Visible() {
     const auto& s = Gow3Settings::Get();
-    return initialized && (loading || background_total || menu_open || text_entry_active || choice_active || s.show_fps ||
+    return initialized && (loading || background_total || menu_open || text_entry_active || choice_active ||
+                           choice_retiring || s.show_fps ||
                            (s.actor_watch_supported && s.enemy_health_bar));
 }
 
@@ -1016,8 +1092,12 @@ bool CapturesInput() {
     return menu_open || text_entry_active || choice_active;
 }
 
-void BeginChoice(const std::string& title, const std::vector<std::string>& items, int focus) {
+void BeginChoice(const std::string& title, const std::vector<std::string>& items,
+                 std::vector<Gow3Png::Image> pictures, int focus) {
     std::scoped_lock lock{imgui_mutex};
+    RetireChoiceTextures();
+    choice_pictures = std::move(pictures);
+    choice_pictures.resize(items.size());
     choice_title = title;
     choice_items = items;
     choice_index = focus >= 0 && focus < int(items.size()) ? focus : 0;
@@ -1061,6 +1141,7 @@ void Render(vk::CommandBuffer cmdbuf, vk::ImageView view, vk::Extent2D extent) {
         base_scale = scale;
     }
 
+    UpdateChoiceTextures();
     ImGui_ImplVulkan_NewFrame();
     ImGui::NewFrame();
     if (loading) {

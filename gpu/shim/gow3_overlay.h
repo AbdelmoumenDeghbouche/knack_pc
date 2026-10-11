@@ -8,6 +8,7 @@
 #include <string>
 #include <vector>
 #include "common/types.h"
+#include "gow3_png.h"
 #include "video_core/renderer_vulkan/vk_common.h"
 
 union SDL_Event;
@@ -46,8 +47,10 @@ bool CapturesInput();
 void SetTextEntry(bool active, const std::string& prompt, const std::string& text);
 
 /// The game's save list: shown until the player chooses (arrows/D-pad, Enter/Cross) or
-/// cancels (Esc/Circle). PollChoice: -1 while open, -2 cancelled, else the chosen index.
-void BeginChoice(const std::string& title, const std::vector<std::string>& items, int focus);
+/// cancels (Esc/Circle). `pictures`: one per item (empty = none), drawn beside its text.
+/// PollChoice: -1 while open, -2 cancelled, else the chosen index.
+void BeginChoice(const std::string& title, const std::vector<std::string>& items,
+                 std::vector<Gow3Png::Image> pictures, int focus);
 int PollChoice();
 
 } // namespace Gow3Overlay

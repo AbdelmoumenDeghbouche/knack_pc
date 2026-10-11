@@ -121,6 +121,14 @@ int runtime_savedata_param(int32_t user, const char *dir, void *param) {
     snprintf(meta,sizeof(meta),"%s/%s.sce_sys",base,dir);
     return read_param(meta,(Param *)param);
 }
+/* Host path of a save's icon0.png (the location picture in the save dialog); 0 when named. */
+int runtime_savedata_icon(int32_t user, const char *dir, char *out, size_t size) {
+    if (!valid_name(dir,32)) return -1;
+    char base[600];
+    root(user,NULL,base,sizeof(base));
+    snprintf(out,size,"%s/%s.sce_sys/icon0.png",base,dir);
+    return 0;
+}
 static ABI int32_t save_initialize(const void *param) { (void)param; initialized=1; return 0; }
 static ABI int32_t save_terminate(void) {
     if (!initialized) return ERR_NOT_INITIALIZED;

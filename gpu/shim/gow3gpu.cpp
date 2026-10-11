@@ -1,6 +1,7 @@
 #include "gow3_write_log.h"
 // gow3: glue between the C loader and the vendored shadPS4 video core.
 #include "gow3_overlay.h"
+#include "gow3_png.h"
 #include "gow3_settings.h"
 #include "gow3_copy.h"
 #ifndef _WIN32
@@ -337,9 +338,18 @@ extern "C" int gow3gpu_text_input_begin(const char* initial, const char* prompt)
     return 1;
 }
 
-extern "C" int gow3gpu_choice_begin(const char* title, const char* const* items, int count, int focus) {
+extern "C" int gow3gpu_choice_begin(const char* title, const char* const* items, const char* const* images,
+                                    int count, int focus) {
     if (!g_window || count <= 0) return 0;
-    Gow3Overlay::BeginChoice(title ? title : "", std::vector<std::string>(items, items + count), focus);
+    // Pictures are decoded here, on the game's thread, before the list is shown.
+    std::vector<Gow3Png::Image> pictures(count);
+    for (int i = 0; images && i < count; ++i) {
+        if (images[i] && !Gow3Png::LoadRgba(images[i], pictures[i])) {
+            LOG_WARNING(Lib_SaveDataDialog, "save list: no picture from {}", images[i]);
+        }
+    }
+    Gow3Overlay::BeginChoice(title ? title : "", std::vector<std::string>(items, items + count),
+                             std::move(pictures), focus);
     return 1;
 }
 
