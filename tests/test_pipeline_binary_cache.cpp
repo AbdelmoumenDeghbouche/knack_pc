@@ -117,10 +117,34 @@ void TestDriverFallback(const std::filesystem::path& root) {
         auto result = Vulkan::CreateCachedGraphicsPipeline(device, cache, info, key, global, root);
         assert(result.result == vk::Result::eSuccess && result.value);
     };
+    const auto legacy = root / "legacy";
+    assert(Vulkan::PipelineBinaryCache::Save(
+        legacy / "000000000000002a_0304.bin",
+        Vulkan::PipelineBinaryCache::Encode({1, 2}, {3, 4}, 42,
+                                            {{{5}, {6, 7}}, {{8}, {9, 10}}})));
+    {
+        auto result = Vulkan::CreateCachedGraphicsPipeline(device, cache, info, key, global,
+                                                           legacy);
+        assert(result.result == vk::Result::eSuccess);
+    }
+    assert(compiled == 0 && restored == 1 && destroyed == 2);
+    assert(Vulkan::PipelineBinaryCache::Load(legacy / "0304.bin", {1, 2}, {3, 4}, 0));
+    restored = destroyed = 0;
     create();
     assert(compiled == 1 && restored == 0 && destroyed == 2 && released == 1);
     create();
     assert(compiled == 1 && restored == 1 && destroyed == 4 && released == 1);
+    // The exact driver key must survive changes to the emulator's graphics key.
+    auto other_key = key;
+    other_key.stage_hashes[0] = 123;
+    {
+        auto result = Vulkan::CreateCachedGraphicsPipeline(device, cache, info, other_key, global,
+                                                           root);
+        assert(result.result == vk::Result::eSuccess);
+    }
+    assert(compiled == 1 && restored == 2);
+    restored = 1;
+    destroyed -= 2;
     reject_binary = true;
     create();
     assert(compiled == 2 && restored == 1 && destroyed == 7 && released == 2);
@@ -129,7 +153,7 @@ void TestDriverFallback(const std::filesystem::path& root) {
     create();
     assert(compiled == 3 && restored == 2 && destroyed == 11 && released == 3);
     reject_pipeline = false;
-    const auto file = *std::filesystem::directory_iterator(root);
+    const auto file = std::filesystem::directory_entry(root / "0304.bin");
     {
         std::ofstream corrupt(file.path(), std::ios::binary);
         corrupt << "broken";
@@ -246,6 +270,9 @@ void TestRealDriver(const std::filesystem::path& directory) {
 } // namespace
 
 int main(int argc, char** argv) {
+#ifdef _WIN32
+    _set_error_mode(_OUT_TO_STDERR);
+#endif
     if (argc == 3 && std::string_view(argv[1]) == "--gpu") {
         TestRealDriver(argv[2]);
         return 0;

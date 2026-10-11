@@ -12,6 +12,7 @@
 #include <thread>
 #include <unordered_map>
 #include <fstream>
+#include <map>
 #ifdef _WIN32
 #include <windows.h>
 #endif
@@ -189,6 +190,47 @@ PipelineBinaryCache::Key BinaryKey(const vk::PipelineBinaryKeyKHR& key) {
     }
     return {key.key.begin(), key.key.begin() + key.keySize};
 }
+
+std::optional<std::vector<PipelineBinaryCache::Binary>> LoadLegacyBinary(
+    const std::filesystem::path& directory, const std::string& name,
+    const PipelineBinaryCache::Key& global, const PipelineBinaryCache::Key& pipeline) {
+    using Index = std::unordered_multimap<std::string, std::pair<std::filesystem::path, u64>>;
+    static std::mutex mutex;
+    static std::map<std::filesystem::path, Index> indexes;
+    std::vector<std::pair<std::filesystem::path, u64>> candidates;
+    {
+        std::scoped_lock lock{mutex};
+        auto [it, inserted] = indexes.try_emplace(directory);
+        if (inserted) {
+            std::error_code error;
+            for (std::filesystem::directory_iterator files(directory, error), end;
+                 !error && files != end; files.increment(error)) {
+                const auto stem = files->path().stem().string();
+                if (files->path().extension() != ".bin" || stem.size() < 18 || stem[16] != '_') {
+                    continue;
+                }
+                try {
+                    size_t used = 0;
+                    const auto hash = std::stoull(stem.substr(0, 16), &used, 16);
+                    if (used == 16) {
+                        it->second.emplace(stem.substr(17), std::pair{files->path(), hash});
+                    }
+                } catch (const std::exception&) {
+                }
+            }
+        }
+        const auto [first, last] = it->second.equal_range(name);
+        for (auto entry = first; entry != last; ++entry) {
+            candidates.push_back(entry->second);
+        }
+    }
+    for (const auto& [file, hash] : candidates) {
+        if (auto binaries = PipelineBinaryCache::Load(file, global, pipeline, hash)) {
+            return binaries;
+        }
+    }
+    return std::nullopt;
+}
 } // namespace
 
 void ReportPipelineBinaryCache() {
@@ -235,7 +277,6 @@ vk::ResultValue<vk::UniquePipeline> CreateCachedGraphicsPipeline(
         }
     };
     const auto global = BinaryKey(global_key);
-    const auto graphics_hash = u64(std::hash<GraphicsPipelineKey>{}(key));
     vk::PipelineCreateFlags2CreateInfoKHR flags{
         .pNext = info.pNext,
         .flags = vk::PipelineCreateFlags2{static_cast<VkPipelineCreateFlags>(info.flags)} |
@@ -256,8 +297,8 @@ vk::ResultValue<vk::UniquePipeline> CreateCachedGraphicsPipeline(
     for (const auto byte : pipeline_id) {
         name += fmt::format("{:02x}", byte);
     }
-    // Exact driver keys distinguish normal, line and squaring variants across sessions.
-    const auto file = directory / fmt::format("{:016x}_{}.bin", graphics_hash, name);
+    // The driver key identifies the pipeline independently of emulator draw-state keys.
+    const auto file = directory / (name + ".bin");
     std::vector<VkPipelineBinaryKHR> handles;
     const auto destroy = [&] {
         for (auto handle : handles) {
@@ -269,7 +310,14 @@ vk::ResultValue<vk::UniquePipeline> CreateCachedGraphicsPipeline(
     };
     SCOPE_EXIT { destroy(); };
     try {
-        if (auto binaries = Load(file, global, pipeline_id, graphics_hash)) {
+        auto binaries = Load(file, global, pipeline_id, 0);
+        if (!binaries) {
+            binaries = LoadLegacyBinary(directory, name, global, pipeline_id);
+            if (binaries) {
+                Save(file, Encode(global, pipeline_id, 0, *binaries));
+            }
+        }
+        if (binaries) {
             std::vector<VkPipelineBinaryKeyKHR> keys(binaries->size());
             std::vector<VkPipelineBinaryDataKHR> data(binaries->size());
             for (size_t i = 0; i < binaries->size(); ++i) {
@@ -372,7 +420,7 @@ vk::ResultValue<vk::UniquePipeline> CreateCachedGraphicsPipeline(
             binary.data.resize(size);
             binaries.push_back(std::move(binary));
         }
-        const auto encoded = Encode(global, pipeline_id, graphics_hash, binaries);
+        const auto encoded = Encode(global, pipeline_id, 0, binaries);
         if (Save(file, encoded)) {
             ++binary_saved;
         } else {
