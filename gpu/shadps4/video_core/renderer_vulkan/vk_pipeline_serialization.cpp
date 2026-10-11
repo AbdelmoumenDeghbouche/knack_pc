@@ -184,6 +184,11 @@ namespace {
 std::atomic<u64> binary_hits{}, binary_misses{}, binary_rejected{}, binary_saved{}, binary_errors{};
 std::atomic<u64> binary_restore_ns{}, binary_compile_ns{};
 std::atomic<u64> binary_restore_calls{}, binary_compile_calls{};
+std::atomic<u64> binary_key_ns{}, binary_load_ns{}, binary_handles_ns{};
+u64 ElapsedNs(std::chrono::steady_clock::time_point started) {
+    return u64(std::chrono::duration_cast<std::chrono::nanoseconds>(
+                   std::chrono::steady_clock::now() - started).count());
+}
 PipelineBinaryCache::Key BinaryKey(const vk::PipelineBinaryKeyKHR& key) {
     if (!key.keySize || key.keySize > VK_MAX_PIPELINE_BINARY_KEY_SIZE_KHR) {
         return {};
@@ -286,7 +291,10 @@ vk::ResultValue<vk::UniquePipeline> CreateCachedGraphicsPipeline(
     captured_info.pNext = &flags;
     vk::PipelineCreateInfoKHR key_info{.pNext = &captured_info};
     vk::PipelineBinaryKeyKHR pipeline_key;
-    if (device.getPipelineKeyKHR(&key_info, &pipeline_key) != vk::Result::eSuccess ||
+    const auto key_started = std::chrono::steady_clock::now();
+    const auto key_result = device.getPipelineKeyKHR(&key_info, &pipeline_key);
+    binary_key_ns += ElapsedNs(key_started);
+    if (key_result != vk::Result::eSuccess ||
         !ValidKey(global) || !ValidKey(BinaryKey(pipeline_key))) {
         ++binary_errors;
         ++binary_misses;
@@ -310,6 +318,7 @@ vk::ResultValue<vk::UniquePipeline> CreateCachedGraphicsPipeline(
     };
     SCOPE_EXIT { destroy(); };
     try {
+        const auto load_started = std::chrono::steady_clock::now();
         auto binaries = Load(file, global, pipeline_id, 0);
         if (!binaries) {
             binaries = LoadLegacyBinary(directory, name, global, pipeline_id);
@@ -317,6 +326,7 @@ vk::ResultValue<vk::UniquePipeline> CreateCachedGraphicsPipeline(
                 Save(file, Encode(global, pipeline_id, 0, *binaries));
             }
         }
+        binary_load_ns += ElapsedNs(load_started);
         if (binaries) {
             std::vector<VkPipelineBinaryKeyKHR> keys(binaries->size());
             std::vector<VkPipelineBinaryDataKHR> data(binaries->size());
@@ -335,8 +345,11 @@ vk::ResultValue<vk::UniquePipeline> CreateCachedGraphicsPipeline(
                 VK_STRUCTURE_TYPE_PIPELINE_BINARY_HANDLES_INFO_KHR};
             output.pipelineBinaryCount = u32(handles.size());
             output.pPipelineBinaries = handles.data();
-            if (dispatch.vkCreatePipelineBinariesKHR(device, &binary_info, nullptr, &output) ==
-                VK_SUCCESS) {
+            const auto handles_started = std::chrono::steady_clock::now();
+            const auto handles_result =
+                dispatch.vkCreatePipelineBinariesKHR(device, &binary_info, nullptr, &output);
+            binary_handles_ns += ElapsedNs(handles_started);
+            if (handles_result == VK_SUCCESS) {
                 VkPipelineBinaryInfoKHR restored{VK_STRUCTURE_TYPE_PIPELINE_BINARY_INFO_KHR};
                 restored.pNext = &flags;
                 restored.binaryCount = u32(handles.size());
@@ -1005,6 +1018,7 @@ struct PipelineCache::WarmStage {
 // priority; the GPU thread merges the stages and publishes the pipelines a few at a time.
 struct PipelineCache::BackgroundWarmup {
     struct Entry {
+        std::chrono::steady_clock::time_point queued;
         bool compute = false;
         GraphicsPipelineKey graphics_key{};
         ComputePipelineKey compute_key{};
@@ -1023,9 +1037,15 @@ struct PipelineCache::BackgroundWarmup {
     WarmupInbox<Built> built;
     std::atomic<u32> total{0}, done{0};
     std::atomic<bool> reading{true}, stopping{false};
+    std::atomic<u64> reader_ns{0}, entry_ns{0}, shader_io_ns{0}, module_ns{0};
+    std::atomic<u64> read_queue_ns{0}, build_queue_ns{0}, build_ns{0};
+    std::atomic<u32> entries{0}, modules{0}, submitted{0}, completed{0};
+    u64 pump_ns = 0, pump_max_ns = 0, pump_gap_max_ns = 0;
+    u32 batches = 0;
     bool finished = false;
     u32 loaded = 0, threads = 0;
     std::chrono::steady_clock::time_point started, last_batch;
+    std::chrono::steady_clock::time_point last_pump{}, last_report{};
     std::unique_ptr<WarmupPool> pool; ///< last: its jobs use the members above
 };
 
@@ -1043,6 +1063,7 @@ bool PipelineCache::StartBackgroundWarmUp() {
     warm.pool = std::make_unique<WarmupPool>(warm.threads, true);
     // The first job reads the whole store; with one thread the builds queue behind it.
     warm.pool->Push([this, &warm] {
+        const auto reader_started = std::chrono::steady_clock::now();
         auto& db = Storage::DataBase::Instance();
         warm.total = u32(db.CountBlobs(Storage::BlobType::PipelineKey));
         db.ForEachBlob(
@@ -1050,6 +1071,7 @@ bool PipelineCache::StartBackgroundWarmUp() {
             [&](std::vector<u8>&& data) { ReadWarmEntry(warm, std::move(data)); },
             [&] { return warm.stopping.load(std::memory_order_relaxed); });
         warm.stages.clear();
+        warm.reader_ns = ElapsedNs(reader_started);
         warm.reading = false;
         return true;
     });
@@ -1058,6 +1080,8 @@ bool PipelineCache::StartBackgroundWarmUp() {
 }
 
 void PipelineCache::ReadWarmEntry(BackgroundWarmup& warm, std::vector<u8>&& data) {
+    const auto entry_started = std::chrono::steady_clock::now();
+    SCOPE_EXIT { warm.entry_ns += ElapsedNs(entry_started); ++warm.entries; };
     const auto skip = [&] { warm.done.fetch_add(1, std::memory_order_relaxed); };
     Serialization::Archive ar{std::move(data)};
     Serialization::Reader pldata{ar};
@@ -1096,6 +1120,8 @@ void PipelineCache::ReadWarmEntry(BackgroundWarmup& warm, std::vector<u8>&& data
             stage->device = instance.GetDevice();
             stage->program = std::make_unique<Program>();
             stage->spec.info = &stage->program->info;
+            const auto io_started = std::chrono::steady_clock::now();
+            u64 module_time = 0;
             std::vector<u8> meta_blob;
             db.Load(Storage::BlobType::ShaderMeta, fmt::format("{:#018x}", hashes[i]), meta_blob);
             if (!meta_blob.empty()) {
@@ -1108,16 +1134,22 @@ void PipelineCache::ReadWarmEntry(BackgroundWarmup& warm, std::vector<u8>&& data
                                         stage->perm_idx),
                             spv);
                     if (!spv.empty()) {
+                        const auto module_started = std::chrono::steady_clock::now();
                         stage->module = CompileSPV(spv, stage->device);
+                        module_time = ElapsedNs(module_started);
+                        warm.module_ns += module_time;
+                        ++warm.modules;
                     }
                 }
             }
+            warm.shader_io_ns += ElapsedNs(io_started) - module_time;
             if (!stage->module) {
                 stage->merged = true; // unusable: info stays null
             }
         }
         entry.stages[i] = stage;
     }
+    entry.queued = std::chrono::steady_clock::now();
     warm.read.Push(std::move(entry));
 }
 
@@ -1164,6 +1196,18 @@ void PipelineCache::PumpWarmUp() {
     }
     auto& warm = *background;
     using namespace std::chrono_literals;
+    const auto pump_started = std::chrono::steady_clock::now();
+    if (warm.last_pump.time_since_epoch().count()) {
+        warm.pump_gap_max_ns = std::max(warm.pump_gap_max_ns,
+            u64(std::chrono::duration_cast<std::chrono::nanoseconds>(
+                    pump_started - warm.last_pump).count()));
+    }
+    warm.last_pump = pump_started;
+    SCOPE_EXIT {
+        const auto ns = ElapsedNs(pump_started);
+        warm.pump_ns += ns;
+        warm.pump_max_ns = std::max(warm.pump_max_ns, ns);
+    };
 
     // Built pipelines: the first one ready for a key wins (the game may have compiled it).
     for (auto& built : warm.built.Take(64)) {
@@ -1180,11 +1224,13 @@ void PipelineCache::PumpWarmUp() {
         return;
     }
     warm.last_batch = now;
+    ++warm.batches;
     const u32 done = warm.done + warm.pool->failed;
     Gow3Overlay::SetBackgroundLoading(done, std::max(warm.total.load(), done));
 
     static const std::array<Shader::RuntimeInfo, MaxShaderStages> no_runtime_infos{};
     for (auto& entry : warm.read.Take(32)) {
+        warm.read_queue_ns += ElapsedNs(entry.queued);
         if (entry.compute ? compute_pipelines.contains(entry.compute_key)
                           : graphics_pipelines.contains(entry.graphics_key)) {
             warm.done.fetch_add(1, std::memory_order_relaxed); // the game compiled it first
@@ -1214,9 +1260,14 @@ void PipelineCache::PumpWarmUp() {
             warm.done.fetch_add(1, std::memory_order_relaxed);
             continue;
         }
-        warm.pool->Push([this, &warm, compute = entry.compute, graphics_key = entry.graphics_key,
+        ++warm.submitted;
+        warm.pool->Push([this, &warm, queued = std::chrono::steady_clock::now(),
+                          compute = entry.compute, graphics_key = entry.graphics_key,
                          compute_key = entry.compute_key, sdata = entry.sdata, infos, modules,
                          fetch]() mutable {
+            const auto build_started = std::chrono::steady_clock::now();
+            warm.build_queue_ns += ElapsedNs(queued);
+            SCOPE_EXIT { warm.build_ns += ElapsedNs(build_started); ++warm.completed; };
             BackgroundWarmup::Built built{graphics_key, compute_key};
             if (compute) {
                 ComputePipeline::SerializationSupport compute_data{};
@@ -1233,6 +1284,15 @@ void PipelineCache::PumpWarmUp() {
         });
     }
 
+    if (now - warm.last_report >= 1s) {
+        warm.last_report = now;
+        std::printf("Warm-up progress: %.2f s, read %u, submitted %u, completed %u, done %u/%u, "
+                    "batches %u, reading %u\n",
+                    std::chrono::duration<double>(now - warm.started).count(),
+                    warm.entries.load(), warm.submitted.load(), warm.completed.load(),
+                    warm.done.load(), warm.total.load(), warm.batches, unsigned(warm.reading.load()));
+    }
+
     if (warm.reading || !warm.read.Empty() || !warm.pool->Idle() || !warm.built.Empty()) {
         return;
     }
@@ -1241,6 +1301,21 @@ void PipelineCache::PumpWarmUp() {
                 std::chrono::duration<double>(now - warm.started).count(), warm.threads);
     LOG_INFO(Render, "Preloaded {} pipelines in the background", warm.loaded);
     ReportPipelineBinaryCache();
+    std::printf("Warm-up profile: reader wall %.3f s, entries %.3f s, shader IO/meta %.3f s, "
+                "modules %.3f s (%u); GPU pump %.3f s, max %.3f ms, gap max %.3f ms, "
+                "batches %u; builds %.3f thread-s, read queue %.3f item-s, "
+                "build queue %.3f item-s\n",
+                warm.reader_ns.load() / 1e9, warm.entry_ns.load() / 1e9,
+                warm.shader_io_ns.load() / 1e9, warm.module_ns.load() / 1e9, warm.modules.load(),
+                warm.pump_ns / 1e9, warm.pump_max_ns / 1e6, warm.pump_gap_max_ns / 1e6,
+                warm.batches, warm.build_ns.load() / 1e9, warm.read_queue_ns.load() / 1e9,
+                warm.build_queue_ns.load() / 1e9);
+    std::printf("Pipeline binary profile: keys %.3f thread-s, disk/decode/migration %.3f thread-s, "
+                "binary handles %.3f thread-s, driver restore %.3f thread-s, "
+                "driver compile %.3f thread-s\n",
+                binary_key_ns.load() / 1e9, binary_load_ns.load() / 1e9,
+                binary_handles_ns.load() / 1e9, binary_restore_ns.load() / 1e9,
+                binary_compile_ns.load() / 1e9);
     extern std::atomic<u64> g_gow3_pipeline_total_ns, g_gow3_pipeline_driver_ns;
     extern std::atomic<u32> g_gow3_pipelines_built;
     const u32 built = std::max(1u, g_gow3_pipelines_built.load());
