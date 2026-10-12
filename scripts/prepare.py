@@ -11,6 +11,7 @@ import hashlib
 import json
 from pathlib import Path
 import struct
+import sys
 
 
 def span(data, offset, size):
@@ -80,6 +81,10 @@ def sfo(data):
         v = span(data, values + off, size)
         result[k] = struct.unpack('<I', v)[0] if fmt == 0x404 else v.rstrip(b'\0').decode('utf8', 'replace')
     return result
+
+
+def write_report(path, report):
+    path.write_text(json.dumps(report, ensure_ascii=False, indent=2) + '\n', encoding='utf-8')
 
 
 def nid(name):
@@ -237,7 +242,7 @@ def prepare(game, out):
                   bundled_modules=sorted(p.name for p in (game / 'sce_module').iterdir()),
                   resources=dict(resources), resource_bytes=total_bytes,
                   status='Prepared only; execution and Vulkan are tested separately.')
-    (out / 'analysis.json').write_text(json.dumps(report, ensure_ascii=False, indent=2) + '\n')
+    write_report(out / 'analysis.json', report)
     print(f"{report['sfo'].get('TITLE')} | entry={header[4]:#x} | image={size:,} bytes")
     print(f"{len(names)} imported symbols; {sum(counts.values()):,} relocations; {len(report['needed'])} required modules")
     print(f"Unavailable non-loadable metadata headers: {missing}; not a byte-exact ELF reconstruction")
@@ -250,6 +255,8 @@ if __name__ == '__main__':
     parser.add_argument('game', type=Path)
     parser.add_argument('--out', type=Path, default=Path(__file__).resolve().parent.parent / 'out')
     args = parser.parse_args()
+    # The title is printed; a console or pipe in a legacy code page cannot encode every language.
+    sys.stdout.reconfigure(errors='replace')
     try:
         prepare(args.game, args.out)
     except (ValueError, OSError, StopIteration, KeyError, IndexError) as error:
