@@ -39,6 +39,21 @@ class ControlMapTest(unittest.TestCase):
         pads.update(cross='b', l2='a')
         self.assertEqual(launcher.control_changes(pads, 'pad'), {'cross': 'b'})  # L2/R2: triggers only
 
+    def test_touchpad_sides_are_separate_buttons(self):
+        rows = {b: (k, p) for b, k, p in launcher.CONTROLS}
+        self.assertNotIn('touchpad', rows)
+        self.assertEqual(rows['touchpad_left'], ('Tab', None))  # photo mode: L1 + the right-click button
+        self.assertEqual(rows['touchpad_right'], ('Backspace', 'back'))  # pause menu
+        self.assertEqual(launcher.control_map({'pad': {'touchpad_right': 'guide'}}, 'pad'), 'touchpad_right=guide')
+        self.assertEqual(launcher.control_map({'key': {'touchpad_right': 'Delete'}}, 'key'), 'touchpad_right=Delete')
+
+    def test_saved_touchpad_key_moves_to_the_left_side(self):
+        # Settings saved before the sides were split named the left click 'touchpad'.
+        self.assertEqual(launcher.control_map({'key': {'touchpad': 'T'}}, 'key'), 'touchpad_left=T')
+        self.assertEqual(launcher.control_map({'key': {'touchpad': 'T', 'touchpad_left': 'Y'}}, 'key'), 'touchpad_left=Y')
+        self.assertEqual(launcher.control_values({'key': {'touchpad': 'T'}}, 'key'), {'touchpad_left': 'T'})
+        self.assertEqual(launcher.control_values({'pad': {'touchpad': 'misc1'}}, 'pad'), {})  # no gamepad box for it
+
     def test_both_styles_name_every_default_gamepad_button(self):
         for labels in launcher.PAD_STYLES.values():
             self.assertTrue(all(p in labels for _b, _k, p in launcher.CONTROLS if p))

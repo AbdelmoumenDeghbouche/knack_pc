@@ -181,8 +181,13 @@ Defaults; change them on the launcher's **Controls** page.
 | Z and C | L3 and R3 |
 | I, K, J, L | d-pad |
 | Enter | Options |
-| Tab | touchpad |
+| Tab | left touchpad click (photo mode) |
+| Backspace | right touchpad click (pause menu) |
 | Insert | the port's menu (R3+L2 on the controller) |
+
+On a controller without a touchpad (Xbox and others), View opens the pause menu (the right
+touchpad click) and L1 + View opens photo mode (the left click). On a DualSense the touchpad
+works as on the PS4, and Share/Create works like View.
 
 In the menu: L1/R1 or Q/E switch tabs. In the save list: arrows or the d-pad choose, Enter or
 Cross confirm, Esc or Circle cancel.
