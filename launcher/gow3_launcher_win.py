@@ -46,6 +46,9 @@ RELEASES_PAGE = 'https://github.com/FelipePrado0/gow3_pc/releases/latest'
 UPDATE_DIR = Path(tempfile.gettempdir()) / 'gow3-update'
 # Never copied over an installation by an update (the package does not hold them either).
 USER_FILES = ('user', 'out', 'mods', 'gow3.ini', 'mods.json', 'mods_presets.json', 'patches.json', 'last_run.log')
+# The God of War face for titles, next to gow3.ico; main() registers it for this process only.
+FONT_FILE = PORT_DIR / 'launcher' / 'gowfont.ttf'
+FR_PRIVATE = 0x10
 
 
 # ---------------------------------------------------------------------------------------------
@@ -126,6 +129,7 @@ import button_icons  # noqa: E402
 import gow3_lang  # noqa: E402
 
 LANG = 'en'
+FONT_LOADED = False  # set by main() for the window; the command-line roles never need the font
 
 
 WARN = '  ⚠'  # marks a risky choice; the text before it is translated as usual
@@ -145,6 +149,23 @@ def windows_language():
     except (AttributeError, OSError):
         return 'en'
     return gow3_lang.WINDOWS_LANGUAGES.get(primary, 'en')
+
+
+def register_font(path):
+    """Makes a font file available to this process (nothing else sees it). False when the file is missing or
+    GDI refuses it: the launcher then keeps its standard fonts."""
+    try:
+        return path.is_file() and bool(ctypes.windll.gdi32.AddFontResourceExW(str(path), FR_PRIVATE, 0))
+    except (AttributeError, OSError):
+        return False
+
+
+def heading_font(size, fallback='Georgia', every_language=False):
+    """Titles use the God of War face once its file is registered: in the English UI, or in every language
+    for the game's name. Otherwise the launcher's usual family."""
+    if FONT_LOADED and (every_language or LANG == 'en'):
+        return ('GodOfWar', size)
+    return (fallback, size)
 
 
 # ---------------------------------------------------------------------------------------------
@@ -501,7 +522,7 @@ class Launcher:
         s.configure('TLabel', background=PANEL, foreground=TEXT)
         s.configure('Muted.TLabel', background=PANEL, foreground=MUTED, font=('Segoe UI', 9))
         s.configure('Restart.TLabel', background=PANEL, foreground=ACCENT_HI, font=('Segoe UI', 8, 'bold'))
-        s.configure('Section.TLabel', background=PANEL, foreground=ACCENT_HI, font=('Georgia', 12))
+        s.configure('Section.TLabel', background=PANEL, foreground=ACCENT_HI, font=heading_font(12))
         s.configure('TCheckbutton', background=PANEL, foreground=TEXT, padding=(0, 3))
         s.map('TCheckbutton', background=[('active', PANEL)], foreground=[('disabled', MUTED)])
         s.configure('TRadiobutton', background=PANEL, foreground=TEXT, indicatorcolor=CARD)
@@ -514,7 +535,7 @@ class Launcher:
         s.configure('TSpinbox', foreground=TEXT, arrowcolor=MUTED, insertcolor=TEXT, padding=4)
         s.configure('TButton', background=CARD, foreground=TEXT, padding=(12, 6), borderwidth=1)
         s.map('TButton', background=[('active', LINE), ('disabled', PANEL)], foreground=[('disabled', MUTED)])
-        s.configure('Play.TButton', background=ACCENT, foreground='#f4ece0', font=('Georgia', 15, 'bold'),
+        s.configure('Play.TButton', background=ACCENT, foreground='#f4ece0', font=(*heading_font(15), 'bold'),
                     padding=(36, 10), borderwidth=0)
         s.map('Play.TButton', background=[('active', ACCENT_HI), ('disabled', '#2e1c1c')],
               foreground=[('disabled', '#8a7a78')])
@@ -618,7 +639,7 @@ class Launcher:
         outer = ttk.Frame(self.content)
         head = ttk.Frame(outer, padding=(28, 22, 28, 6))
         head.pack(fill='x')
-        ttk.Label(head, text=title.upper(), background=PANEL, foreground=TEXT, font=('Georgia', 20)).pack(anchor='w')
+        ttk.Label(head, text=title.upper(), background=PANEL, foreground=TEXT, font=heading_font(20)).pack(anchor='w')
         ttk.Label(head, text=subtitle, style='Muted.TLabel').pack(anchor='w')
         canvas = tk.Canvas(outer, bg=PANEL, highlightthickness=0, bd=0)
         bar = ttk.Scrollbar(outer, orient='vertical', command=canvas.yview)
@@ -640,7 +661,7 @@ class Launcher:
         side = tk.Frame(self.root, bg=BG, width=self.px(220))
         side.pack(side='left', fill='y')
         side.pack_propagate(False)
-        self.side_title = tk.Label(side, text=APP_NAME.upper(), bg=BG, fg=TEXT, font=('Georgia', 15),
+        self.side_title = tk.Label(side, text=APP_NAME.upper(), bg=BG, fg=TEXT, font=heading_font(15, every_language=True),
                                    wraplength=self.px(190), justify='left')
         self.side_title.pack(anchor='w', padx=22, pady=(24, 22))
         self.side = side
@@ -649,7 +670,7 @@ class Launcher:
                             ('game', _('Game', 'Игра')), ('patches', _('Patches', 'Патчи')),
                             ('mods', _('Mods', 'Моды')), ('controls', _('Controls', 'Управление')),
                             ('advanced', _('Advanced', 'Дополнительно')), ('log', _('Log', 'Журнал'))):
-            item = tk.Label(side, text='    ' + title, bg=BG, fg=TEXT, anchor='w', font=('Segoe UI', 11),
+            item = tk.Label(side, text='    ' + title, bg=BG, fg=TEXT, anchor='w', font=heading_font(11, 'Segoe UI'),
                             pady=10, cursor='hand2')
             item.pack(fill='x')
             item.bind('<Button-1>', lambda _e, n=name: self.show(n))
@@ -756,7 +777,7 @@ class Launcher:
                 c.create_rectangle(0, h - 120 + i * 24, w, h - 96 + i * 24, fill=PANEL, outline='', stipple=stipple)
             c.create_rectangle(0, h - 24, w, h, fill=PANEL, outline='')
         else:
-            c.create_text(30, h - 74, text=APP_NAME.upper(), anchor='w', fill=TEXT, font=('Georgia', 32))
+            c.create_text(30, h - 74, text=APP_NAME.upper(), anchor='w', fill=TEXT, font=heading_font(32, every_language=True))
         if info:
             title_id = game_profile_of(folder)[0]
             sub = _('{} · version {}', '{} · версия {}').format(title_id or '?', info[1])
@@ -1182,7 +1203,7 @@ class Launcher:
         self.pages['log'] = page
         top = ttk.Frame(page)
         top.pack(fill='x', pady=(0, 8))
-        ttk.Label(top, text=_('Log', 'Журнал').upper(), font=('Georgia', 20)).pack(side='left')
+        ttk.Label(top, text=_('Log', 'Журнал').upper(), font=heading_font(20)).pack(side='left')
         ttk.Button(top, text=_('Copy', 'Копировать'), command=self.copy_log).pack(side='right')
         ttk.Button(top, text=_('Clear', 'Очистить'), command=lambda: self.set_log('')).pack(side='right', padx=6)
         self.log = tk.Text(page, wrap='none', bg='#0a0808', fg='#cfc6bc', insertbackground=TEXT, relief='flat',
@@ -1713,7 +1734,7 @@ def install_update(target, wait_pid):
 
 
 def main():
-    global LANG
+    global LANG, FONT_LOADED
     args = sys.argv[1:]
     if args and args[0] in ('--run', '--script'):
         sys.exit(run_role(args))
@@ -1730,6 +1751,7 @@ def main():
         ctypes.windll.shcore.SetProcessDpiAwareness(1)  # sharp text on scaled displays
     except (AttributeError, OSError):
         pass
+    FONT_LOADED = register_font(FONT_FILE)  # titles keep Georgia without it
     import tkinter as tk
     from tkinter import filedialog, messagebox, ttk
     root = tk.Tk()
