@@ -334,9 +334,9 @@ def missing_game_files(folder):
 
 def game_profile_of(folder):
     """(title id, (ids, built-in XML, app version)) of a game with a patch profile, else (id, None)."""
-    from patches import game_profile, game_title_id
+    from patches import game_profile_for, game_title_id
     title_id = game_title_id(folder) if folder else None
-    return title_id, game_profile(title_id)
+    return title_id, game_profile_for(folder)
 
 
 def game_environment(s):
@@ -912,10 +912,10 @@ class Launcher:
         self.section(f, _('Folders'))
         self.folder(f, 'game_dir', _('Game folder', 'Папка игры'),
                     _('Choose the folder with eboot.bin', 'Выберите папку с eboot.bin'),
-                    _('Your own dump of the game (eboot.bin, sce_module, sce_sys); God of War III Remastered: '
-                      'CUSA01623, version 01.02 for the community patches.',
-                      'Ваш дамп игры (eboot.bin, sce_module, sce_sys); God of War III Remastered: CUSA01623, '
-                      'версия 01.02 для патчей сообщества.'), on_change=self.game_changed)
+                    _('Your own dump of the game (eboot.bin, sce_module, sce_sys): God of War III Remastered, '
+                      'any region and version.',
+                      'Ваш дамп игры (eboot.bin, sce_module, sce_sys): God of War III Remastered, '
+                      'любой регион и версия.'), on_change=self.game_changed)
         self.folder(f, 'user_dir', _('Saves folder', 'Папка сохранений'),
                     _('Choose the saves folder', 'Выберите папку сохранений'),
                     _('Empty: {} (shader caches are kept there too).',
@@ -1218,13 +1218,15 @@ class Launcher:
         title_id, _profile = game_profile_of(self.var('game_dir', 'app').get())
         names = self.app.get('game_patches', {}).get(title_id) or []
         resolution = dict((v, t[0]) for v, t in RESOLUTION_CHOICES).get(self.var('render_resolution', 'ini').get(), '?')
-        from patches import game_patchable, unported_build
-        folder = self.var('game_dir', 'app').get()
-        if not game_patchable(folder):
-            if unported_build(folder):
-                return _('{} · 60 FPS engine · full 01.02 update detected: patch support in progress').format(resolution)
-            return _('{} · 60 FPS engine · patches not available for this game build').format(resolution)
-        return _('{} · {} FPS engine · {} patches').format(resolution, self.var('engine_fps', 'ini').get(), len(names))
+        from patches import game_patchable, patch_status
+        if not game_patchable(self.var('game_dir', 'app').get()):
+            return _('{} · 60 FPS engine · no patches for this game').format(resolution)
+        text = _('{} · {} FPS engine · {} patches').format(resolution, self.var('engine_fps', 'ini').get(), len(names))
+        # Which patches the game's eboot.bin had is known once the game has started (patches.py).
+        status = patch_status(DATA_DIR / 'out')
+        if status and status.get('skipped'):
+            text += ' · ' + _('{} not found in this eboot.bin at the last start (see Log)').format(len(status['skipped']))
+        return text
 
     def refresh_fsr4(self):
         total, missing = len(fsr4_files()), len(fsr4_missing())
