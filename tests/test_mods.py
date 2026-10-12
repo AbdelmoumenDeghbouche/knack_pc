@@ -3,6 +3,7 @@ import importlib.util
 import json
 import os
 from pathlib import Path
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -134,13 +135,15 @@ class ModTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             mods.selected(self.moddir, config)
 
+    @unittest.skipIf(os.name == 'nt', 'the fake probe is a shebang script')
     def test_run_uses_overlay_propagates_exit_and_cleans_view(self):
         self.mod('A')
-        python = self.root / 'python'
-        python.write_text(f'#!{sys.executable}\nimport subprocess,sys\n'
-            'if sys.argv[1] == "scripts/mods.py" or sys.argv[1] == "-c":\n'
-            '    sys.exit(subprocess.call([sys.executable,*sys.argv[1:]]))\n')
-        python.chmod(0o755)
+        # run.py with the game preparation scripts stubbed out: the fake game is not a SELF.
+        port = self.root / 'port'
+        shutil.copytree(ROOT / 'scripts', port / 'scripts')
+        shutil.copy(ROOT / 'run.py', port / 'run.py')
+        for name in ('prepare', 'link_libc', 'link_modules', 'content_profile'):
+            (port / 'scripts' / f'{name}.py').write_text('')
         probe = self.root / 'probe'
         probe.write_text(f'#!{sys.executable}\nimport json,sys,os\nfrom pathlib import Path\n'
             'game=Path(sys.argv[sys.argv.index("--app0")+1])\n'
@@ -148,10 +151,10 @@ class ModTests(unittest.TestCase):
             '"path":str(game),"content":(game/"dvdroot_ps4/data/a.wad").read_text()}))\n'
             'sys.exit(7)\n')
         probe.chmod(0o755)
-        env = dict(os.environ, GOW3_PREBUILT='1', GOW3_PROBE=str(probe), PYTHON=str(python),
+        env = dict(os.environ, GOW3_PROBE=str(probe),
             GOW3_DATA_DIR=str(self.root), GOW3_GAME_DIR=str(self.game),
             GOW3_MODS_DIR=str(self.moddir), GOW3_MODS_ENABLED='1', GOW3_MODS_CONFIG=str(self.root/'mods.json'))
-        result = subprocess.run(['bash', 'run.sh'], cwd=ROOT, env=env, capture_output=True, timeout=30)
+        result = subprocess.run([sys.executable, 'run.py'], cwd=port, env=env, capture_output=True, timeout=30)
         self.assertEqual(result.returncode, 7, result.stderr)
         mounted = json.loads((self.root / 'mounted.json').read_text())
         self.assertEqual(mounted['content'], 'mod')
