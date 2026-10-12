@@ -107,6 +107,7 @@ class StreamMemoryLauncherTest(unittest.TestCase):
                     app.play_button, app.status = mock.Mock(), mock.Mock()
                     process = mock.Mock()
                     with mock.patch.object(launcher, 'game_info', return_value=('God of War III', '01.02')), \
+                            mock.patch.object(launcher, 'missing_game_files', return_value=[]), \
                             mock.patch.object(launcher.subprocess, 'Popen', return_value=process) as start, \
                             mock.patch.object(launcher, 'GameJob'), \
                             mock.patch.object(launcher.threading, 'Thread'), \

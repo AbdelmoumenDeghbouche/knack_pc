@@ -82,6 +82,22 @@ class ControlMapTest(unittest.TestCase):
         self.assertNotIn('GOW3_FRAMES_AHEAD', launcher.game_environment({**launcher.APP_DEFAULTS, 'frames_ahead': '2'}))
 
 
+class GameFilesTest(unittest.TestCase):
+    def test_missing_game_files(self):
+        import tempfile
+        from pathlib import Path
+        with tempfile.TemporaryDirectory() as folder:
+            folder = Path(folder)
+            (folder / 'sce_module').mkdir()
+            (folder / 'sce_module/libSceFios2.prx').write_bytes(b'x')
+            self.assertEqual(launcher.missing_game_files(folder),
+                             ['sce_sys/param.sfo', 'sce_module/libc.prx'])
+            (folder / 'sce_sys').mkdir()
+            (folder / 'sce_sys/param.sfo').write_bytes(b'x')
+            (folder / 'sce_module/libc.prx').write_bytes(b'x')
+            self.assertEqual(launcher.missing_game_files(folder), [])
+
+
 class GpuChoiceTest(unittest.TestCase):
     def test_parse_gpu_list(self):
         text = '0\tAMD Radeon(TM) Graphics\tintegrated\nbroken line\n1\tNVIDIA GeForce RTX 2070 SUPER\tdiscrete\n'

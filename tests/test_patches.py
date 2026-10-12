@@ -82,6 +82,20 @@ class GameProfileTests(unittest.TestCase):
             self.assertFalse(eboot_matches(folder, game_profile('CUSA01623')))
             self.assertTrue(eboot_matches(folder, None))  # no profile: nothing to check
 
+    def test_unported_build(self):
+        import hashlib
+        from unittest import mock
+        import patches
+        with tempfile.TemporaryDirectory() as folder:
+            (Path(folder) / 'eboot.bin').write_bytes(b'full update')
+            self.assertIsNone(patches.unported_build(folder))  # unknown build
+            sha = hashlib.sha256(b'full update').hexdigest()
+            with mock.patch.dict(patches.UNPORTED_BUILDS, {sha: 'full 01.02 update'}):
+                self.assertEqual(patches.unported_build(folder), 'full 01.02 update')
+        self.assertIsNone(patches.unported_build(None))
+        self.assertIn('6e72330e9092e5164049b865e5568f2d450904001a73fe0a2f4b39194c195b3c',
+                      patches.UNPORTED_BUILDS)
+
     def test_game_patchable(self):
         from patches import game_patchable
         with tempfile.TemporaryDirectory() as folder:

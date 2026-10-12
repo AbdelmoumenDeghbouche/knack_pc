@@ -165,7 +165,8 @@ FPS_LIMITS = [('30', ('30',)), ('60', ('60',)), ('120', ('120',)), ('240', ('240
 APP_DEFAULTS = {'ui_language': 'en', 'game_dir': os.environ.get('GOW3_GAME_DIR', str(PORT_DIR.parent / 'CUSA01623')), 'user_dir': '',
                 'mods_dir': '', 'mods_enabled': True, 'patches_dir': '', 'language': '1',
                 'player_name': '', 'hdr': False, 'draw_pipe': '', 'readbacks': '', 'stream_memory': 'cached',
-                'gpu_id': '', 'background_warmup': True, 'parallel_warmup': True, 'pipeline_binary_cache': True, 'perf_diag': False, 'frame_capture_key': False, 'frame_stats': False, 'gpu_profile': False,
+                'gpu_id': '', 'background_warmup': True, 'parallel_warmup': True, 'pipeline_binary_cache': True,
+                'perf_diag': False, 'frame_capture_key': False, 'frame_stats': False, 'gpu_profile': False,
                 'vk_validation': False, 'close_on_play': False,
                 'check_updates': False, 'game_patches': {}, 'controls': {}, 'pad_style': 'playstation'}
 
@@ -307,6 +308,14 @@ def game_info(folder):
         return values.get('TITLE', APP_NAME).replace('™', '').replace('®', '').strip(), values.get('APP_VER', '?')
     except (OSError, ValueError, ImportError):
         return APP_NAME, '?'
+
+
+REQUIRED_GAME_FILES = ('sce_sys/param.sfo', 'sce_module/libc.prx', 'sce_module/libSceFios2.prx')
+
+
+def missing_game_files(folder):
+    """Files the port loads from the dump that the folder lacks (an incomplete dump)."""
+    return [name for name in REQUIRED_GAME_FILES if not (Path(folder) / name).is_file()]
 
 
 def game_profile_of(folder):
@@ -1192,8 +1201,11 @@ class Launcher:
         title_id, _profile = game_profile_of(self.var('game_dir', 'app').get())
         names = self.app.get('game_patches', {}).get(title_id) or []
         resolution = dict((v, t[0]) for v, t in RESOLUTION_CHOICES).get(self.var('render_resolution', 'ini').get(), '?')
-        from patches import game_patchable
-        if not game_patchable(self.var('game_dir', 'app').get()):
+        from patches import game_patchable, unported_build
+        folder = self.var('game_dir', 'app').get()
+        if not game_patchable(folder):
+            if unported_build(folder):
+                return _('{} · 60 FPS engine · full 01.02 update detected: patch support in progress').format(resolution)
             return _('{} · 60 FPS engine · patches not available for this game build').format(resolution)
         return _('{} · {} FPS engine · {} patches').format(resolution, self.var('engine_fps', 'ini').get(), len(names))
 
@@ -1384,6 +1396,13 @@ class Launcher:
         if not game_info(self.app['game_dir']):
             self.messagebox.showerror(APP_NAME, _('Choose the game folder with eboot.bin (CUSA01623).',
                                                   'Выберите папку игры с eboot.bin (CUSA01623).'))
+            self.show('game')
+            return
+        missing = missing_game_files(self.app['game_dir'])
+        if missing:
+            self.messagebox.showerror(APP_NAME, _('The game dump is incomplete. Missing files:\n\n{}\n\n'
+                                                  'Dump the game again, or copy these files from a complete dump.')
+                                      .format('\n'.join(missing)))
             self.show('game')
             return
         self.set_log('')
