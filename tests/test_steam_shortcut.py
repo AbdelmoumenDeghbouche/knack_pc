@@ -1,9 +1,12 @@
 from paths import ROOT  # noqa: F401  (puts scripts/ on the path)
 import binascii
 import shutil
+import sys
 import tempfile
+import types
 import unittest
 from pathlib import Path
+from unittest import mock
 
 import steam_shortcut as steam
 
@@ -30,6 +33,46 @@ class VdfTests(unittest.TestCase):
         expected = binascii.crc32((exe + steam.APP_NAME).encode()) | 0x80000000
         self.assertEqual(steam.shortcut_appid(exe, steam.APP_NAME), expected)
         self.assertGreaterEqual(expected, 0x80000000)
+
+
+class PlatformTests(unittest.TestCase):
+    def test_windows_looks_in_the_registry_folder_then_the_usual_ones(self):
+        class Key:
+            def __enter__(self): return self
+            def __exit__(self, *a): return False
+        registry = types.SimpleNamespace(HKEY_CURRENT_USER=1, OpenKey=lambda *a: Key(),
+                                         QueryValueEx=lambda key, name: ('D:/Games/Steam', 1))
+        with mock.patch.object(steam, 'WINDOWS', True), mock.patch.dict(sys.modules, {'winreg': registry}):
+            roots = steam.steam_roots()
+        self.assertEqual(roots[0], Path('D:/Games/Steam'))
+        self.assertIn(Path('C:/Program Files (x86)/Steam'), roots)
+
+    def test_steam_is_running_by_the_process_list(self):
+        windows = mock.Mock(stdout='steam.exe   1234 Console   1   150,000 K')
+        with mock.patch.object(steam, 'WINDOWS', True), mock.patch.object(steam.subprocess, 'run', return_value=windows):
+            self.assertTrue(steam.steam_running())
+        nothing = mock.Mock(stdout='INFO: No tasks are running which match the specified criteria.')
+        with mock.patch.object(steam, 'WINDOWS', True), mock.patch.object(steam.subprocess, 'run', return_value=nothing):
+            self.assertFalse(steam.steam_running())
+        with mock.patch.object(steam, 'WINDOWS', False), \
+                mock.patch.object(steam.subprocess, 'run', return_value=mock.Mock(returncode=0)) as run:
+            self.assertTrue(steam.steam_running())
+        self.assertEqual(run.call_args.args[0][0], 'pgrep')
+
+
+@unittest.skipIf(Image is None, 'Pillow is needed for the pictures')
+class LogoTests(unittest.TestCase):
+    def test_only_a_large_icon_with_a_transparent_background_is_an_emblem(self):
+        self.assertTrue(steam.usable_emblem(Image.new('RGBA', (256, 256), (0, 0, 0, 0))))
+        self.assertFalse(steam.usable_emblem(Image.new('RGBA', (128, 128), (0, 0, 0, 0))))
+        self.assertFalse(steam.usable_emblem(Image.new('RGB', (512, 512), (200, 200, 200))))
+
+    def test_the_logo_without_an_emblem_is_just_the_title_lines(self):
+        emblem = Image.new('RGBA', (256, 256), (230, 180, 40, 255))
+        with_mark, text_only = steam.make_logo(emblem, 600), steam.make_logo(None, 600)
+        self.assertEqual(with_mark.width, text_only.width)
+        self.assertLess(text_only.height, with_mark.height)
+        self.assertGreater(text_only.getbbox()[3], 0)
 
 
 @unittest.skipIf(Image is None, 'Pillow is needed for the pictures')

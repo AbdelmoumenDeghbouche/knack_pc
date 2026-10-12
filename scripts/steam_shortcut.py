@@ -21,8 +21,11 @@ WIDE = (920, 430)       # horizontal capsule: <id>.png
 HERO = (1920, 620)      # library background: <id>_hero.png
 GOLD = (233, 214, 164)
 
-STEAM_ROOTS = ('~/.local/share/Steam', '~/.steam/steam', '~/.var/app/com.valvesoftware.Steam/.local/share/Steam')
-FONTS = ('/usr/share/fonts/TTF/DejaVuSerif-Bold.ttf', '/usr/share/fonts/dejavu/DejaVuSerif-Bold.ttf',
+WINDOWS = os.name == 'nt'
+LINUX_ROOTS = ('~/.local/share/Steam', '~/.steam/steam', '~/.var/app/com.valvesoftware.Steam/.local/share/Steam')
+WINDOWS_ROOTS = ('C:/Program Files (x86)/Steam', 'C:/Program Files/Steam')
+FONTS = ('C:/Windows/Fonts/georgiab.ttf', 'C:/Windows/Fonts/timesbd.ttf',
+         '/usr/share/fonts/TTF/DejaVuSerif-Bold.ttf', '/usr/share/fonts/dejavu/DejaVuSerif-Bold.ttf',
          '/usr/share/fonts/truetype/dejavu/DejaVuSerif-Bold.ttf', '/usr/share/fonts/noto/NotoSerif-Bold.ttf',
          '/usr/share/fonts/truetype/noto/NotoSerif-Bold.ttf')
 
@@ -95,12 +98,30 @@ def shortcut_appid(exe, name):
 # Steam folders.
 
 def steam_running():
+    if WINDOWS:
+        result = subprocess.run(['tasklist', '/FI', 'IMAGENAME eq steam.exe', '/NH'], capture_output=True,
+                                text=True, creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
+        return 'steam.exe' in result.stdout.lower()
     return subprocess.run(['pgrep', '-x', 'steam'], capture_output=True).returncode == 0
+
+
+def steam_roots():
+    """Steam installation folders to look in, the registry's first on Windows."""
+    if WINDOWS:
+        roots = []
+        try:
+            import winreg
+            with winreg.OpenKey(winreg.HKEY_CURRENT_USER, r'Software\Valve\Steam') as key:
+                roots.append(Path(winreg.QueryValueEx(key, 'SteamPath')[0]))
+        except OSError:
+            pass
+        return roots + [Path(p) for p in WINDOWS_ROOTS]
+    return [Path(os.path.expanduser(p)) for p in LINUX_ROOTS]
 
 
 def account_folders(root=None):
     """userdata/<account> folders of the Steam installation(s) of this user."""
-    roots = [Path(root)] if root else [Path(os.path.expanduser(p)) for p in STEAM_ROOTS]
+    roots = [Path(root)] if root else steam_roots()
     seen, found = set(), []
     for base in roots:
         userdata = base / 'userdata'
@@ -158,21 +179,28 @@ def spaced(draw, center_x, y, text, face, fill, gap):
         x += w + gap
 
 
+def usable_emblem(image):
+    """Whether the icon can be the logo's emblem: large and with a transparent background."""
+    rgba = image.convert('RGBA')
+    return rgba.width >= 200 and rgba.getpixel((1, 1))[3] < 40
+
+
 def make_logo(emblem, width):
-    """Transparent logo: the emblem over GOD OF WAR III and REMASTERED, `width` px wide."""
+    """Transparent logo: the emblem (when there is one) over GOD OF WAR III and REMASTERED, `width` px wide."""
     from PIL import Image, ImageDraw, ImageFilter
     scale = 2
     w = width * scale
-    emblem_size = round(w * 0.30)
+    emblem_size = round(w * 0.30) if emblem is not None else 0
     probe = ImageDraw.Draw(Image.new('RGBA', (1, 1)))
     title_face, title_gap = fit_face(probe, 'GOD OF WAR III', w * 0.94, 0.04)
     sub_face, sub_gap = fit_face(probe, 'REMASTERED', w * 0.60, 0.45)
-    title_y = emblem_size + w * 0.03
+    title_y = emblem_size + (w * 0.03 if emblem is not None else 0)
     sub_y = title_y + title_face.size * 1.35
     height = round(sub_y + sub_face.size * 1.5)
     canvas = Image.new('RGBA', (w, height), (0, 0, 0, 0))
-    mark = emblem.convert('RGBA').resize((emblem_size, emblem_size), Image.LANCZOS)
-    canvas.alpha_composite(mark, ((w - emblem_size) // 2, 0))
+    if emblem is not None:
+        mark = emblem.convert('RGBA').resize((emblem_size, emblem_size), Image.LANCZOS)
+        canvas.alpha_composite(mark, ((w - emblem_size) // 2, 0))
     shadow = Image.new('RGBA', canvas.size, (0, 0, 0, 0))
     for layer, fill, offset in ((shadow, (0, 0, 0, 220), 3 * scale), (canvas, GOLD + (255,), 0)):
         draw = ImageDraw.Draw(layer)
@@ -201,7 +229,8 @@ def make_art(game, icon, out_dir, app_id):
     if background is None:
         raise SteamError('no_art', str(game / 'sce_sys'))
     base = Image.open(background).convert('RGBA')
-    emblem = Image.open(icon if Path(icon).is_file() else game / 'sce_sys' / 'icon0.png').convert('RGBA')
+    picture = Image.open(icon if Path(icon).is_file() else game / 'sce_sys' / 'icon0.png').convert('RGBA')
+    emblem = picture if usable_emblem(picture) else None
     out_dir.mkdir(parents=True, exist_ok=True)
 
     cover(base, *HERO, focus=(0.5, 0.52)).convert('RGB').save(out_dir / f'{app_id}_hero.png')
@@ -219,7 +248,7 @@ def make_art(game, icon, out_dir, app_id):
     tall.convert('RGB').save(out_dir / f'{app_id}p.png')
 
     icon_path = out_dir / f'{app_id}_icon.png'
-    emblem.resize((256, 256), Image.LANCZOS).save(icon_path)
+    picture.resize((256, 256), Image.LANCZOS).save(icon_path)
     (out_dir / f'{app_id}.json').write_text(json.dumps(
         {'nVersion': 1, 'logoPosition': {'pinnedPosition': 'BottomLeft', 'nWidthPct': 42, 'nHeightPct': 56}}))
     return icon_path
