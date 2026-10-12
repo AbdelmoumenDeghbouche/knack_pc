@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright 2024 shadPS4 Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+#include <cstdio>
 #include <cstdlib>
 #include <boost/container/static_vector.hpp>
 #include <fmt/format.h>
@@ -112,6 +113,18 @@ Instance::Instance(const Frontend::WindowSystemInfo& window_info, s32 physical_d
     const std::size_t num_physical_devices = static_cast<u16>(physical_devices.size());
     ASSERT_MSG(num_physical_devices > 0, "No physical devices found");
     LOG_INFO(Render_Vulkan, "Found {} physical devices", num_physical_devices);
+    // gow3: the device list in the game log tells a missing driver apart from a wrong choice.
+    for (std::size_t i = 0; i < num_physical_devices; ++i) {
+        const auto props = physical_devices[i].getProperties();
+        std::printf("GPU %zu: %s (%s)\n", i, props.deviceName.data(),
+                    vk::to_string(props.deviceType).c_str());
+    }
+    // gow3: a saved choice can outlive its GPU (removed card, new driver order).
+    if (physical_device_index >= static_cast<s32>(num_physical_devices)) {
+        std::printf("GPU: selected GPU %d is not in the device list; choosing automatically\n",
+                    physical_device_index);
+        physical_device_index = -1;
+    }
 
     if (physical_device_index < 0) {
         std::vector<
@@ -162,12 +175,9 @@ Instance::Instance(const Frontend::WindowSystemInfo& window_info, s32 physical_d
         });
         physical_device = physical_devices[std::get<0>(properties2[0])];
     } else {
-        ASSERT_MSG(physical_device_index < num_physical_devices,
-                   "Invalid physical device index {} provided when only {} devices exist",
-                   physical_device_index, num_physical_devices);
-
         physical_device = physical_devices[physical_device_index];
     }
+    std::printf("GPU: using %s\n", physical_device.getProperties().deviceName.data());
 
     available_extensions = GetSupportedExtensions(physical_device);
     format_properties = GetFormatProperties(physical_device);

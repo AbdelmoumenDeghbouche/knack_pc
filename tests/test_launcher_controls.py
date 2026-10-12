@@ -82,6 +82,41 @@ class ControlMapTest(unittest.TestCase):
         self.assertNotIn('GOW3_FRAMES_AHEAD', launcher.game_environment({**launcher.APP_DEFAULTS, 'frames_ahead': '2'}))
 
 
+class GpuChoiceTest(unittest.TestCase):
+    def test_parse_gpu_list(self):
+        text = '0\tAMD Radeon(TM) Graphics\tintegrated\nbroken line\n1\tNVIDIA GeForce RTX 2070 SUPER\tdiscrete\n'
+        self.assertEqual(launcher.parse_gpu_list(text),
+                         [('0', 'AMD Radeon(TM) Graphics', 'integrated'),
+                          ('1', 'NVIDIA GeForce RTX 2070 SUPER', 'discrete')])
+        self.assertEqual(launcher.parse_gpu_list(''), [])
+
+    def test_list_gpus_failures_leave_only_automatic(self):
+        import subprocess
+        from unittest import mock
+        with mock.patch.object(launcher, 'find_tool', return_value=None):
+            self.assertEqual(launcher.list_gpus(), [])
+        with mock.patch.object(launcher, 'find_tool', return_value='gow3-gpu-capabilities.exe'):
+            with mock.patch.object(launcher.subprocess, 'run', side_effect=subprocess.TimeoutExpired('x', 5)):
+                self.assertEqual(launcher.list_gpus(), [])
+            with mock.patch.object(launcher.subprocess, 'run', side_effect=OSError):
+                self.assertEqual(launcher.list_gpus(), [])
+            done = mock.Mock(returncode=0, stdout='0\tRX 6700 XT\tdiscrete\n')
+            with mock.patch.object(launcher.subprocess, 'run', return_value=done) as run:
+                self.assertEqual(launcher.list_gpus(), [('0', 'RX 6700 XT', 'discrete')])
+                self.assertEqual(run.call_args.kwargs['timeout'], 5)
+
+    def test_gpu_choice_reaches_the_game(self):
+        from unittest import mock
+        with mock.patch.dict(launcher.os.environ, {'GOW3_GPU_ID': '7'}):
+            env = launcher.game_environment({**launcher.APP_DEFAULTS, 'game_dir': 'x'})
+            self.assertIsNone(env.get('GOW3_GPU_ID'))  # Automatic wins over an inherited value
+            env = launcher.game_environment({**launcher.APP_DEFAULTS, 'game_dir': 'x', 'gpu_id': '1'})
+            self.assertEqual(env['GOW3_GPU_ID'], '1')
+            env = launcher.game_environment({**launcher.APP_DEFAULTS, 'game_dir': 'x', 'gpu_id': 'bad'})
+            self.assertIsNone(env.get('GOW3_GPU_ID'))
+        self.assertEqual(launcher.APP_DEFAULTS['gpu_id'], '')
+
+
 class ReleaseVersionTest(unittest.TestCase):
     def test_god_of_war_release_is_newer_than_the_inherited_tags(self):
         self.assertEqual(launcher.VERSION, '2.1.5')

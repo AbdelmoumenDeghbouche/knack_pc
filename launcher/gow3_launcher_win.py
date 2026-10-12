@@ -93,6 +93,30 @@ def run_command():
     return [sys.executable, '--run'] if FROZEN else [sys.executable, str(PORT_DIR / 'run.py')]
 
 
+def find_tool(name):
+    """A port executable: bin/ in a packaged build, out/ in a source checkout (as run.py looks)."""
+    return next((str(p) for p in (PORT_DIR / 'bin' / name, PORT_DIR / 'out' / name) if p.is_file()), None)
+
+
+def parse_gpu_list(text):
+    """(index, name, type) per line of `gow3-gpu-capabilities --list`; other lines are skipped."""
+    rows = [line.split('\t') for line in text.splitlines()]
+    return [tuple(row) for row in rows if len(row) == 3 and row[0].isdigit()]
+
+
+def list_gpus():
+    """The Vulkan GPUs in the order the game numbers them, or [] when the tool cannot tell."""
+    tool = find_tool('gow3-gpu-capabilities.exe')
+    if not tool:
+        return []
+    try:
+        done = subprocess.run([tool, '--list'], capture_output=True, text=True, timeout=5,
+                              creationflags=NO_WINDOW)
+    except (OSError, subprocess.SubprocessError):
+        return []
+    return parse_gpu_list(done.stdout) if done.returncode == 0 else []
+
+
 # ---------------------------------------------------------------------------------------------
 # Languages: every text is written in English with the Russian next to it; the other
 # languages are in gow3_lang.py, keyed by the English text.
@@ -141,7 +165,7 @@ FPS_LIMITS = [('30', ('30',)), ('60', ('60',)), ('120', ('120',)), ('240', ('240
 APP_DEFAULTS = {'ui_language': 'en', 'game_dir': os.environ.get('GOW3_GAME_DIR', str(PORT_DIR.parent / 'CUSA01623')), 'user_dir': '',
                 'mods_dir': '', 'mods_enabled': True, 'patches_dir': '', 'language': '1',
                 'player_name': '', 'hdr': False, 'draw_pipe': '', 'readbacks': '', 'stream_memory': 'cached',
-                'background_warmup': True, 'parallel_warmup': True, 'pipeline_binary_cache': True, 'perf_diag': False, 'frame_capture_key': False, 'frame_stats': False, 'gpu_profile': False,
+                'gpu_id': '', 'background_warmup': True, 'parallel_warmup': True, 'pipeline_binary_cache': True, 'perf_diag': False, 'frame_capture_key': False, 'frame_stats': False, 'gpu_profile': False,
                 'vk_validation': False, 'close_on_play': False,
                 'check_updates': False, 'game_patches': {}, 'controls': {}, 'pad_style': 'playstation'}
 
@@ -319,6 +343,10 @@ def game_environment(s):
     # The saved UI choice wins over inherited diagnostic overrides, including when reverting.
     stream_memory = s.get('stream_memory', APP_DEFAULTS['stream_memory'])
     env['GOW3_STREAM_MEMORY'] = stream_memory if stream_memory in ('cached', 'host', 'device') else 'cached'
+    gpu_id = str(s.get('gpu_id', ''))
+    env.pop('GOW3_GPU_ID', None)
+    if gpu_id.isdigit():
+        env['GOW3_GPU_ID'] = gpu_id
     env['GOW3_BACKGROUND_WARMUP'] = '1' if s.get('background_warmup', True) else '0'
     env['GOW3_PARALLEL_WARMUP'] = '1' if s.get('parallel_warmup', True) else '0'
     env['GOW3_PIPELINE_BINARIES'] = '1' if s.get('pipeline_binary_cache', True) else '0'
@@ -832,6 +860,10 @@ class Launcher:
         self.check(f, 'parallel_warmup', 'app', _('Fast shader cache loading (parallel)'),
                    _('Loading screen only: builds the cached pipelines on several CPU threads.'))
         self.section(f, _('GPU data'))
+        gpus = [('', ('Automatic',))] + [(index, (name,)) for index, name, _kind in list_gpus()]
+        self.row(f, _('Graphics card'), self.choice(f, 'gpu_id', 'app', gpus),
+                 _('The GPU the game runs on. Choose your dedicated card if the game uses the integrated one.'),
+                 restart=True)
         self.row(f, _('Stream buffer memory'), self.choice(f, 'stream_memory', 'app', STREAM_MEMORY),
                  _('System RAM can improve FPS on NVIDIA laptops. Choose GPU memory to restore the previous '
                    'behavior. Applies on the next game launch.'), restart=True)
