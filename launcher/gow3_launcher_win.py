@@ -1151,6 +1151,9 @@ class Launcher:
         title_id, _profile = game_profile_of(self.var('game_dir', 'app').get())
         names = self.app.get('game_patches', {}).get(title_id) or []
         resolution = dict((v, t[0]) for v, t in RESOLUTION_CHOICES).get(self.var('render_resolution', 'ini').get(), '?')
+        from patches import game_patchable
+        if not game_patchable(self.var('game_dir', 'app').get()):
+            return _('{} · 60 FPS engine · patches not available for this game build').format(resolution)
         return _('{} · {} FPS engine · {} patches').format(resolution, self.var('engine_fps', 'ini').get(), len(names))
 
     def refresh_fsr4(self):

@@ -29,6 +29,9 @@ int main() {
     assert(G::FsrPassRuns(false, true, 1920, 1080, 1920, 1080) && !G::FsrPassRuns(true, false, 1920, 1080, 1920, 1080));
     assert(!G::FsrPassRuns(true, true, 2560, 1440, 1920, 1080));  // larger image: regular scaling
     assert(G::EffectiveFps(0, 120) == 120 && G::EffectiveFps(240, 120) == 120 && G::EffectiveFps(60, 240) == 60);
+    // An unpatched engine steps 1/60 s per frame: presenting faster speeds the game up.
+    assert(G::PresentLimit(120, 60) == 60 && G::PresentLimit(240, 120) == 120 && G::PresentLimit(240, 240) == 240);
+    assert(G::PresentLimit(0, 60) == 0 && G::PresentLimit(30, 60) == 30);  // 0: paced by vblank
 
     const char* path = "graphics-settings-test.ini";
     {
@@ -45,6 +48,11 @@ int main() {
     assert(v.render_resolution == 3 && v.engine_fps == 240 && !v.deferred_readback && v.stale_readback);
     assert(v.fsr1 && !v.rcas && v.rcas_strength == 40 && v.frames_queued == 2);
     assert(!Gow3Settings::GraphicsNeedRestart());
+    assert(v.applied_engine_fps == 240);  // no GOW3_ENGINE_FPS: the configured rate
+    _putenv_s("GOW3_ENGINE_FPS", "60");    // run.py: the frame rate patch did not apply
+    Gow3Settings::Load();
+    assert(v.engine_fps == 240 && v.applied_engine_fps == 60 && !Gow3Settings::GraphicsNeedRestart());
+    _putenv_s("GOW3_ENGINE_FPS", "");
     v.engine_fps = 120;
     assert(Gow3Settings::GraphicsNeedRestart());
     v.fps_limit = 60;  // live: no restart because of it

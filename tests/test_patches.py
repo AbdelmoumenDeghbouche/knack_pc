@@ -81,6 +81,14 @@ class GameProfileTests(unittest.TestCase):
             self.assertFalse(eboot_matches(folder, game_profile('CUSA01623')))
             self.assertTrue(eboot_matches(folder, None))  # no profile: nothing to check
 
+    def test_game_patchable(self):
+        from patches import game_patchable
+        with tempfile.TemporaryDirectory() as folder:
+            folder = Path(folder)
+            (folder / 'eboot.bin').write_bytes(b'another build')
+            self.assertFalse(game_patchable(folder))  # no param.sfo: unknown game
+            self.assertFalse(game_patchable(None))
+
     def test_gow3_patches_compile(self):
         names = [m.get('Name') for m in ET.parse(GOW3).getroot().iter('Metadata')]
         self.assertTrue(compile_patches(GOW3, names, '01.02', SEGMENTS))
