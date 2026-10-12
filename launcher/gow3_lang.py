@@ -880,6 +880,8 @@ EXTRA = {
         'The game folder has no sce_sys/pic1.png for the pictures.': 'A pasta do jogo não tem sce_sys/pic1.png para gerar as imagens.',
         'The shortcut "{}" was updated in Steam (accounts: {}), with its icon, capsules, background and logo. Open Steam to see it in the library.': 'O atalho "{}" foi atualizado na Steam (contas: {}), com ícone, capas, fundo e logotipo. Abra a Steam para vê-lo na biblioteca.',
         'The shortcut "{}" was added to Steam (accounts: {}), with its icon, capsules, background and logo. Open Steam to see it in the library.': 'O atalho "{}" foi adicionado à Steam (contas: {}), com ícone, capas, fundo e logotipo. Abra a Steam para vê-lo na biblioteca.',
+        'Menu entry and icon (AppImage)': 'Entrada no menu e ícone (AppImage)',
+        'Creates gow3.desktop in ~/.local/share/applications so the launcher and the game show their icon in the dock and the menu. Turning it off removes the entry.': 'Cria o gow3.desktop em ~/.local/share/applications para o launcher e o jogo mostrarem o ícone no dock e no menu. Desligar remove a entrada.',
     },
 }
 

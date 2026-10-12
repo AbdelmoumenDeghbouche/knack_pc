@@ -227,7 +227,7 @@ INI_DEFAULTS = {'upscaler': 'fsr4', 'preset': '1', 'sharpen': '1', 'sharpness': 
 DISPLAY_MODES = [('windowed', ('Windowed',)), ('borderless', ('Borderless',)), ('fullscreen', ('Fullscreen',))]
 FPS_LIMITS = [('30', ('30',)), ('60', ('60',)), ('120', ('120',)), ('240', ('240',)), ('0', ('Unlimited',))]
 APP_DEFAULTS = {'ui_language': 'en', 'game_dir': os.environ.get('GOW3_GAME_DIR', str(PORT_DIR.parent / 'CUSA01623') if WINDOWS else ''), 'update_dir': '', 'experimental_upscaler': False,
-                'video_backend': 'auto', 'gamemode': False, 'mangohud': False, 'user_dir': '',
+                'video_backend': 'auto', 'gamemode': False, 'mangohud': False, 'desktop_integration': True, 'user_dir': '',
                 'mods_dir': '', 'mods_enabled': True, 'patches_dir': '', 'language': '1',
                 'player_name': '', 'hdr': False, 'draw_pipe': '', 'readbacks': '', 'stream_memory': 'cached',
                 'gpu_id': '', 'background_warmup': True, 'parallel_warmup': True, 'pipeline_binary_cache': True,
@@ -422,6 +422,47 @@ REQUIRED_GAME_FILES = ('sce_sys/param.sfo', 'sce_module/libc.prx', 'sce_module/l
 def missing_game_files(folder):
     """Files the port loads from the dump that the folder lacks (an incomplete dump)."""
     return [name for name in REQUIRED_GAME_FILES if not (Path(folder) / name).is_file()]
+
+
+DESKTOP_MARKER = 'X-GOW3-Integration=true'
+
+
+def desktop_entry(command, icon, marker=False):
+    """The menu entry; its StartupWMClass is the application id of the launcher and of the game window."""
+    return ('[Desktop Entry]\nType=Application\nName=God of War III Remastered\n'
+            f'Exec={command}\nIcon={icon}\nTerminal=false\nCategories=Game;\nStartupWMClass=gow3\n'
+            + (DESKTOP_MARKER + '\n' if marker else ''))
+
+
+def integrate_desktop(enabled, appimage, icon_source, data_dir, home=None):
+    """AppImage on Linux: the menu entry the desktop matches the windows (application id gow3) to,
+    which is what shows their icon in the dock. The entry is ours while it carries the marker; one
+    without it was written by hand (the Desktop shortcut button) and is left alone."""
+    entry = Path(home or Path.home()) / '.local' / 'share' / 'applications' / 'gow3.desktop'
+    try:
+        ours = entry.is_file() and DESKTOP_MARKER in entry.read_text(encoding='utf-8', errors='replace')
+        if not enabled:
+            if ours:
+                entry.unlink()
+            return None
+        if not appimage or (entry.is_file() and not ours):
+            return None
+        icon = Path(data_dir) / 'gow3.png'
+        icon.parent.mkdir(parents=True, exist_ok=True)
+        if not icon.is_file() or icon.read_bytes() != Path(icon_source).read_bytes():
+            shutil.copyfile(icon_source, icon)
+        text = desktop_entry(f'"{appimage}"', icon, marker=True)
+        entry.parent.mkdir(parents=True, exist_ok=True)
+        if not entry.is_file() or entry.read_text(encoding='utf-8') != text:
+            entry.write_text(text, encoding='utf-8')
+        return entry
+    except OSError:
+        return None
+
+
+def steam_icon(game):
+    """Picture of the Steam shortcut's icon: the launcher's own on Linux, the game's on Windows."""
+    return Path(game) / 'sce_sys' / 'icon0.png' if WINDOWS else PORT_DIR / 'launcher' / 'gow3.png'
 
 
 def steam_launch_command():
@@ -1300,6 +1341,9 @@ class Launcher:
         """Wayland / X11, GameMode and MangoHud: only the ones this system has can be turned on."""
         tools = linux_tools()
         self.section(f, _('Linux'), top=4)
+        self.check(f, 'desktop_integration', 'app', _('Menu entry and icon (AppImage)'),
+                   _('Creates gow3.desktop in ~/.local/share/applications so the launcher and the game show their '
+                     'icon in the dock and the menu. Turning it off removes the entry.'))
         self.row(f, _('Window system'), self.choice(f, 'video_backend', 'app', VIDEO_BACKENDS), restart=True,
                  hint=_('Automatic lets SDL choose. Pick X11 if the window misbehaves on Wayland (it runs through '
                         'XWayland).') + ('' if tools['wayland'] else '  ' + _('No Wayland session detected.')))
@@ -1330,8 +1374,7 @@ class Launcher:
                        command=lambda: threading.Thread(target=self.check_update, args=(True,), daemon=True).start()
                        ).pack(side='left')
         ttk.Button(holder, text=_('Desktop shortcut', 'Ярлык на рабочем столе'), command=self.shortcut).pack(side='left', padx=6)
-        if not WINDOWS:
-            ttk.Button(holder, text=_('Add to Steam'), command=self.add_to_steam).pack(side='left')
+        ttk.Button(holder, text=_('Add to Steam'), command=self.add_to_steam).pack(side='left')
         ttk.Label(holder, text=f'v{VERSION}', style='Muted.TLabel').pack(side='left', padx=10)
         if not WINDOWS:
             self.build_linux_options(f)
@@ -1834,8 +1877,7 @@ class Launcher:
             shutil.copyfile(PORT_DIR / 'launcher' / 'gow3.png', icon)
         except OSError:
             icon = 'gow3'
-        entry = ('[Desktop Entry]\nType=Application\nName=God of War III\n'
-                 f'Exec={command}\nIcon={icon}\nTerminal=false\nCategories=Game;\nStartupWMClass=gow3\n')
+        entry = desktop_entry(command, icon)
         folders = [Path.home() / '.local' / 'share' / 'applications']
         try:
             desktop = subprocess.run(['xdg-user-dir', 'DESKTOP'], capture_output=True, text=True,
@@ -1870,7 +1912,7 @@ class Launcher:
         self.root.configure(cursor='watch')
         self.root.update_idletasks()
         try:
-            result = steam_shortcut.add_to_steam(game, steam_launch_command(), PORT_DIR / 'launcher' / 'gow3.png')
+            result = steam_shortcut.add_to_steam(game, steam_launch_command(), steam_icon(game))
         except steam_shortcut.SteamError as error:
             text = {'running': _('Steam is open. Close it completely (Steam > Exit) and click again: Steam '
                                  'rewrites its shortcuts when it closes.'),
@@ -2001,6 +2043,9 @@ def main():
         sys.exit(run_role(args))
     settings = {**APP_DEFAULTS, **load_json(CONFIG_FILE, {})}
     LANG = settings.get('ui_language') or windows_language()
+    if not WINDOWS:
+        integrate_desktop(settings.get('desktop_integration', True), os.environ.get('APPIMAGE'),
+                          PORT_DIR / 'launcher' / 'gow3.png', DATA_DIR)
     if WINDOWS and args[:1] == ['--install-update'] and len(args) == 3:
         sys.exit(install_update(args[1], args[2]))
     if WINDOWS and FROZEN and UPDATE_DIR not in PORT_DIR.parents:
