@@ -140,7 +140,7 @@ DISPLAY_MODES = [('windowed', ('Windowed',)), ('borderless', ('Borderless',)), (
 FPS_LIMITS = [('30', ('30',)), ('60', ('60',)), ('120', ('120',)), ('240', ('240',)), ('0', ('Unlimited',))]
 APP_DEFAULTS = {'ui_language': 'en', 'game_dir': os.environ.get('GOW3_GAME_DIR', str(PORT_DIR.parent / 'CUSA01623')), 'user_dir': '',
                 'mods_dir': '', 'mods_enabled': True, 'patches_dir': '', 'language': '1',
-                'player_name': '', 'hdr': False, 'draw_pipe': '', 'readbacks': '',
+                'player_name': '', 'hdr': False, 'draw_pipe': '', 'readbacks': '', 'stream_memory': 'cached',
                 'background_warmup': True, 'parallel_warmup': True, 'pipeline_binary_cache': True, 'perf_diag': False, 'frame_capture_key': False, 'frame_stats': False, 'gpu_profile': False,
                 'vk_validation': False, 'close_on_play': False,
                 'check_updates': False, 'game_patches': {}, 'controls': {}, 'pad_style': 'playstation'}
@@ -204,6 +204,9 @@ DRAW_PIPE = [('', ('Auto (8+ threads)', 'Авто (8+ потоков)')), ('1', 
              ('0', ('Off (more stable)', 'Выключен (стабильнее)'))]
 READBACKS = [('', ('Relaxed (default)', 'Relaxed (по умолчанию)')), ('0', ('Off', 'Выключены')),
              ('2', ('Precise',))]
+STREAM_MEMORY = [('cached', ('System RAM (cached, default)',)),
+                 ('host', ('System RAM (uncached)',)),
+                 ('device', ('GPU memory (previous behavior)',))]
 FRAMES_QUEUED = [('1', ('1 (lowest latency)',)), ('2', ('2',)), ('0', ('Unlimited',))]
 UI_LANGUAGES = gow3_lang.LANGUAGE_NAMES
 
@@ -313,6 +316,9 @@ def game_environment(s):
     for key, name in (('draw_pipe', 'GOW3_DRAW_PIPE'), ('readbacks', 'GOW3_READBACKS')):
         if s[key]:
             env[name] = s[key]
+    # The saved UI choice wins over inherited diagnostic overrides, including when reverting.
+    stream_memory = s.get('stream_memory', APP_DEFAULTS['stream_memory'])
+    env['GOW3_STREAM_MEMORY'] = stream_memory if stream_memory in ('cached', 'host', 'device') else 'cached'
     env['GOW3_BACKGROUND_WARMUP'] = '1' if s.get('background_warmup', True) else '0'
     env['GOW3_PARALLEL_WARMUP'] = '1' if s.get('parallel_warmup', True) else '0'
     env['GOW3_PIPELINE_BINARIES'] = '1' if s.get('pipeline_binary_cache', True) else '0'
@@ -826,6 +832,9 @@ class Launcher:
         self.check(f, 'parallel_warmup', 'app', _('Fast shader cache loading (parallel)'),
                    _('Loading screen only: builds the cached pipelines on several CPU threads.'))
         self.section(f, _('GPU data'))
+        self.row(f, _('Stream buffer memory'), self.choice(f, 'stream_memory', 'app', STREAM_MEMORY),
+                 _('System RAM can improve FPS on NVIDIA laptops. Choose GPU memory to restore the previous '
+                   'behavior. Applies on the next game launch.'), restart=True)
         self.check(f, 'stale_readback', 'ini', _('Game reads GPU data without waiting (big FPS gain)'),
                    _('About 40 to 66 FPS in a heavy scene. Needs deferred GPU readbacks. Switch it off if lighting '
                      'or objects look wrong.'), restart=True)
