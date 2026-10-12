@@ -46,6 +46,9 @@ RELEASES_PAGE = 'https://github.com/FelipePrado0/gow3_pc/releases/latest'
 UPDATE_DIR = Path(tempfile.gettempdir()) / 'gow3-update'
 # Never copied over an installation by an update (the package does not hold them either).
 USER_FILES = ('user', 'out', 'mods', 'gow3.ini', 'mods.json', 'mods_presets.json', 'patches.json', 'last_run.log')
+# The God of War face for titles, next to gow3.ico; main() registers it for this process only.
+FONT_FILE = PORT_DIR / 'launcher' / 'gowfont.ttf'
+FR_PRIVATE = 0x10
 
 
 # ---------------------------------------------------------------------------------------------
@@ -102,6 +105,7 @@ import button_icons  # noqa: E402
 import gow3_lang  # noqa: E402
 
 LANG = 'en'
+FONT_LOADED = False  # set by main() for the window; the command-line roles never need the font
 
 
 WARN = '  ⚠'  # marks a risky choice; the text before it is translated as usual
@@ -121,6 +125,23 @@ def windows_language():
     except (AttributeError, OSError):
         return 'en'
     return gow3_lang.WINDOWS_LANGUAGES.get(primary, 'en')
+
+
+def register_font(path):
+    """Makes a font file available to this process (nothing else sees it). False when the file is missing or
+    GDI refuses it: the launcher then keeps its standard fonts."""
+    try:
+        return path.is_file() and bool(ctypes.windll.gdi32.AddFontResourceExW(str(path), FR_PRIVATE, 0))
+    except (AttributeError, OSError):
+        return False
+
+
+def heading_font(size, fallback='Georgia', every_language=False):
+    """Titles use the God of War face once its file is registered: in the English UI, or in every language
+    for the game's name. Otherwise the launcher's usual family."""
+    if FONT_LOADED and (every_language or LANG == 'en'):
+        return ('GodOfWar', size)
+    return (fallback, size)
 
 
 # ---------------------------------------------------------------------------------------------
@@ -432,19 +453,18 @@ class Launcher:
             ('Bb.indicator', {'side': 'left', 'sticky': ''}),
             ('Checkbutton.focus', {'side': 'left', 'sticky': 'w', 'children': [
                 ('Checkbutton.label', {'sticky': 'nswe'})]})]})])
-        base = ('GodOfWar' if LANG == 'en' else 'Segoe UI', 10)
+        base = ('Segoe UI', 10)
         self.root.option_add('*TCombobox*Listbox.background', CARD)
         self.root.option_add('*TCombobox*Listbox.foreground', TEXT)
         self.root.option_add('*TCombobox*Listbox.selectBackground', ACCENT)
         self.root.option_add('*TCombobox*Listbox.font', base)
-        self.root.option_add('*defaultFont*Listbox.font', ('Segoe UI', 10))
         s.configure('.', background=PANEL, foreground=TEXT, fieldbackground=CARD, bordercolor=LINE,
                     lightcolor=LINE, darkcolor=LINE, troughcolor=CARD, focuscolor=ACCENT, font=base)
         s.configure('TFrame', background=PANEL)
         s.configure('TLabel', background=PANEL, foreground=TEXT)
         s.configure('Muted.TLabel', background=PANEL, foreground=MUTED, font=('Segoe UI', 9))
         s.configure('Restart.TLabel', background=PANEL, foreground=ACCENT_HI, font=('Segoe UI', 8, 'bold'))
-        s.configure('Section.TLabel', background=PANEL, foreground=ACCENT_HI, font=('GodOfWar' if LANG == 'en' else 'Georgia', 12))
+        s.configure('Section.TLabel', background=PANEL, foreground=ACCENT_HI, font=heading_font(12))
         s.configure('TCheckbutton', background=PANEL, foreground=TEXT, padding=(0, 3))
         s.map('TCheckbutton', background=[('active', PANEL)], foreground=[('disabled', MUTED)])
         s.configure('TRadiobutton', background=PANEL, foreground=TEXT, indicatorcolor=CARD)
@@ -457,7 +477,7 @@ class Launcher:
         s.configure('TSpinbox', foreground=TEXT, arrowcolor=MUTED, insertcolor=TEXT, padding=4)
         s.configure('TButton', background=CARD, foreground=TEXT, padding=(12, 6), borderwidth=1)
         s.map('TButton', background=[('active', LINE), ('disabled', PANEL)], foreground=[('disabled', MUTED)])
-        s.configure('Play.TButton', background=ACCENT, foreground='#f4ece0', font=('GodOfWar' if LANG == 'en' else 'Georgia', 15, 'bold'),
+        s.configure('Play.TButton', background=ACCENT, foreground='#f4ece0', font=(*heading_font(15), 'bold'),
                     padding=(36, 10), borderwidth=0)
         s.map('Play.TButton', background=[('active', ACCENT_HI), ('disabled', '#2e1c1c')],
               foreground=[('disabled', '#8a7a78')])
@@ -487,15 +507,11 @@ class Launcher:
             self.vars[key] = v
         return self.vars[key]
 
-    def choice(self, parent, key, store, options, width=30, defaultFont=False):
+    def choice(self, parent, key, store, options, width=30):
         """A combobox over (value, (english, russian)) pairs, kept in sync with its variable."""
         var = self.var(key, store)
         values = [v for v, _t in options]
-        if defaultFont:
-            box = self.ttk.Combobox(parent, values=[_(*text) for _v, text in options], state='readonly', width=width, name='defaultFont')
-        else:
-            box = self.ttk.Combobox(parent, values=[_(*text) for _v, text in options], state='readonly', width=width, font=('GodOfWar' if LANG == 'en' else 'Segoe UI', 10))
-
+        box = self.ttk.Combobox(parent, values=[_(*text) for _v, text in options], state='readonly', width=width)
         if var.get() not in values:
             var.set(values[0])
 
@@ -565,7 +581,7 @@ class Launcher:
         outer = ttk.Frame(self.content)
         head = ttk.Frame(outer, padding=(28, 22, 28, 6))
         head.pack(fill='x')
-        ttk.Label(head, text=title.upper(), background=PANEL, foreground=TEXT, font=('GodOfWar' if LANG == 'en' else 'Georgia', 20)).pack(anchor='w')
+        ttk.Label(head, text=title.upper(), background=PANEL, foreground=TEXT, font=heading_font(20)).pack(anchor='w')
         ttk.Label(head, text=subtitle, style='Muted.TLabel').pack(anchor='w')
         canvas = tk.Canvas(outer, bg=PANEL, highlightthickness=0, bd=0)
         bar = ttk.Scrollbar(outer, orient='vertical', command=canvas.yview)
@@ -587,7 +603,7 @@ class Launcher:
         side = tk.Frame(self.root, bg=BG, width=self.px(220))
         side.pack(side='left', fill='y')
         side.pack_propagate(False)
-        self.side_title = tk.Label(side, text=APP_NAME.upper(), bg=BG, fg=TEXT, font=('GodOfWar', 15),
+        self.side_title = tk.Label(side, text=APP_NAME.upper(), bg=BG, fg=TEXT, font=heading_font(15, every_language=True),
                                    wraplength=self.px(190), justify='left')
         self.side_title.pack(anchor='w', padx=22, pady=(24, 22))
         self.side = side
@@ -596,7 +612,7 @@ class Launcher:
                             ('game', _('Game', 'Игра')), ('patches', _('Patches', 'Патчи')),
                             ('mods', _('Mods', 'Моды')), ('controls', _('Controls', 'Управление')),
                             ('advanced', _('Advanced', 'Дополнительно')), ('log', _('Log', 'Журнал'))):
-            item = tk.Label(side, text='    ' + title, bg=BG, fg=TEXT, anchor='w', font=('GodOfWar' if LANG == 'en' else 'Segoe UI', 11),
+            item = tk.Label(side, text='    ' + title, bg=BG, fg=TEXT, anchor='w', font=heading_font(11, 'Segoe UI'),
                             pady=10, cursor='hand2')
             item.pack(fill='x')
             item.bind('<Button-1>', lambda _e, n=name: self.show(n))
@@ -703,14 +719,14 @@ class Launcher:
                 c.create_rectangle(0, h - 120 + i * 24, w, h - 96 + i * 24, fill=PANEL, outline='', stipple=stipple)
             c.create_rectangle(0, h - 24, w, h, fill=PANEL, outline='')
         else:
-            c.create_text(30, h - 74, text=APP_NAME.upper(), anchor='w', fill=TEXT, font=('GodOfWar', 32))
+            c.create_text(30, h - 74, text=APP_NAME.upper(), anchor='w', fill=TEXT, font=heading_font(32, every_language=True))
         if info:
             title_id = game_profile_of(folder)[0]
             sub = _('{} · version {}', '{} · версия {}').format(title_id or '?', info[1])
             c.create_text(33, h - 30, text=sub, anchor='w', fill=ACCENT_HI, font=('Segoe UI', 11, 'bold'))
         else:
             c.create_text(w // 2, h // 2 - 40, text=_('Choose your game folder to play.'),
-                          fill=TEXT, font=('GodOfWar' if LANG == 'en' else 'Segoe UI', 12))
+                          fill=TEXT, font=('Segoe UI', 12))
             c.create_window(w // 2, h // 2, window=self.banner_button)
 
     def scaled_art(self, path, width):
@@ -869,7 +885,7 @@ class Launcher:
         """run.py backs the saves up before every start; one of them can be restored here."""
         ttk = self.ttk
         holder = ttk.Frame(f)
-        self.backup_choice = ttk.Combobox(holder, state='readonly', width=30, font=('GodOfWar' if LANG == 'en' else 'Segoe UI', 10))
+        self.backup_choice = ttk.Combobox(holder, state='readonly', width=30)
         self.backup_choice.pack(side='left')
         ttk.Button(holder, text=_('Restore', 'Восстановить'), command=self.restore_backup).pack(side='left', padx=(6, 0))
         ttk.Button(holder, text=_('Refresh', 'Обновить'), command=self.refresh_backups).pack(side='left', padx=(6, 0))
@@ -1004,7 +1020,7 @@ class Launcher:
             ttk.Label(table, text=PS_BUTTON_NAMES[button], width=14).grid(row=r, column=1, sticky='w', padx=(0, 12))
             key_var = tk.StringVar(value=saved.get('key', {}).get(button) or key)
             self.control_vars['key'][button] = key_var
-            ttk.Entry(table, textvariable=key_var, width=16, font=('GodOfWar' if LANG == 'en' else 'Segoe UI', 10)).grid(row=r, column=2, sticky='w', padx=(0, 18))
+            ttk.Entry(table, textvariable=key_var, width=16).grid(row=r, column=2, sticky='w', padx=(0, 18))
             pad_name = saved.get('pad', {}).get(button) or pad
             pad_var = tk.StringVar(value=pad_name or '')
             self.control_vars['pad'][button] = pad_var
@@ -1012,7 +1028,7 @@ class Launcher:
             pad_icon.grid(row=r, column=3, sticky='w', padx=(0, 6))
             self.pad_icons[button] = pad_icon
             if pad:
-                box = ttk.Combobox(table, state='readonly', width=22, values=list(labels.values()), font=('GodOfWar' if LANG == 'en' else 'Segoe UI', 10))
+                box = ttk.Combobox(table, state='readonly', width=22, values=list(labels.values()))
                 box.set(labels.get(pad_name, pad_name))
 
                 def chosen(_e, b=box, v=pad_var, n=button):
@@ -1021,7 +1037,7 @@ class Launcher:
                 box.bind('<<ComboboxSelected>>', chosen)
                 self.pad_boxes[button] = box
             else:
-                box = ttk.Label(table, text=_('{} trigger').format(PS_BUTTON_NAMES[button]), style='Muted.TLabel', font='GodOfWar')
+                box = ttk.Label(table, text=_('{} trigger').format(PS_BUTTON_NAMES[button]), style='Muted.TLabel')
             box.grid(row=r, column=4, sticky='w')
             self.draw_pad_icon(button)
         self.note(f, _('Keys use SDL names: letters, digits, Space, Return, Tab, Left Shift, Left Ctrl, Left Alt, '
@@ -1060,7 +1076,7 @@ class Launcher:
         f = self.scrolled_page('advanced', _('Advanced', 'Дополнительно'),
                                _('Launcher options, files and diagnostics.'))
         self.section(f, _('Launcher', 'Лаунчер'), top=4)
-        self.row(f, _('Launcher language', 'Язык лаунчера'), self.choice(f, 'ui_language', 'app', UI_LANGUAGES, defaultFont=True),
+        self.row(f, _('Launcher language', 'Язык лаунчера'), self.choice(f, 'ui_language', 'app', UI_LANGUAGES),
                  _('Applies when the launcher opens again.', 'Применится при следующем открытии лаунчера.'))
         self.check(f, 'close_on_play', 'app', _('Close the launcher when the game starts', 'Закрывать лаунчер при запуске игры'))
         self.check(f, 'check_updates', 'app', _('Check for updates when the launcher opens',
@@ -1116,7 +1132,7 @@ class Launcher:
         self.pages['log'] = page
         top = ttk.Frame(page)
         top.pack(fill='x', pady=(0, 8))
-        ttk.Label(top, text=_('Log', 'Журнал').upper(), font=('GodOfWar' if LANG == 'en' else 'Georgia', 20)).pack(side='left')
+        ttk.Label(top, text=_('Log', 'Журнал').upper(), font=heading_font(20)).pack(side='left')
         ttk.Button(top, text=_('Copy', 'Копировать'), command=self.copy_log).pack(side='right')
         ttk.Button(top, text=_('Clear', 'Очистить'), command=lambda: self.set_log('')).pack(side='right', padx=6)
         self.log = tk.Text(page, wrap='none', bg='#0a0808', fg='#cfc6bc', insertbackground=TEXT, relief='flat',
@@ -1231,7 +1247,7 @@ class Launcher:
             presets = ttk.Frame(self.mods_frame)
             presets.pack(anchor='w', pady=(8, 0))
             ttk.Label(presets, text=_('Preset', 'Пресет')).pack(side='left', padx=(0, 6))
-            self.preset_choice = ttk.Combobox(presets, values=sorted(load_json(MOD_PRESETS, {})), width=24, font=('GodOfWar' if LANG == 'en' else 'Segoe UI', 10))
+            self.preset_choice = ttk.Combobox(presets, values=sorted(load_json(MOD_PRESETS, {})), width=24)
             self.preset_choice.pack(side='left')
             ttk.Button(presets, text=_('Load', 'Загрузить'), command=self.load_mod_preset).pack(side='left', padx=(6, 0))
             ttk.Button(presets, text=_('Save', 'Сохранить'), command=self.save_mod_preset).pack(side='left', padx=(6, 0))
@@ -1634,7 +1650,7 @@ def install_update(target, wait_pid):
 
 
 def main():
-    global LANG
+    global LANG, FONT_LOADED
     args = sys.argv[1:]
     if args and args[0] in ('--run', '--script'):
         sys.exit(run_role(args))
@@ -1651,26 +1667,13 @@ def main():
         ctypes.windll.shcore.SetProcessDpiAwareness(1)  # sharp text on scaled displays
     except (AttributeError, OSError):
         pass
+    FONT_LOADED = register_font(FONT_FILE)  # titles keep Georgia without it
     import tkinter as tk
     from tkinter import filedialog, messagebox, ttk
-
     root = tk.Tk()
-
     Launcher(root, tk, ttk, filedialog, messagebox)
     root.mainloop()
 
+
 if __name__ == '__main__':
-    # Load God Of War font
-    font_path = Path(__file__).parent / "gowfont.ttf"
-    FR_PRIVATE = 0x10
-
-    if not font_path.exists():
-        raise FileNotFoundError(f"Font file not found: {font_path}")
-
-    if not ctypes.windll.gdi32.AddFontResourceExW(str(font_path), FR_PRIVATE, 0):
-        raise RuntimeError(f"Could not load font: {font_path}")
-
     main()
-
-    # Release God Of War font
-    ctypes.windll.gdi32.RemoveFontResourceExW(str(font_path), FR_PRIVATE, 0)
