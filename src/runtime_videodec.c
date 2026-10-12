@@ -51,7 +51,7 @@ _Static_assert(sizeof(ConfigInfo)==40 && sizeof(ResourceInfo)==56 && sizeof(Ctrl
                sizeof(PictureInfo)==112 && sizeof(InputData)==48,"Videodec guest layouts");
 
 typedef struct { AVCodecContext *codec; AVPacket *packet; AVFrame *frame, *nv12; struct SwsContext *sws; } Decoder;
-static size_t pictures_decoded;
+static size_t pictures_decoded __attribute__((unused));
 
 static uint32_t align(uint32_t value, uint32_t to) { return (value+to-1)&~(to-1); }
 

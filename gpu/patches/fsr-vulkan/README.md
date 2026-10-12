@@ -7,3 +7,5 @@ patches here to its working tree when they are not applied yet:
   statistics of each pass) in the FSR 4 v07 provider.
 - `0002-...`: `#include <mutex>` in the FFX Vulkan backend; libc++ (the Windows MSYS2 CLANG64
   build) does not include it transitively.
+- `0003-...`: `<cmath>`, `<new>`, `<cstdlib>` (`_countof`) and `<cwchar>` (`swprintf_s`) in the
+  FFX sources; libc++ 23 (current MSYS2 CLANG64) no longer includes them transitively.

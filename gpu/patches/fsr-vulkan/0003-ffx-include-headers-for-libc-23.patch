@@ -1,0 +1,65 @@
+From: gow3
+Subject: [PATCH] FFX sources: include <cmath>, <new>, <cstdlib>, <cwchar> (libc++ 23 / current MSYS2 CLANG64)
+
+---
+diff --git a/upstream/ffx-1.1.4/sdk/src/backends/vk/ffx_vk.cpp b/upstream/ffx-1.1.4/sdk/src/backends/vk/ffx_vk.cpp
+index 3159fa8..1b3ddfb 100644
+--- a/upstream/ffx-1.1.4/sdk/src/backends/vk/ffx_vk.cpp
++++ b/upstream/ffx-1.1.4/sdk/src/backends/vk/ffx_vk.cpp
+@@ -35,6 +35,8 @@
+ #endif  // _WIN32
+ 
+ #include <vulkan/vulkan.h>
++#include <cmath> // gow3: log2 (libc++ 23 does not include it transitively)
++#include <new>   // gow3: placement new (likewise)
+ 
+ // prototypes for functions in the interface
+ FfxVersionNumber       GetSDKVersionVK(FfxInterface* backendInterface);
+diff --git a/upstream/ffx-1.1.4/sdk/src/components/frameinterpolation/ffx_frameinterpolation.cpp b/upstream/ffx-1.1.4/sdk/src/components/frameinterpolation/ffx_frameinterpolation.cpp
+index b8f48c0..c1dd564 100644
+--- a/upstream/ffx-1.1.4/sdk/src/components/frameinterpolation/ffx_frameinterpolation.cpp
++++ b/upstream/ffx-1.1.4/sdk/src/components/frameinterpolation/ffx_frameinterpolation.cpp
+@@ -20,6 +20,7 @@
+ // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+ // THE SOFTWARE.
+ 
++#include <cstdlib> // gow3: _countof (MinGW header libc++ 23 does not include transitively)
+ #include <algorithm>    // for max used inside SPD CPU code.
+ #include <cmath>        // for fabs, abs, sinf, sqrt, etc.
+ #include <string>       // for memset
+diff --git a/upstream/ffx-1.1.4/sdk/src/components/fsr3upscaler/ffx_fsr3upscaler.cpp b/upstream/ffx-1.1.4/sdk/src/components/fsr3upscaler/ffx_fsr3upscaler.cpp
+index 94bf581..157c313 100644
+--- a/upstream/ffx-1.1.4/sdk/src/components/fsr3upscaler/ffx_fsr3upscaler.cpp
++++ b/upstream/ffx-1.1.4/sdk/src/components/fsr3upscaler/ffx_fsr3upscaler.cpp
+@@ -20,6 +20,7 @@
+ // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+ // THE SOFTWARE.
+ 
++#include <cstdlib> // gow3: _countof (MinGW header libc++ 23 does not include transitively)
+ #include <algorithm>    // for max used inside SPD CPU code.
+ #include <cmath>        // for fabs, abs, sinf, sqrt, etc.
+ #include <string.h>     // for memset
+diff --git a/upstream/ffx-1.1.4/sdk/src/components/opticalflow/ffx_opticalflow.cpp b/upstream/ffx-1.1.4/sdk/src/components/opticalflow/ffx_opticalflow.cpp
+index ae94c2d..1b37ef7 100644
+--- a/upstream/ffx-1.1.4/sdk/src/components/opticalflow/ffx_opticalflow.cpp
++++ b/upstream/ffx-1.1.4/sdk/src/components/opticalflow/ffx_opticalflow.cpp
+@@ -20,6 +20,7 @@
+ // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+ // THE SOFTWARE.
+ 
++#include <cstdlib> // gow3: _countof (MinGW header libc++ 23 does not include transitively)
+ #include <algorithm>    // for max used inside SPD CPU code.
+ #include <cmath>        // for fabs, abs, sinf, sqrt, etc.
+ #include <string>       // for memset
+diff --git a/upstream/ffx-1.1.4/sdk/src/shared/ffx_message.cpp b/upstream/ffx-1.1.4/sdk/src/shared/ffx_message.cpp
+index e325a05..9bcf0c9 100644
+--- a/upstream/ffx-1.1.4/sdk/src/shared/ffx_message.cpp
++++ b/upstream/ffx-1.1.4/sdk/src/shared/ffx_message.cpp
+@@ -20,6 +20,7 @@
+ // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+ // THE SOFTWARE.
+ 
++#include <cwchar> // gow3: swprintf_s (MinGW header libc++ 23 does not include transitively)
+ #include <FidelityFX/host/ffx_message.h>
+ #include <FidelityFX/host/ffx_util.h>
+ 

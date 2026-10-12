@@ -9,6 +9,7 @@
 #include <bit>
 #include <span>
 #include <cassert>
+#include <cstdlib> // std::abort (libc++ 23 does not include it transitively)
 #include <concepts>
 #include <cstddef>
 #include <functional>
