@@ -36,6 +36,7 @@ FROZEN = getattr(sys, 'frozen', False)
 PORT_DIR = Path(sys.executable).resolve().parent if FROZEN else Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PORT_DIR / 'scripts'))
 import save_backup  # noqa: E402  (scripts/)
+import steam_shortcut  # noqa: E402  (scripts/)
 DATA_DIR = Path(os.environ.get('GOW3_DATA_DIR', PORT_DIR))
 CONFIG_DIR = (Path(os.environ.get('APPDATA', Path.home())) if WINDOWS else
               Path(os.environ.get('XDG_CONFIG_HOME') or Path.home() / '.config')) / 'gow3-launcher'
@@ -423,6 +424,16 @@ def missing_game_files(folder):
     return [name for name in REQUIRED_GAME_FILES if not (Path(folder) / name).is_file()]
 
 
+def steam_launch_command():
+    """(program, launch options, start folder) with which Steam starts the game without the window."""
+    appimage = os.environ.get('APPIMAGE')
+    if appimage:
+        return appimage, '--play', str(Path(appimage).parent)
+    if FROZEN:
+        return sys.executable, '--play', str(Path(sys.executable).parent)
+    return sys.executable, f'"{Path(__file__).resolve()}" --play', str(PORT_DIR)
+
+
 def game_profile_of(folder):
     """(title id, (ids, built-in XML, app version)) of a game with a patch profile, else (id, None)."""
     from patches import game_profile, game_title_id
@@ -580,17 +591,19 @@ class Launcher:
 
     def set_icon(self):
         game_icon = Path(self.meta_dir() or '.') / 'sce_sys' / 'icon0.png'
-        try:
-            from PIL import Image
-            ico = CONFIG_DIR / 'game_icon.ico'
-            CONFIG_DIR.mkdir(parents=True, exist_ok=True)
-            with Image.open(game_icon) as image:
-                image.convert('RGBA').save(ico, sizes=[(16, 16), (32, 32), (48, 48), (64, 64), (256, 256)])
-            self.root.iconbitmap(default=str(ico))
-            return
-        except (ImportError, OSError, self.tk.TclError):
-            pass
-        for icon in (game_icon, PORT_DIR / 'launcher' / 'gow3.png'):
+        if WINDOWS:
+            try:
+                from PIL import Image
+                ico = CONFIG_DIR / 'game_icon.ico'
+                CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+                with Image.open(game_icon) as image:
+                    image.convert('RGBA').save(ico, sizes=[(16, 16), (32, 32), (48, 48), (64, 64), (256, 256)])
+                self.root.iconbitmap(default=str(ico))
+                return
+            except (ImportError, OSError, self.tk.TclError):
+                pass
+        own_icon = PORT_DIR / 'launcher' / 'gow3.png'
+        for icon in ((game_icon, own_icon) if WINDOWS else (own_icon, game_icon)):
             try:
                 self.icon = self.tk.PhotoImage(file=str(icon))
                 if self.icon.width() > 128:
@@ -1317,6 +1330,8 @@ class Launcher:
                        command=lambda: threading.Thread(target=self.check_update, args=(True,), daemon=True).start()
                        ).pack(side='left')
         ttk.Button(holder, text=_('Desktop shortcut', 'Ярлык на рабочем столе'), command=self.shortcut).pack(side='left', padx=6)
+        if not WINDOWS:
+            ttk.Button(holder, text=_('Add to Steam'), command=self.add_to_steam).pack(side='left')
         ttk.Label(holder, text=f'v{VERSION}', style='Muted.TLabel').pack(side='left', padx=10)
         if not WINDOWS:
             self.build_linux_options(f)
@@ -1834,7 +1849,8 @@ class Launcher:
                 if not folder.is_dir() and folder != folders[0]:
                     continue
                 folder.mkdir(parents=True, exist_ok=True)
-                target = folder / 'God of War III.desktop'
+                # In the applications menu the file is named after the window's application id.
+                target = folder / ('gow3.desktop' if folder == folders[0] else 'God of War III.desktop')
                 target.write_text(entry, encoding='utf-8')
                 target.chmod(0o755)
                 created.append(str(target))
@@ -1842,6 +1858,35 @@ class Launcher:
             self.messagebox.showerror(APP_NAME, str(error))
             return
         self.messagebox.showinfo(APP_NAME, _('Shortcut created:', 'Ярлык создан:') + '\n' + '\n'.join(created))
+
+    def add_to_steam(self):
+        """A non-Steam shortcut with the game's icon, capsules, hero and logo (scripts/steam_shortcut.py)."""
+        self.collect()
+        game = self.var('game_dir', 'app').get()
+        if not game_info(game):
+            self.messagebox.showerror(APP_NAME, _('Choose the game folder with eboot.bin (CUSA01623).',
+                                                  'Выберите папку игры с eboot.bin (CUSA01623).'))
+            return
+        self.root.configure(cursor='watch')
+        self.root.update_idletasks()
+        try:
+            result = steam_shortcut.add_to_steam(game, steam_launch_command(), PORT_DIR / 'launcher' / 'gow3.png')
+        except steam_shortcut.SteamError as error:
+            text = {'running': _('Steam is open. Close it completely (Steam > Exit) and click again: Steam '
+                                 'rewrites its shortcuts when it closes.'),
+                    'no_steam': _('Steam was not found for this user.'),
+                    'no_art': _('The game folder has no sce_sys/pic1.png for the pictures.')}
+            self.messagebox.showerror(APP_NAME, text.get(error.code, str(error)))
+        except (OSError, ValueError, ImportError) as error:
+            self.messagebox.showerror(APP_NAME, str(error))
+        else:
+            text = (_('The shortcut "{}" was updated in Steam (accounts: {}), with its icon, capsules, background '
+                      'and logo. Open Steam to see it in the library.') if result['updated'] else
+                    _('The shortcut "{}" was added to Steam (accounts: {}), with its icon, capsules, background '
+                      'and logo. Open Steam to see it in the library.'))
+            self.messagebox.showinfo(APP_NAME, text.format(steam_shortcut.APP_NAME, result['accounts']))
+        finally:
+            self.root.configure(cursor='')
 
     def close(self):
         try:
