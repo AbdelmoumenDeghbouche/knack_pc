@@ -298,12 +298,15 @@ void GameTab() {
     ImGui::SeparatorText("Cheats");
     if (BeginRows("##cheats")) {
         static const char* const names[] = {"Infinite health", "Infinite magic", "Infinite item meter",
-                                            "Infinite Rage of Sparta", "Max red orbs"};
+                                            "Infinite Rage of Sparta", "Max red orbs",
+                                            "Unlock Very Hard", "Infinite Double Jumps"};
         static const char* const helps[] = {
             "Health stays full. Only Kratos is protected. Turning it off does not undo past refills.",
             "Magic stays full.", "The item meter (bow, Helios' head, boots) stays full.",
-            "Rage of Sparta stays full.", "Red orbs stay at the maximum."};
-        for (unsigned cheat = 0; cheat < 5; ++cheat) {
+            "Rage of Sparta stays full.", "Red orbs stay at the maximum.",
+            "Enable before opening New Game. Does not change an existing save difficulty.",
+            "Repeat air jumps without landing. Turn off for normal movement."};
+        for (unsigned cheat = 0; cheat < GOW3_CHEAT_COUNT; ++cheat) {
             const bool available = (s.cheats_supported.load() & (1u << cheat)) != 0;
             ImGui::BeginDisabled(!available);
             CheckRow(names[cheat], s.cheats[cheat], available ? helps[cheat] : Unsupported);

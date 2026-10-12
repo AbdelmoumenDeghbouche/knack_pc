@@ -5,6 +5,8 @@
 
 #pragma once
 
+#include "../../src/cheat_hook.h"
+
 #include <atomic>
 #include <cstdint>
 
@@ -51,7 +53,7 @@ struct Values {
     std::atomic<float> damage_dealt{1.0f}, damage_taken{1.0f};
     std::atomic<float> green_orb_multiplier{1.0f}, blue_orb_multiplier{1.0f}, gold_orb_multiplier{1.0f};
     std::atomic<bool> damage_supported{false}, orb_pickup_supported{false};
-    std::atomic<bool> cheats[5]{};
+    std::atomic<bool> cheats[GOW3_CHEAT_COUNT]{};
     std::atomic<uint32_t> cheats_supported{0};
     /// Damage hook (src/actor_hook.h): enemy health bar, off by default.
     std::atomic<bool> enemy_health_bar{false};

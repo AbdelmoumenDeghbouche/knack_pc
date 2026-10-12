@@ -71,6 +71,15 @@ int main() {
     assert(v.display_mode == G::Windowed && v.fps_limit == 0 && v.render_resolution == 0 && v.engine_fps == 120);
     assert(v.rcas_strength == 75 && v.frames_queued == 1);
     assert(v.async_shaders);
+    {
+        std::ofstream out(path);
+        out << "cheat_double_jumps=1\ncheat_very_hard=1\n";
+    }
+    Gow3Settings::Load();
+    Gow3Settings::Save();
+    const std::string cheats = Read(path);
+    assert(cheats.find("cheat_double_jumps=1\n") != std::string::npos);
+    assert(cheats.find("cheat_very_hard=1\n") != std::string::npos);
     std::remove(path);
     std::puts("PASS: graphics settings");
 }

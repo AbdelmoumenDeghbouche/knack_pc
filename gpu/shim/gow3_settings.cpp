@@ -55,8 +55,9 @@ void Set(Values& v, const std::string& key, const std::string& value) {
         v.menu_tab = i >= 0 && i <= 3 ? i : 0;
         return;
     }
-    const char* cheat_keys[] = {"cheat_health", "cheat_magic", "cheat_item", "cheat_rage", "cheat_orbs"};
-    for (unsigned cheat = 0; cheat < 5; ++cheat) {
+    const char* cheat_keys[] = {"cheat_health", "cheat_magic", "cheat_item", "cheat_rage", "cheat_orbs",
+                                "cheat_very_hard", "cheat_double_jumps"};
+    for (unsigned cheat = 0; cheat < GOW3_CHEAT_COUNT; ++cheat) {
         if (key == cheat_keys[cheat]) {
             v.cheats[cheat] = i != 0;
             return;
@@ -280,9 +281,11 @@ void Save() {
     std::fprintf(file, "green_orb_multiplier=%.3f\n", v.green_orb_multiplier.load());
     std::fprintf(file, "blue_orb_multiplier=%.3f\n", v.blue_orb_multiplier.load());
     std::fprintf(file, "gold_orb_multiplier=%.3f\n", v.gold_orb_multiplier.load());
-    std::fprintf(file, "cheat_health=%d\ncheat_magic=%d\ncheat_item=%d\ncheat_rage=%d\ncheat_orbs=%d\n",
+    std::fprintf(file, "cheat_health=%d\ncheat_magic=%d\ncheat_item=%d\ncheat_rage=%d\ncheat_orbs=%d\n"
+                       "cheat_very_hard=%d\ncheat_double_jumps=%d\n",
                  int(v.cheats[0].load()), int(v.cheats[1].load()), int(v.cheats[2].load()),
-                 int(v.cheats[3].load()), int(v.cheats[4].load()));
+                 int(v.cheats[3].load()), int(v.cheats[4].load()),
+                 int(v.cheats[5].load()), int(v.cheats[6].load()));
     std::fprintf(file, "enemy_health_bar=%d\n", int(v.enemy_health_bar.load()));
     std::fprintf(file,
                  "overlay_fps=%d\noverlay_frametime=%d\noverlay_upscaler=%d\noverlay_gpu=%d\n"

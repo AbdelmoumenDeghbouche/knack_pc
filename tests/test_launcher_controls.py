@@ -7,6 +7,12 @@ import gow3_launcher_win as launcher  # noqa: E402
 
 
 class ControlMapTest(unittest.TestCase):
+    def test_new_cheats_default_to_disabled(self):
+        self.assertEqual(launcher.INI_DEFAULTS['cheat_double_jumps'], '0')
+        self.assertEqual(launcher.INI_DEFAULTS['cheat_very_hard'], '0')
+        self.assertIn('cheat_double_jumps', launcher.INI_FLAGS)
+        self.assertIn('cheat_very_hard', launcher.INI_FLAGS)
+
     def test_changed_buttons_in_table_order(self):
         controls = {'key': {'circle': ' Left Shift ', 'cross': 'Q', 'square': ''}, 'pad': {'cross': 'b'}}
         self.assertEqual(launcher.control_map(controls, 'key'), 'cross=Q,circle=Left Shift')

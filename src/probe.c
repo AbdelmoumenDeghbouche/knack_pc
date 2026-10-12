@@ -330,7 +330,8 @@ static void install_cheats(const char *app0, Segment *segments, uint64_t count, 
     sfo_value(path, "TITLE_ID", serial, sizeof(serial), NULL);
     sfo_value(path, "APP_VER", version, sizeof(version), NULL);
     if (strcmp(serial, "CUSA01623") || strcmp(version, "01.02")) return;
-    const char *names[] = {"health", "magic", "item meter", "Rage of Sparta", "red orbs"};
+    const char *names[] = {"health", "magic", "item meter", "Rage of Sparta", "red orbs",
+                           "Very Hard unlock", "infinite double jumps"};
     for (unsigned id = 0; id < GOW3_CHEAT_COUNT; ++id) {
         int valid = 1;
         for (unsigned i = 0; i < GOW3_CHEAT_HOOK_COUNT; ++i) {

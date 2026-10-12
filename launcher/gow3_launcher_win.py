@@ -127,7 +127,7 @@ def windows_language():
 # Settings. gow3.ini keys (the game reads them, the in-game menu edits them) and the
 # launcher's own settings.json (passed to run.py as environment variables).
 
-INI_FLAGS = {'sharpen', 'object_motion', 'show_fps', 'vsync', 'async_shaders', 'deferred_readback',
+INI_FLAGS = {'cheat_double_jumps', 'cheat_very_hard', 'sharpen', 'object_motion', 'show_fps', 'vsync', 'async_shaders', 'deferred_readback',
              'stale_readback', 'fsr1', 'rcas'}
 # The graphics keys are also in the in-game menu (Insert / R3+L2); run.py reads the startup ones.
 INI_DEFAULTS = {'upscaler': 'fsr4', 'preset': '1', 'sharpen': '1', 'sharpness': '0.50',
@@ -135,7 +135,7 @@ INI_DEFAULTS = {'upscaler': 'fsr4', 'preset': '1', 'sharpen': '1', 'sharpness': 
                 'live_resolution': 'auto', 'display_mode': 'windowed', 'vsync': '1', 'fps_limit': '0',
                 'async_shaders': '1', 'deferred_readback': '1', 'stale_readback': '1',
                 'render_resolution': 'native', 'engine_fps': '120', 'fsr1': '0', 'rcas': '1',
-                'rcas_strength': '75', 'frames_queued': '1'}
+                'rcas_strength': '75', 'frames_queued': '1', 'cheat_very_hard': '0', 'cheat_double_jumps': '0'}
 DISPLAY_MODES = [('windowed', ('Windowed',)), ('borderless', ('Borderless',)), ('fullscreen', ('Fullscreen',))]
 FPS_LIMITS = [('30', ('30',)), ('60', ('60',)), ('120', ('120',)), ('240', ('240',)), ('0', ('Unlimited',))]
 APP_DEFAULTS = {'ui_language': 'en', 'game_dir': os.environ.get('GOW3_GAME_DIR', str(PORT_DIR.parent / 'CUSA01623')), 'user_dir': '',
@@ -835,7 +835,13 @@ class Launcher:
 
     def build_game(self):
         f = self.scrolled_page('game', _('Game', 'Игра'), _('Your game dump, saves and language.'))
-        self.section(f, _('Folders'), top=4)
+        self.section(f, _('Cheats'), top=4)
+        self.check(f, 'cheat_double_jumps', 'ini', _('Infinite Double Jumps'),
+                   _('Repeat air jumps without landing. Also available in the in-game Cheats menu.'))
+        self.check(f, 'cheat_very_hard', 'ini', _('Unlock Very Hard'),
+                   _('Select Very Hard without completing the game. Does not change existing save difficulty. '
+                     'In-game: enable before opening New Game.'))
+        self.section(f, _('Folders'))
         self.folder(f, 'game_dir', _('Game folder', 'Папка игры'),
                     _('Choose the folder with eboot.bin', 'Выберите папку с eboot.bin'),
                     _('Your own dump of the game (eboot.bin, sce_module, sce_sys); God of War III Remastered: '

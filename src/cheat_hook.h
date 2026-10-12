@@ -5,7 +5,7 @@
 #include <string.h>
 
 enum { GOW3_CHEAT_HEALTH, GOW3_CHEAT_MAGIC, GOW3_CHEAT_ITEM, GOW3_CHEAT_RAGE,
-       GOW3_CHEAT_ORBS, GOW3_CHEAT_COUNT };
+       GOW3_CHEAT_ORBS, GOW3_CHEAT_VERY_HARD, GOW3_CHEAT_DOUBLE_JUMPS, GOW3_CHEAT_COUNT };
 typedef struct {
     uint32_t offset;
     unsigned id, length, replacement_length;
@@ -33,7 +33,17 @@ static const Gow3CheatHook gow3_cheat_hooks[] = {
      {0xc7,0x83,0xd8,0x01,0,0,0x28,0x6b,0x6e,0x4e}},
     {0x6a9fc,GOW3_CHEAT_ORBS,8,10,
      {0xc5,0xfa,0x11,0x87,0xe8,0x01,0,0},
-     {0xc7,0x87,0xe8,0x01,0,0,0xf0,0x23,0x74,0x49}}
+     {0xc7,0x87,0xe8,0x01,0,0,0xf0,0x23,0x74,0x49}},
+    /* Override only the queried completion level, leaving stored progress untouched. */
+    {0xc77ea,GOW3_CHEAT_VERY_HARD,8,8,
+     {0xb8,3,0,0,0,0xf6,0xc1,8},
+     {0xb8,3,0,0,0,0x85,0xc0,0x90}},
+    /* Ignore the used-air-jump flag for Kratos, preserving every other movement check. */
+    {0x95d51,GOW3_CHEAT_DOUBLE_JUMPS,9,27,
+     {0x41,0xf6,0x84,0x24,0xac,4,0,0,4},
+     {0x41,0x80,0xbc,0x24,0x98,2,0,0,0,0x75,7,
+      0xa9,0,0,0,0,0xeb,9,
+      0x41,0xf6,0x84,0x24,0xac,4,0,0,4}}
 };
 #define GOW3_CHEAT_HOOK_COUNT (sizeof(gow3_cheat_hooks)/sizeof(gow3_cheat_hooks[0]))
 static inline int gow3_cheat_signature_match(const Gow3CheatHook *hook,
