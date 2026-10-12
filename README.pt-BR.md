@@ -126,6 +126,11 @@ partir do código: `GOW3_GAME_DIR=/caminho/para/CUSA01623 python3 run.py` depois
   update**. Ela é colocada por cima da pasta do jogo sem alterar nenhuma das duas.
 - **Avançado → Linux:** sistema de janelas (automático, Wayland ou X11), GameMode e MangoHud. Só as
   ferramentas instaladas no sistema podem ser ligadas.
+- **Steam:** **Avançado → Adicionar à Steam** inclui "God of War III Remastered" como jogo de fora da
+  Steam, com o ícone, as capas vertical e horizontal, o fundo da biblioteca e o logotipo feitos a
+  partir das imagens do dump. Feche a Steam antes (ela reescreve os atalhos quando fecha).
+- **Ícone:** o AppImage, o launcher e a janela do jogo usam `packaging/linux/gow3.png` quando esse
+  arquivo existe na hora da compilação, e `launcher/gow3.png` caso contrário.
 - **Patches:** a atualização 01.02 completa (`eboot.bin` com sha256 `6e72330e…`) usa o arquivo de
   patches do cuesta4 (`patches/God_of_War_III_Remastered_cuesta.xml`). O título europeu (CUSA01715) só
   recebe patches quando todos os bytes que eles sobrescrevem batem; não foi testado.
