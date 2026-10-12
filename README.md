@@ -127,7 +127,11 @@ window. From a source tree: `GOW3_GAME_DIR=/path/to/CUSA01623 python3 run.py` af
   tools installed on the system can be turned on.
 - **Steam:** **Advanced → Add to Steam** adds "God of War III Remastered" as a non-Steam game, with
   the icon, the vertical and horizontal capsules, the library background and the logo made from the
-  dump's pictures. Close Steam first (it rewrites its shortcuts when it exits).
+  dump's pictures. Close Steam first (it rewrites its shortcuts when it exits). The button is also in
+  the Windows launcher (not tested there yet).
+- **Menu entry:** the AppImage writes `~/.local/share/applications/gow3.desktop` when it starts, so
+  the launcher and the game window show their icon in the dock; **Advanced → Linux** turns it off and
+  removes the entry.
 - **Icon:** the AppImage, the launcher and the game window use `packaging/linux/gow3.png` when that
   file exists at build time, and `launcher/gow3.png` otherwise.
 - **Patches:** the full 01.02 update (`eboot.bin` sha256 `6e72330e…`) uses the patch file from

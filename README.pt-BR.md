@@ -128,7 +128,10 @@ partir do código: `GOW3_GAME_DIR=/caminho/para/CUSA01623 python3 run.py` depois
   ferramentas instaladas no sistema podem ser ligadas.
 - **Steam:** **Avançado → Adicionar à Steam** inclui "God of War III Remastered" como jogo de fora da
   Steam, com o ícone, as capas vertical e horizontal, o fundo da biblioteca e o logotipo feitos a
-  partir das imagens do dump. Feche a Steam antes (ela reescreve os atalhos quando fecha).
+  partir das imagens do dump. Feche a Steam antes (ela reescreve os atalhos quando fecha). O botão
+  também está no launcher do Windows (ainda sem teste lá).
+- **Entrada no menu:** o AppImage grava `~/.local/share/applications/gow3.desktop` ao iniciar, para o
+  launcher e a janela do jogo mostrarem o ícone no dock; **Avançado → Linux** desliga e remove a entrada.
 - **Ícone:** o AppImage, o launcher e a janela do jogo usam `packaging/linux/gow3.png` quando esse
   arquivo existe na hora da compilação, e `launcher/gow3.png` caso contrário.
 - **Patches:** a atualização 01.02 completa (`eboot.bin` com sha256 `6e72330e…`) usa o arquivo de
