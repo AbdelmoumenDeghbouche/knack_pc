@@ -159,10 +159,17 @@ def main():
         profile = game_profile(game_title_id(game), game)
         patched = bool(profile) and (game_patchable(game) or bool(env.get('GOW3_FORCE_PATCHES')))
         engine_fps = 60
-        # The window shows the game's icon (BMP: the format SDL loads without extra libraries).
+        # The window shows the game's icon (BMP: the format SDL loads without extra libraries); on
+        # Linux the launcher's own icon (the AppImage ships the one chosen when it was built) and
+        # an application id the desktop entry matches, so the shell shows the same icon.
+        icon_file = game / 'sce_sys' / 'icon0.png'
+        if not WINDOWS:
+            env.setdefault('SDL_APP_ID', 'gow3')
+            if (PORT / 'launcher' / 'gow3.png').is_file():
+                icon_file = PORT / 'launcher' / 'gow3.png'
         try:
             from PIL import Image
-            with Image.open(game / 'sce_sys' / 'icon0.png') as icon:
+            with Image.open(icon_file) as icon:
                 icon.convert('RGBA').resize((64, 64), Image.LANCZOS).save(out / 'window_icon.bmp')
             env.setdefault('GOW3_WINDOW_ICON', str(out / 'window_icon.bmp'))
         except (ImportError, OSError):

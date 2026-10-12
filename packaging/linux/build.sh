@@ -17,7 +17,11 @@ install -m755 out/gpu/libgow3gpu.so "$share/bin/gpu/"
 cp run.py "$share/"
 cp -r scripts patches "$share/"
 mkdir -p "$share/launcher"
-install -m644 launcher/gow3.png "$share/launcher/"
+# The icon of the AppImage, the launcher and the game window: packaging/linux/gow3.png when it
+# exists (a local choice), else the launcher's own.
+icon=launcher/gow3.png
+[[ -f packaging/linux/gow3.png ]] && icon=packaging/linux/gow3.png
+install -m644 "$icon" "$share/launcher/gow3.png"
 
 # The launcher also runs run.py (--run) and the preparation scripts (--script) itself, as on
 # Windows: the standard modules those scripts import come along as hidden imports.
@@ -33,7 +37,7 @@ cp -r out/pyi-dist/gow3-launcher/. "$share/"
 find "$share" -name __pycache__ -prune -exec rm -r {} +
 install -m755 packaging/linux/AppRun "$appdir/AppRun"
 install -m644 packaging/linux/gow3.desktop "$appdir/gow3.desktop"
-install -m644 launcher/gow3.png "$appdir/gow3.png"
+install -m644 "$icon" "$appdir/gow3.png"
 
 # Host-provided libraries: bundling any of these breaks drivers or the display connection.
 excluded='^(ld-linux.*|libc|libm|libdl|librt|libpthread|libresolv|libutil|libnsl|libanl|libvulkan|libGL|libGLX|libGLdispatch|libEGL|libOpenGL|libgbm|libdrm.*|libX11|libX11-xcb|libxcb.*|libXau|libXdmcp|libXext|libXfixes|libXrender|libXi|libXcursor|libXrandr|libwayland-.*|libasound|libudev|libpulse.*|libfontconfig|libfreetype|libOpenCL|libva.*|libvdpau|libvpl|libnvidia-.*|libcuda|libz|libstdc\+\+|libgcc_s)\.so'
