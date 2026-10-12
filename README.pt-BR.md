@@ -159,6 +159,13 @@ As configurações ficam em `gow3.ini` (o jogo e o menu do jogo) e em
 `%APPDATA%\gow3-launcher\settings.json` (o launcher). Saves, cache de shaders e `last_run.log`
 ficam na pasta `user` do projeto.
 
+Em **Performance → GPU data → Stream buffer memory**, escolha **System RAM (cached, default)**,
+**System RAM (uncached)** ou **GPU memory (previous behavior)**. A RAM do sistema pode melhorar o
+FPS em notebooks com placa de vídeo NVIDIA. A escolha é salva e vale na próxima partida,
+inclusive pelo `Play God of War III.exe` ou pelo `--play`. Escolha **GPU memory** para voltar à
+alocação anterior. Sem o launcher, `GOW3_STREAM_MEMORY` aceita `cached`, `host` ou `device`; com
+o launcher, a escolha salva nele tem prioridade.
+
 ### Teclado
 
 Padrão; mude na tela **Controls** do launcher.
