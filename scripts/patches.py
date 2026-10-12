@@ -5,6 +5,7 @@ image places eboot vaddr 0 at image offset 0. Only literal writes are supported
 (bytes, bytes16/32/64, float32/64, utf8, utf16); pattern ("mask") patches are rejected.
 """
 import argparse
+import hashlib
 import json
 import os
 import re
@@ -69,11 +70,18 @@ PATCHES_DIR=Path(__file__).resolve().parent.parent/'patches'
 # Built-in patch file per game, the app version its addresses are for and, when known, the
 # sha256 of the only eboot.bin they were checked against (another build of the same version has
 # its code elsewhere: byte writes there corrupt it).
+# Each entry: (title IDs, XML, app version, eboot sha256, originals file or None). The originals
+# file lists the bytes every line of the XML overwrites in the build it was checked against:
+# another build of the same title (e.g. the European CUSA01715) is patched only when all of
+# them match, so a different build runs unpatched instead of corrupted.
+CUESTA_SHA='6e72330e9092e5164049b865e5568f2d450904001a73fe0a2f4b39194c195b3c'
 GAMES=[({'CUSA01623'},PATCHES_DIR/'God_of_War_III_Remastered.xml','01.02',
-        'd85c8135d330c3b601bf5dc3f1dd86bd6119fb8a9fce372bed2c9785f9a79299')]
-# Recognized builds without patch support yet, so the launcher can name them instead of a generic
-# mismatch. The full 01.02 update has this eboot for both CUSA01623 and CUSA01715.
-UNPORTED_BUILDS={'6e72330e9092e5164049b865e5568f2d450904001a73fe0a2f4b39194c195b3c':'full 01.02 update'}
+        'd85c8135d330c3b601bf5dc3f1dd86bd6119fb8a9fce372bed2c9785f9a79299',None),
+       ({'CUSA01623','CUSA01715'},PATCHES_DIR/'God_of_War_III_Remastered_cuesta.xml','01.02',
+        CUESTA_SHA,PATCHES_DIR/'God_of_War_III_Remastered_cuesta.orig.json')]
+# Builds the launcher can name although they have no patch support (none left: the full 01.02
+# update, eboot 6e72..., has the cuesta profile above).
+UNPORTED_BUILDS={}
 DMEM_RETAIL_MB=5056  # runtime_memory.c POOL_SIZE default
 
 
@@ -85,24 +93,65 @@ def game_title_id(game):
         return None
 
 
-def game_profile(title_id):
-    """(title IDs, built-in XML, app version, eboot sha256 or None) for a known game, else None."""
-    return next((g for g in GAMES if title_id in g[0]),None)
+_SHA_CACHE={}
 
 
 def eboot_sha256(game):
-    import hashlib
     try:
-        return hashlib.sha256((Path(game)/'eboot.bin').read_bytes()).hexdigest()
+        path=Path(game)/'eboot.bin'
+        stat=path.stat()
+        key=(str(path),stat.st_mtime_ns,stat.st_size)
+        if key not in _SHA_CACHE:
+            _SHA_CACHE[key]=hashlib.sha256(path.read_bytes()).hexdigest()
+        return _SHA_CACHE[key]
     except (OSError, TypeError):
         return None
+
+
+def original_bytes_match(game, originals_file):
+    """Whether every byte the profile's patches overwrite is what the checked build had there."""
+    try:
+        from prepare import parse_self
+        elf,_header,ph,_segments,_missing=parse_self((Path(game)/'eboot.bin').read_bytes())
+        expected=json.loads(Path(originals_file).read_text())
+    except (OSError,ValueError,ImportError):
+        return False
+    loads=[p for p in ph if p['type']==1]
+    for address,hex_bytes in expected.items():
+        data=bytes.fromhex(hex_bytes)
+        offset=int(address,0)-EBOOT_BASE
+        for p in loads:
+            if p['vaddr']<=offset and offset+len(data)<=p['vaddr']+p['filesz']:
+                at=p['offset']+offset-p['vaddr']
+                if bytes(elf[at:at+len(data)])!=data:
+                    return False
+                break
+        else:
+            return False
+    return True
+
+
+def game_profile(title_id, game=None):
+    """(title IDs, built-in XML, app version, eboot sha256, originals file) for a known game, else
+    None. With the game folder, the profile whose build the eboot.bin is; otherwise (or when none
+    is) the first one for the title, which eboot_matches then rejects."""
+    candidates=[g for g in GAMES if title_id in g[0]]
+    if game:
+        sha=eboot_sha256(game)
+        for g in candidates:
+            if g[3]==sha:
+                return g
+        for g in candidates:
+            if g[4] and original_bytes_match(game,g[4]):
+                return g
+    return candidates[0] if candidates else None
 
 
 def eboot_matches(game, profile):
     """Whether the game's eboot.bin is the build the profile's patches were checked against."""
     if not profile or not profile[3]:
         return True
-    return eboot_sha256(game)==profile[3]
+    return eboot_sha256(game)==profile[3] or bool(profile[4] and original_bytes_match(game,profile[4]))
 
 
 def unported_build(game):
@@ -114,8 +163,13 @@ def game_patchable(game):
     """Whether the built-in patches apply to this game folder: a known game, version and build."""
     if not game:
         return False
-    profile=game_profile(game_title_id(game))
+    profile=game_profile(game_title_id(game),game)
     return bool(profile) and game_app_version(game)==profile[2] and eboot_matches(game,profile)
+
+
+def available_patches(xml, app_version):
+    """Names of the patches the XML has for this app version."""
+    return {m.get('Name') for m in ET.parse(xml).getroot().iter('Metadata') if m.get('AppVer')==app_version}
 
 
 # God of War III notes: the texture fix and the resolution patches both resize the video arena;
@@ -155,7 +209,8 @@ def external_patches(directory, app_version, exclude, ids):
     found=[]
     directory=Path(directory)
     for path in sorted(directory.glob('*.xml')) if directory.is_dir() else []:
-        if path.resolve()==Path(exclude).resolve(): continue  # the built-in file (patches/ in a checkout)
+        if path.resolve()==Path(exclude).resolve() or path.resolve() in {g[1].resolve() for g in GAMES}:
+            continue  # built-in files (patches/ in a checkout) are not also offered as external
         try:
             root=ET.parse(path).getroot()
         except ET.ParseError as error:
@@ -217,12 +272,12 @@ def main():
     p.add_argument('--game-dir',type=Path,default=Path(os.environ.get('GOW3_GAME_DIR','../CUSA01623')))
     a=p.parse_args()
     title=game_title_id(a.game_dir)
-    profile=game_profile(title)
+    profile=game_profile(title,a.game_dir)
     if not profile:
         write_patches(a.out,[])
         print(f'Patches: no patch profile for {title}: none applied')
         return
-    ids,xml,needed,_sha=profile
+    ids,xml,needed=profile[:3]
     # The patches are byte writes at the addresses of one game build: on another they would
     # corrupt code, so such a game runs unpatched.
     version=game_app_version(a.game_dir)
