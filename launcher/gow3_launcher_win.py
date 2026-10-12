@@ -587,7 +587,7 @@ class Launcher:
         side = tk.Frame(self.root, bg=BG, width=self.px(220))
         side.pack(side='left', fill='y')
         side.pack_propagate(False)
-        self.side_title = tk.Label(side, text=APP_NAME.upper(), bg=BG, fg=TEXT, font=('GodOfWar' if LANG == 'en' else 'Georgia', 15),
+        self.side_title = tk.Label(side, text=APP_NAME.upper(), bg=BG, fg=TEXT, font=('GodOfWar', 15),
                                    wraplength=self.px(190), justify='left')
         self.side_title.pack(anchor='w', padx=22, pady=(24, 22))
         self.side = side
@@ -1004,7 +1004,7 @@ class Launcher:
             ttk.Label(table, text=PS_BUTTON_NAMES[button], width=14).grid(row=r, column=1, sticky='w', padx=(0, 12))
             key_var = tk.StringVar(value=saved.get('key', {}).get(button) or key)
             self.control_vars['key'][button] = key_var
-            ttk.Entry(table, textvariable=key_var, width=16, font='GodOfWar').grid(row=r, column=2, sticky='w', padx=(0, 18))
+            ttk.Entry(table, textvariable=key_var, width=16, font=('GodOfWar' if LANG == 'en' else 'Segoe UI', 10)).grid(row=r, column=2, sticky='w', padx=(0, 18))
             pad_name = saved.get('pad', {}).get(button) or pad
             pad_var = tk.StringVar(value=pad_name or '')
             self.control_vars['pad'][button] = pad_var
