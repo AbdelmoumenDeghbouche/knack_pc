@@ -183,8 +183,13 @@ Padrão; mude na tela **Controls** do launcher.
 | Z e C | L3 e R3 |
 | I, K, J, L | direcional |
 | Enter | Options |
-| Tab | touchpad |
+| Tab | clique esquerdo do touchpad (modo foto) |
+| Backspace | clique direito do touchpad (menu de pausa) |
 | Insert | menu do port (R3+L2 no controle) |
+
+Em um controle sem touchpad (Xbox e outros), View abre o menu de pausa (o clique direito do
+touchpad) e L1 + View abre o modo foto (o clique esquerdo). No DualSense o touchpad funciona
+como no PS4, e Share/Create funciona como View.
 
 No menu: L1/R1 ou Q/E trocam de aba. Na lista de saves: setas ou direcional escolhem, Enter ou
 Xis confirmam, Esc ou Círculo cancelam.
