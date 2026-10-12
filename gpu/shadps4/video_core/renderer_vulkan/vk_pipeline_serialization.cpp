@@ -991,6 +991,12 @@ void PipelineCache::WarmUp(const std::function<void(u32, u32)>& progress) {
     Storage::DataBase::Instance().FinishPreload();
 }
 
+void PipelineCache::StartOnDemand() {
+    CheckCacheProfile();
+    Storage::DataBase::Instance().FinishPreload();
+    std::printf("Pipeline startup: on demand, no bulk warm-up\n");
+}
+
 // gow3: one cached shader stage read by the background warm-up, shared by every cached
 // pipeline that uses it. A pool thread fills it; the GPU thread merges it into program_cache
 // once (MergeWarmStage).

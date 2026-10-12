@@ -134,6 +134,7 @@ public:
     /// gow3: the same load on low-priority threads while the game runs; the GPU thread takes
     /// the results a few at a time (PumpWarmUp). False when it cannot (zip archive store).
     bool StartBackgroundWarmUp();
+    void StartOnDemand();
     void Sync();
     void ReportCompilerStats();
 

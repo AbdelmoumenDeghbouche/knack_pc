@@ -1,6 +1,7 @@
 // Background pipeline cache warm-up helpers (vk_warmup_inbox.h).
 #include <cassert>
 #include <cstdio>
+#include <cstdlib>
 #include <map>
 #include <memory>
 #include <thread>
@@ -10,6 +11,13 @@
 using namespace Vulkan;
 
 int main() {
+#ifdef _WIN32
+    _set_error_mode(_OUT_TO_STDERR);
+#endif
+    assert(UseOnDemandPipelines(true, true, false));
+    assert(!UseOnDemandPipelines(false, true, false));
+    assert(!UseOnDemandPipelines(true, false, false));
+    assert(!UseOnDemandPipelines(true, true, true));
     assert(WarmupThreadCount(1) == 1 && WarmupThreadCount(2) == 1 && WarmupThreadCount(4) == 1);
     assert(WarmupThreadCount(6) == 4 && WarmupThreadCount(8) == 6 && WarmupThreadCount(32) == 6);
 

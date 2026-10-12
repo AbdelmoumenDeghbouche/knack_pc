@@ -12,6 +12,10 @@
 
 namespace Vulkan {
 
+inline bool UseOnDemandPipelines(bool binary_cache, bool supported, bool capture_only) {
+    return binary_cache && supported && !capture_only;
+}
+
 /// Warm-up threads: one on four cores or fewer, otherwise all but two, at most six.
 inline unsigned WarmupThreadCount(unsigned cores) {
     return cores <= 4 ? 1u : std::min(cores - 2, 6u);
