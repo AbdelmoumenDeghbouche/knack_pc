@@ -13,6 +13,13 @@ class ControlMapTest(unittest.TestCase):
         self.assertIn('cheat_double_jumps', launcher.INI_FLAGS)
         self.assertIn('cheat_very_hard', launcher.INI_FLAGS)
 
+    def test_pipeline_binary_cache_switch(self):
+        settings = {**launcher.APP_DEFAULTS}
+        self.assertTrue(settings['pipeline_binary_cache'])
+        self.assertEqual(launcher.game_environment(settings)['GOW3_PIPELINE_BINARIES'], '1')
+        settings['pipeline_binary_cache'] = False
+        self.assertEqual(launcher.game_environment(settings)['GOW3_PIPELINE_BINARIES'], '0')
+
     def test_changed_buttons_in_table_order(self):
         controls = {'key': {'circle': ' Left Shift ', 'cross': 'Q', 'square': ''}, 'pad': {'cross': 'b'}}
         self.assertEqual(launcher.control_map(controls, 'key'), 'cross=Q,circle=Left Shift')
