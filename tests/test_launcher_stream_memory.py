@@ -71,7 +71,9 @@ class StreamMemoryLauncherTest(unittest.TestCase):
             app.content, app.pages, app.vars = ttk.Frame(root), {}, {}
             app.app = dict(launcher.APP_DEFAULTS)
             app.ini, app.ini_lines = launcher.load_ini()
-            app.control_vars, app.mod_order, app.patch_vars = {}, [], {}
+            app.control_vars, app.mod_order, app.mod_vars, app.patch_vars = {}, [], {}, {}
+            app.game_patch_title, app.game_patch_vars = None, {}
+            app.save_button = mock.Mock()  # collect() refreshes it
             app.pad_style = tk.StringVar(root, value='playstation')
             app.store_game_patches = mock.Mock()
             app.build_performance()

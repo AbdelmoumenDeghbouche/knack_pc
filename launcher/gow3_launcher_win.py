@@ -660,8 +660,12 @@ class Launcher:
         self.build()
         self.link_sharpening()
         self.show('home')
+        self.refresh_lists()  # the Game page's lists now, so the first visit does not count as a change
+        self.refresh_game_patches()
+        self.saved = self.gather()
         root.protocol('WM_DELETE_WINDOW', self.close)
         root.after(100, self.drain_output)
+        root.after(500, self.watch_changes)
         if WINDOWS and self.app.get('check_updates', True):
             threading.Thread(target=self.check_update, daemon=True).start()
 
@@ -920,6 +924,8 @@ class Launcher:
         self.status.pack(side='left', padx=24)
         self.play_button = ttk.Button(bar, text=heading_text(_('PLAY', 'ИГРАТЬ')), style='Play.TButton', command=self.play)
         self.play_button.pack(side='right', padx=(self.px(10), self.px(24)), pady=self.px(11))
+        self.save_button = ttk.Button(bar, text=_('Save', 'Сохранить'), command=self.save, state='disabled')
+        self.save_button.pack(side='right', pady=self.px(11))
         self.content = tk.Frame(right, bg=PANEL)
         self.content.pack(fill='both', expand=True)
 
@@ -1611,37 +1617,63 @@ class Launcher:
             self.mod_order[index], self.mod_order[other] = self.mod_order[other], self.mod_order[index]
             self.refresh_lists()
 
-    def collect(self):
-        """Writes settings.json, gow3.ini, mods.json and patches.json."""
-        self.store_game_patches()
+    def gather(self):
+        """What collect() writes, as data: settings.json, the gow3.ini values, the mods selection and
+        the third-party patches selection. Reads the window and changes nothing."""
+        app, ini = dict(self.app), dict(self.ini)
+        if self.game_patch_title:
+            app['game_patches'] = {**app.get('game_patches', {}),
+                                   self.game_patch_title: [n for n, v in self.game_patch_vars.items() if v.get()]}
         for key, var in self.vars.items():
             try:
                 value = var.get()
             except self.tk.TclError:  # an unfinished number in a spinbox
                 value = APP_DEFAULTS.get(key, INI_DEFAULTS.get(key))
             if var.store == 'ini':
-                self.ini[key] = ('1' if value else '0') if key in INI_FLAGS else \
-                    f'{float(value):.2f}' if key == 'sharpness' else str(value)
+                ini[key] = ('1' if value else '0') if key in INI_FLAGS else                     f'{float(value):.2f}' if key == 'sharpness' else str(value)
             else:
-                self.app[key] = value
-        self.app['controls'] = {kind: control_changes({b: v.get() for b, v in vars_.items()}, kind)
-                                for kind, vars_ in self.control_vars.items()}
-        self.app['pad_style'] = self.pad_style.get()
+                app[key] = value
+        app['controls'] = {kind: control_changes({b: v.get() for b, v in vars_.items()}, kind)
+                           for kind, vars_ in self.control_vars.items()}
+        app['pad_style'] = self.pad_style.get()
+        mods = {'order': list(self.mod_order),
+                'disabled': [n for n, v in self.mod_vars.items() if not v.get()]} if self.mod_order else None
+        patches = {'enabled': sorted(k for k, v in self.patch_vars.items() if v.get()),
+                   'disabled': sorted(k for k, v in self.patch_vars.items() if not v.get())} if self.patch_vars else None
+        return {'app': app, 'ini': ini, 'mods': mods, 'patches': patches}
+
+    def collect(self):
+        """Writes settings.json, gow3.ini, mods.json and patches.json."""
+        state = self.gather()
+        self.app, self.ini = state['app'], state['ini']
         CONFIG_DIR.mkdir(parents=True, exist_ok=True)
         CONFIG_FILE.write_text(json.dumps(self.app, indent=2, ensure_ascii=False), encoding='utf-8')
         save_ini({key: self.ini[key] for key in INI_DEFAULTS}, self.ini_lines)
         self.ini, self.ini_lines = load_ini()
-        if self.mod_order:
-            (DATA_DIR / 'mods.json').write_text(json.dumps(
-                {'order': self.mod_order, 'disabled': [n for n, v in self.mod_vars.items() if not v.get()]},
-                indent=2), encoding='utf-8')
-        if self.patch_vars:
+        if state['mods']:
+            (DATA_DIR / 'mods.json').write_text(json.dumps(state['mods'], indent=2), encoding='utf-8')
+        if state['patches']:
+            # Patches of other game versions keep their choice.
             chosen = load_json(DATA_DIR / 'patches.json', {})
             shown = set(self.patch_vars)
-            enabled = {k for k in chosen.get('enabled', []) if k not in shown} | {k for k, v in self.patch_vars.items() if v.get()}
-            disabled = {k for k in chosen.get('disabled', []) if k not in shown} | {k for k, v in self.patch_vars.items() if not v.get()}
+            enabled = {k for k in chosen.get('enabled', []) if k not in shown} | set(state['patches']['enabled'])
+            disabled = {k for k in chosen.get('disabled', []) if k not in shown} | set(state['patches']['disabled'])
             (DATA_DIR / 'patches.json').write_text(json.dumps(
                 {'enabled': sorted(enabled), 'disabled': sorted(disabled)}, indent=2), encoding='utf-8')
+        self.saved = self.gather()
+        self.refresh_save_button()
+
+    def save(self):
+        """The Save button: the files, without starting the game."""
+        self.collect()
+
+    def refresh_save_button(self):
+        """Save is only active while the window differs from the files (gather() against the last save)."""
+        self.save_button.configure(state='normal' if self.gather() != self.saved else 'disabled')
+
+    def watch_changes(self):
+        self.refresh_save_button()
+        self.root.after(500, self.watch_changes)
 
     # ---- game process ------------------------------------------------------------------------
     def play(self):
