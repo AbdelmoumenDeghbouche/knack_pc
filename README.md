@@ -209,6 +209,41 @@ when using `Play God of War III.exe` or `--play`. Choose GPU memory to restore t
 allocation behavior. For direct launches without the launcher, `GOW3_STREAM_MEMORY` accepts
 `cached`, `host` or `device`; the launcher's saved choice takes precedence when using it.
 
+### Importing shadPS4 saves
+
+Only **shadPS4 saves for God of War III Remastered** are compatible. RPCS3 saves are
+from the PS3 game and will not work. Use the same title ID (this example uses `CUSA01623`).
+
+1. Close the game and shadPS4. Back up both save folders.
+2. Find the source in shadPS4's data folder: `user\savedata\1\CUSA01623\` in older
+   versions, or `home\<user-id>\savedata\CUSA01623\` in newer versions.
+3. The destination is **`user\savedata\1\CUSA01623\` next to `God of War III.exe`**.
+   Example: `C:\Games\gow3-windows\user\savedata\1\CUSA01623\`. With a custom
+   **Saves folder** in the launcher, use `<custom folder>\savedata\1\CUSA01623\`.
+4. Copy each slot folder there, keeping its name and game files. Do not nest another
+   `CUSA01623` folder. Exclude the slot's internal `sce_sys` folder from the game data.
+5. Beside each slot, create `<slot name>.sce_sys` if it does not exist. You can copy
+   shadPS4's `sce_sys\icon0.png` there. **Do not rename `param.sfo` to `param.bin`**:
+   the formats differ. Preserve any existing port `param.bin`. Without one, the slot
+   appears by folder name; saving again in the port writes its metadata and refreshes
+   the displayed information.
+6. Start the port and select **Load Game**. Completed saves can be imported too.
+
+The port's save dialog displays at most **32 entries**. If the imported slot is missing
+from a long list, test it with a separate **Saves folder** containing just that slot
+under `savedata\1\CUSA01623\`, with its sibling metadata folder. Keep the original saves
+and restore the previous Saves folder setting after testing.
+
+### Third-party overlays (Windows)
+
+The game process is **`bin\gow3-probe.exe`**, not `God of War III.exe` (source builds
+use `out\gow3-probe.exe`). Add that executable to RTSS and enable Afterburner's on-screen
+display. In the ReShade installer, select that same executable and the **Vulkan** API.
+
+If the overlay still does not appear, report the port and overlay versions, the last
+working port version, and attach `user\last_run.log`. These checks do not confirm a fix
+for every overlay configuration.
+
 ### Keyboard controls
 
 Defaults; change them on the launcher's **Controls** page.

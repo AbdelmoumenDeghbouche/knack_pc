@@ -45,6 +45,15 @@ Data
 - Generated files (prepared game image, patches): out\.
 
 Problems
+- Importing shadPS4 saves: see "Importing shadPS4 saves" in the project's README:
+  https://github.com/FelipePrado0/gow3_pc#importing-shadps4-saves
+  Destination: user\savedata\1\CUSA01623\ next to God of War III.exe, or
+  <custom Saves folder>\savedata\1\CUSA01623\. RPCS3 saves are not compatible.
+  Do not rename shadPS4's param.sfo to param.bin; the formats differ.
+  The save dialog displays at most 32 entries. If the imported slot is missing, test
+  with a separate Saves folder containing only that slot; keep the original saves.
+- RTSS/Afterburner and ReShade must target bin\gow3-probe.exe, not the launcher.
+  Select Vulkan in the ReShade installer. Report the overlay versions if it still fails.
 - Black screen at start: Advanced -> Clear shader cache, then start again.
 - The game does not open: check the Log page, and send user\last_run.log with your report.
 
