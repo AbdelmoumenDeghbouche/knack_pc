@@ -104,6 +104,42 @@ com X e 120 FPS vêm ligados. Mude resolução e FPS na **Home** ou em **Perform
 - Tela preta ao abrir: **Advanced → Clear shader cache** e abra de novo.
 - O jogo não abre: veja a tela **Log**, ou envie o `user\last_run.log` junto com o relato.
 
+## Linux (AppImage, experimental)
+
+A versão para Linux usa o mesmo runtime nativo e o mesmo launcher. Foi testada no Arch Linux com uma
+Radeon RX 7800 XT (RADV) numa sessão Wayland.
+
+**Você precisa de:** um driver Vulkan 1.3 e do seu próprio dump do jogo (CUSA01623, versão 01.02).
+
+**Compilar e rodar**
+```
+bash build.sh
+bash packaging/linux/build.sh   # precisa de PyInstaller, Tk e Pillow para Python, mais patchelf e curl
+./dist/gow3-x86_64.AppImage
+```
+Escolha a pasta do jogo no launcher. `--play` inicia o jogo com as opções salvas e sem janela. A
+partir do código: `GOW3_GAME_DIR=/caminho/para/CUSA01623 python3 run.py` depois de `bash build.sh`.
+
+- **Arquivos:** saves, configurações, cache de shaders e o registro ficam em `~/.local/share/gow3`; as
+  configurações do próprio launcher, em `~/.config/gow3-launcher`.
+- **Pasta do update:** se o update foi dumpado separado do jogo, escolha-a em **Jogo → Pasta do
+  update**. Ela é colocada por cima da pasta do jogo sem alterar nenhuma das duas.
+- **Avançado → Linux:** sistema de janelas (automático, Wayland ou X11), GameMode e MangoHud. Só as
+  ferramentas instaladas no sistema podem ser ligadas.
+- **Steam:** **Avançado → Adicionar à Steam** inclui "God of War III Remastered" como jogo de fora da
+  Steam, com o ícone, as capas vertical e horizontal, o fundo da biblioteca e o logotipo feitos a
+  partir das imagens do dump. Feche a Steam antes (ela reescreve os atalhos quando fecha). O botão
+  também está no launcher do Windows (ainda sem teste lá).
+- **Entrada no menu:** o AppImage grava `~/.local/share/applications/gow3.desktop` ao iniciar, para o
+  launcher e a janela do jogo mostrarem o ícone no dock; **Avançado → Linux** desliga e remove a entrada.
+- **Ícone:** o AppImage, o launcher e a janela do jogo usam `packaging/linux/gow3.png` quando esse
+  arquivo existe na hora da compilação, e `launcher/gow3.png` caso contrário.
+- **Patches:** a atualização 01.02 completa (`eboot.bin` com sha256 `6e72330e…`) usa o arquivo de
+  patches do cuesta4 (`patches/God_of_War_III_Remastered_cuesta.xml`). O título europeu (CUSA01715) só
+  recebe patches quando todos os bytes que eles sobrescrevem batem; não foi testado.
+- **Gráficos (experimental):** os upscalers temporais (FSR 3.1, FSR 4, TAA, DLSS) ficam desligados por
+  padrão; o interruptor está no topo dessa página.
+
 ## Requisitos
 
 - Windows 10 (1903 ou mais novo) ou Windows 11, 64 bits.

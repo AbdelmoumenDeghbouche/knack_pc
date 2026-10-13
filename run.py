@@ -1,18 +1,24 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: GPL-2.0-or-later
-"""Windows counterpart of run.sh: prepares the game image and starts gow3-probe.exe.
+"""Prepares the game image and starts gow3-probe (Windows and Linux; run.sh wraps it on Linux).
 
-Same environment variables as run.sh (GOW3_GAME_DIR, GOW3_DATA_DIR, GOW3_PATCHES, GOW3_MODS_*,
+Environment variables (GOW3_GAME_DIR, GOW3_DATA_DIR, GOW3_PATCHES, GOW3_MODS_*,
 GOW3_USER_DIR, ...). Extra arguments go to gow3-probe.
 The in-game "Apply and restart" runs this script again through GOW3_RESTART_COMMAND;
 `--after PID` waits for the previous game process to end first (its GPU device and memory).
 """
-import ctypes
 import os
 from pathlib import Path
+import shlex
 import shutil
 import subprocess
 import sys
+import time
+
+WINDOWS = sys.platform == 'win32'
+EXE_SUFFIX = '.exe' if WINDOWS else ''
+if WINDOWS:
+    import ctypes
 
 PORT = Path(__file__).resolve().parent
 
@@ -23,6 +29,17 @@ def fail(message):
 
 
 def wait_for(pid):
+    if not WINDOWS:
+        deadline = time.monotonic() + 30
+        while time.monotonic() < deadline:
+            try:
+                os.kill(pid, 0)
+            except ProcessLookupError:
+                return
+            except PermissionError:
+                pass
+            time.sleep(0.1)
+        return
     kernel32 = ctypes.windll.kernel32
     SYNCHRONIZE = 0x00100000
     handle = kernel32.OpenProcess(SYNCHRONIZE, False, pid)
@@ -33,6 +50,8 @@ def wait_for(pid):
 
 def no_console():
     """Started without a console (the launcher): console programs must not open their own."""
+    if not WINDOWS:
+        return 0
     return 0 if ctypes.windll.kernel32.GetConsoleWindow() else subprocess.CREATE_NO_WINDOW
 
 
@@ -52,6 +71,20 @@ def run_script(name, *args, capture=False):
     if result.returncode:
         sys.exit(result.returncode)
     return None
+
+
+def launch_prefix(env):
+    """Linux integrations chosen in the launcher: MangoHud is its Vulkan layer (an environment
+    variable), GameMode a command that starts the game."""
+    if WINDOWS:
+        return []
+    if env.get('GOW3_MANGOHUD') == '1':
+        env.setdefault('MANGOHUD', '1')
+    if env.get('GOW3_GAMEMODE') == '1':
+        if gamemode := shutil.which('gamemoderun'):
+            return [gamemode]
+        print('GameMode: gamemoderun not found, starting without it', flush=True)
+    return []
 
 
 def find_executable(name):
@@ -88,11 +121,11 @@ def main():
     if not env.get('GOW3_FSR411_DIR') and not (PORT / 'fsr4_411').is_dir() and (data / 'fsr4_411').is_dir():
         env['GOW3_FSR411_DIR'] = str(data / 'fsr4_411')
 
-    probe = Path(env['GOW3_PROBE']) if env.get('GOW3_PROBE') else find_executable('gow3-probe.exe')
+    probe = Path(env['GOW3_PROBE']) if env.get('GOW3_PROBE') else find_executable('gow3-probe' + EXE_SUFFIX)
     if not probe or not probe.is_file():
-        fail('gow3-probe.exe not found: build it with build.sh (MSYS2 CLANG64) or use a packaged build.')
+        fail(f'gow3-probe{EXE_SUFFIX} not found: build it with build.sh or use a packaged build.')
     # Development builds run from the MSYS2 tree: its CLANG64 DLLs (SDL3, FFmpeg, ...).
-    if not (probe.parent / 'SDL3.dll').is_file():
+    if WINDOWS and not (probe.parent / 'SDL3.dll').is_file():
         clang64 = Path(env.get('MSYS2_ROOT', r'C:\msys64')) / 'clang64' / 'bin'
         if clang64.is_dir():
             env['PATH'] = f'{clang64}{os.pathsep}{env.get("PATH", "")}'
@@ -100,6 +133,15 @@ def main():
     game = Path(env.get('GOW3_GAME_DIR', PORT.parent / 'CUSA01623'))
     if not (game / 'eboot.bin').is_file():
         fail(f'No eboot.bin in {game} (set GOW3_GAME_DIR).')
+    update_view = None
+    if env.get('GOW3_PATCH_DIR'):
+        import game_update
+        try:
+            update_view = game_update.create_view(game, env['GOW3_PATCH_DIR'], out)
+        except (ValueError, OSError) as error:
+            fail(str(error))
+        game = update_view
+        print(f'Game and update combined from {env["GOW3_PATCH_DIR"]}', flush=True)
     original_game = game.resolve()
     game = Path(run_script('mods.py', game, '--out', out,
                            '--mods-dir', env.get('GOW3_MODS_DIR', data / 'mods'),
@@ -112,27 +154,38 @@ def main():
         run_script('link_modules.py', game, '--out', out)
         run_script('content_profile.py', game, '--out', out, '--sku', env.get('GOW3_CONTENT_SKU', 'full'))
 
+        import patches
         from patches import game_patchable, game_profile, game_title_id, patch_requirements, selected_patches
-        profile = game_profile(game_title_id(game))
+        profile = game_profile(game_title_id(game), game)
         patched = bool(profile) and (game_patchable(game) or bool(env.get('GOW3_FORCE_PATCHES')))
         engine_fps = 60
-        # The window shows the game's icon (BMP: the format SDL loads without extra libraries).
+        # The window shows the game's icon (BMP: the format SDL loads without extra libraries); on
+        # Linux the launcher's own icon (the AppImage ships the one chosen when it was built) and
+        # an application id the desktop entry matches, so the shell shows the same icon.
+        icon_file = game / 'sce_sys' / 'icon0.png'
+        if not WINDOWS:
+            env.setdefault('SDL_APP_ID', 'gow3')
+            if (PORT / 'launcher' / 'gow3.png').is_file():
+                icon_file = PORT / 'launcher' / 'gow3.png'
         try:
             from PIL import Image
-            with Image.open(game / 'sce_sys' / 'icon0.png') as icon:
+            with Image.open(icon_file) as icon:
                 icon.convert('RGBA').resize((64, 64), Image.LANCZOS).save(out / 'window_icon.bmp')
             env.setdefault('GOW3_WINDOW_ICON', str(out / 'window_icon.bmp'))
         except (ImportError, OSError):
             pass
-        # The temporal upscalers and motion vectors are not calibrated for this game yet; linear
+        # The temporal upscalers and motion vectors are not calibrated for this game yet: they stay
+        # off unless the launcher's experimental switch is on (then gow3.ini decides); linear
         # image readbacks fix its corrupted textures.
-        env.setdefault('GOW3_UPSCALER', 'none')
+        if env.get('GOW3_EXPERIMENTAL_UPSCALER') != '1':
+            env.setdefault('GOW3_UPSCALER', 'none')
         env.setdefault('GOW3_READBACK_LINEAR', '1')
         if patched:
             # The patch notes give the direct memory and VBlank rate the selected patches need.
             names = selected_patches(profile[1], profile[2], env.get('GOW3_PATCHES', ''), env.get('GOW3_PATCHES_ONLY') == '1')
             # gow3.ini decides the resolution and frame rate patches (in-game menu, launcher).
             names = graphics_options.patch_names(names, graphics)
+            names = graphics_options.restrict_to_available(names, patches.available_patches(profile[1], profile[2]))
             env['GOW3_PATCHES'] = ';'.join(names)
             env['GOW3_PATCHES_ONLY'] = '1'
             engine_fps = graphics_options.applied_engine_fps(names)
@@ -168,9 +221,12 @@ def main():
         except OSError as error:
             print(f'Save backup failed, starting anyway: {error}', flush=True)
         this = ['--run'] if getattr(sys, 'frozen', False) else [str(Path(__file__).resolve())]
-        restart = [sys.executable, *this, '--after', str(os.getpid()), *args]
-        env['GOW3_RESTART_COMMAND'] = subprocess.list2cmdline(restart)
-        command = [str(probe), str(out / 'boot-linked.bin'), '--content-profile', str(out / 'content.bin'),
+        # Windows: the probe starts the new launch and ends, so it waits for this process. Linux:
+        # the probe replaces itself with the new launch while this process still waits for it.
+        after = ['--after', str(os.getpid())] if WINDOWS else []
+        restart = [sys.executable, *this, *after, *args]
+        env['GOW3_RESTART_COMMAND'] = subprocess.list2cmdline(restart) if WINDOWS else shlex.join(restart)
+        command = [*launch_prefix(env), str(probe), str(out / 'boot-linked.bin'), '--content-profile', str(out / 'content.bin'),
                    '--patches', str(out / 'patches.bin'), '--app0', str(game),
                    '--user', str(user_dir),
                    '--timeout', env.get('GOW3_TIMEOUT', '0'), *args]
@@ -179,6 +235,8 @@ def main():
     finally:
         if mod_view:
             shutil.rmtree(mod_view, ignore_errors=True)
+        if update_view:
+            game_update.remove_view(update_view)
 
 
 if __name__ == '__main__':

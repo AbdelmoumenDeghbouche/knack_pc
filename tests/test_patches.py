@@ -6,7 +6,7 @@ import xml.etree.ElementTree as ET
 from pathlib import Path
 
 from patches import (compile_patches, external_patches, external_selection, compile_external,
-                     game_profile, selected_patches, patch_requirements)
+                     game_profile, selected_patches, patch_requirements, GAMES)
 
 GOW3 = ROOT / 'patches/God_of_War_III_Remastered.xml'
 GOW3_IDS = {'CUSA01623'}
@@ -59,6 +59,23 @@ class GameProfileTests(unittest.TestCase):
         self.assertIsNone(game_profile('CUSA99999'))
         self.assertIsNone(game_profile(None))
 
+    def test_cuesta_profile_for_the_european_title_and_the_us_update_build(self):
+        cuesta = ROOT / 'patches/God_of_War_III_Remastered_cuesta.xml'
+        self.assertEqual(game_profile('CUSA01715')[1:3], (cuesta, '01.02'))
+        with tempfile.TemporaryDirectory() as folder:
+            (Path(folder) / 'eboot.bin').write_bytes(b'not an eboot')
+            self.assertEqual(game_profile('CUSA01623', folder)[1], GOW3)  # unknown build: first profile
+        self.assertTrue(all(g[1].is_file() for g in GAMES))
+        self.assertTrue(all(g[4].is_file() for g in GAMES if g[4]))
+
+    def test_unavailable_frame_rate_patch_falls_back_to_the_highest_lower_one(self):
+        from graphics_options import restrict_to_available
+        available = {'Bug Fix - Texture Corruption Fix', 'Frame Rate Patch - 120 FPS'}
+        self.assertEqual(restrict_to_available(['Bug Fix - Texture Corruption Fix', 'Frame Rate Patch - 240 FPS'],
+                                               available),
+                         ['Bug Fix - Texture Corruption Fix', 'Frame Rate Patch - 120 FPS'])
+        self.assertEqual(restrict_to_available(['Resolution Patch - 8K'], available), [])
+
     def test_gow3_defaults_and_extras(self):
         self.assertEqual(selected_patches(GOW3, '01.02', ''),
                          ['Bug Fix - Texture Corruption Fix', 'Skip Any Video With X Button'])
@@ -93,8 +110,10 @@ class GameProfileTests(unittest.TestCase):
             with mock.patch.dict(patches.UNPORTED_BUILDS, {sha: 'full 01.02 update'}):
                 self.assertEqual(patches.unported_build(folder), 'full 01.02 update')
         self.assertIsNone(patches.unported_build(None))
-        self.assertIn('6e72330e9092e5164049b865e5568f2d450904001a73fe0a2f4b39194c195b3c',
-                      patches.UNPORTED_BUILDS)
+        # The full 01.02 update (eboot 6e72...) has the cuesta profile now.
+        full_update = '6e72330e9092e5164049b865e5568f2d450904001a73fe0a2f4b39194c195b3c'
+        self.assertNotIn(full_update, patches.UNPORTED_BUILDS)
+        self.assertIn(full_update, [g[3] for g in patches.GAMES])
 
     def test_game_patchable(self):
         from patches import game_patchable

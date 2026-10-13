@@ -23,7 +23,11 @@ typedef struct {
     uint32_t seq, pad;
     uint64_t reserved;
 } Gow3ActorSlot;
+#ifdef __cplusplus
+static_assert(sizeof(Gow3ActorSlot) == 32, "stub uses a 32-byte stride");
+#else
 _Static_assert(sizeof(Gow3ActorSlot) == 32, "stub uses a 32-byte stride");
+#endif
 
 static inline int gow3_actor_signature_match(const unsigned char *code, uint64_t size) {
     return size >= GOW3_ACTOR_HOOK_LENGTH && !memcmp(code, gow3_actor_original, GOW3_ACTOR_HOOK_LENGTH);

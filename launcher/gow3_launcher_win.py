@@ -1,17 +1,17 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: GPL-2.0-or-later
-"""God of War III (gow3) launcher for Windows (Tkinter; launcher/gow3_launcher.py is the Linux one).
+"""God of War III (gow3) launcher for Windows and Linux (Tkinter).
 
 Every setting of the port in one window: the game folder and saves, gow3.ini (upscaler,
 preset, output, effects), start-up options passed to run.py as environment variables
 (frame rate, presentation, HDR, ...), mods, third-party patches and the FSR 4 assets.
-Launcher options live in %APPDATA%/gow3-launcher/settings.json.
+Launcher options live in %APPDATA%/gow3-launcher/settings.json (~/.config/gow3-launcher on Linux).
 
 Frozen with PyInstaller (packaging/windows/package.sh) the same God of War III.exe also runs the
 game without the window (`--play`), run.py (`--run`) and the preparation scripts (`--script`),
 so a packaged port needs no Python installation.
 """
-import ctypes
+import glob
 import json
 import os
 from pathlib import Path
@@ -19,6 +19,7 @@ import queue
 import re
 import runpy
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
@@ -28,17 +29,25 @@ import urllib.request
 import webbrowser
 import zipfile
 
+WINDOWS = sys.platform == 'win32'
+if WINDOWS:
+    import ctypes
 FROZEN = getattr(sys, 'frozen', False)
 PORT_DIR = Path(sys.executable).resolve().parent if FROZEN else Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PORT_DIR / 'scripts'))
 import save_backup  # noqa: E402  (scripts/)
+import steam_shortcut  # noqa: E402  (scripts/)
 DATA_DIR = Path(os.environ.get('GOW3_DATA_DIR', PORT_DIR))
-CONFIG_DIR = Path(os.environ.get('APPDATA', Path.home())) / 'gow3-launcher'
+CONFIG_DIR = (Path(os.environ.get('APPDATA', Path.home())) if WINDOWS else
+              Path(os.environ.get('XDG_CONFIG_HOME') or Path.home() / '.config')) / 'gow3-launcher'
 CONFIG_FILE = CONFIG_DIR / 'settings.json'
 MOD_PRESETS = DATA_DIR / 'mods_presets.json'
 APP_NAME = 'God of War III'
 MAX_LOG_LINES = 6000
 NO_WINDOW = getattr(subprocess, 'CREATE_NO_WINDOW', 0)
+# The game and everything it starts form one process group, ended together (GameJob).
+NEW_GROUP = {} if WINDOWS else {'start_new_session': True}
+UI_FONT, MONO_FONT, SERIF_FONT = 'Segoe UI', 'Consolas', 'Georgia'
 # This build; GitHub release tags are windows-v<VERSION>.
 VERSION = '2.1.6'
 RELEASES_API = 'https://api.github.com/repos/FelipePrado0/gow3_pc/releases/latest'
@@ -56,6 +65,8 @@ FR_PRIVATE = 0x10
 
 def attach_stdio():
     """A windowed executable starts without sys.stdout; inherited pipes or a console still exist."""
+    if not WINDOWS:
+        return
     import msvcrt
     for name, std in (('stdout', -11), ('stderr', -12)):
         if getattr(sys, name) is not None:
@@ -135,6 +146,49 @@ FONT_LOADED = False  # set by main() for the window; the command-line roles neve
 WARN = '  ⚠'  # marks a risky choice; the text before it is translated as usual
 
 
+def monitor_under_pointer(root):
+    """(x, y, width, height) of the monitor holding the mouse pointer, from xrandr; zeros if unknown."""
+    try:
+        text = subprocess.run(['xrandr', '--query'], capture_output=True, text=True, timeout=3,
+                              env=host_environment()).stdout
+    except (OSError, subprocess.SubprocessError):
+        return 0, 0, 0, 0
+    pointer_x, pointer_y = root.winfo_pointerxy()
+    monitors = [(x, y, width, height) for width, height, x, y in
+                (tuple(map(int, match.groups())) for match in
+                 re.finditer(r' connected (?:primary )?(\d+)x(\d+)\+(\d+)\+(\d+)', text))]
+    for x, y, width, height in monitors:
+        if x <= pointer_x < x + width and y <= pointer_y < y + height:
+            return x, y, width, height
+    return monitors[0] if monitors else (0, 0, 0, 0)
+
+
+def pick_fonts(families):
+    """Windows fonts first, then the DejaVu family that most Linux desktops ship."""
+    global UI_FONT, MONO_FONT, SERIF_FONT
+    available = set(families)
+    pick = lambda names: next((name for name in names if name in available), names[-1])
+    UI_FONT = pick(('Segoe UI', 'Noto Sans', 'DejaVu Sans'))
+    MONO_FONT = pick(('Consolas', 'Noto Sans Mono', 'DejaVu Sans Mono'))
+    SERIF_FONT = pick(('Georgia', 'Noto Serif', 'DejaVu Serif'))
+
+
+def host_environment():
+    """The environment of the user's session for programs outside the bundle (xdg-open)."""
+    env = dict(os.environ)
+    for name in ('LD_LIBRARY_PATH', 'PYTHONHOME', 'PYTHONPATH', 'TCL_LIBRARY', 'TK_LIBRARY'):
+        env.pop(name, None)
+    return env
+
+
+def open_url(url):
+    if WINDOWS:
+        webbrowser.open(url)
+    else:
+        subprocess.Popen(['xdg-open', url], env=host_environment(), stdin=subprocess.DEVNULL,
+                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+
 def _(en, ru=None):
     if en.endswith(WARN):
         return _(en[:-len(WARN)], ru and ru.removesuffix(WARN)) + WARN
@@ -143,7 +197,17 @@ def _(en, ru=None):
     return gow3_lang.table(LANG).get(en) or en
 
 
+def environment_language():
+    for name in ('LC_ALL', 'LC_MESSAGES', 'LANG'):
+        code = re.match(r'[a-z]{2}', os.environ.get(name, ''))
+        if code:
+            return code.group()
+    return 'en'
+
+
 def windows_language():
+    if not WINDOWS:
+        return environment_language()
     try:
         primary = ctypes.windll.kernel32.GetUserDefaultUILanguage() & 0x3ff
     except (AttributeError, OSError):
@@ -154,18 +218,20 @@ def windows_language():
 def register_font(path):
     """Makes a font file available to this process (nothing else sees it). False when the file is missing or
     GDI refuses it: the launcher then keeps its standard fonts."""
+    if not WINDOWS:
+        return False
     try:
         return path.is_file() and bool(ctypes.windll.gdi32.AddFontResourceExW(str(path), FR_PRIVATE, 0))
     except (AttributeError, OSError):
         return False
 
 
-def heading_font(size, fallback='Georgia', every_language=False):
+def heading_font(size, fallback=None, every_language=False):
     """Titles use the God of War face once its file is registered: in the English UI, or in every language
     for the game's name. Otherwise the launcher's usual family."""
     if FONT_LOADED and (every_language or LANG == 'en'):
         return ('GodOfWar', size)
-    return (fallback, size)
+    return (fallback or SERIF_FONT, size)
 
 
 # ---------------------------------------------------------------------------------------------
@@ -183,7 +249,8 @@ INI_DEFAULTS = {'upscaler': 'fsr4', 'preset': '1', 'sharpen': '1', 'sharpness': 
                 'rcas_strength': '75', 'frames_queued': '1', 'cheat_very_hard': '0', 'cheat_double_jumps': '0'}
 DISPLAY_MODES = [('windowed', ('Windowed',)), ('borderless', ('Borderless',)), ('fullscreen', ('Fullscreen',))]
 FPS_LIMITS = [('30', ('30',)), ('60', ('60',)), ('120', ('120',)), ('240', ('240',)), ('0', ('Unlimited',))]
-APP_DEFAULTS = {'ui_language': 'en', 'game_dir': os.environ.get('GOW3_GAME_DIR', str(PORT_DIR.parent / 'CUSA01623')), 'user_dir': '',
+APP_DEFAULTS = {'ui_language': 'en', 'game_dir': os.environ.get('GOW3_GAME_DIR', str(PORT_DIR.parent / 'CUSA01623') if WINDOWS else ''), 'update_dir': '', 'experimental_upscaler': False,
+                'video_backend': 'auto', 'gamemode': False, 'mangohud': False, 'desktop_integration': True, 'user_dir': '',
                 'mods_dir': '', 'mods_enabled': True, 'patches_dir': '', 'language': '1',
                 'player_name': '', 'hdr': False, 'draw_pipe': '', 'readbacks': '', 'stream_memory': 'cached',
                 'gpu_id': '', 'background_warmup': True, 'parallel_warmup': True, 'pipeline_binary_cache': True,
@@ -286,8 +353,15 @@ def fsr4_files():
     return files
 
 
+def fsr4_folder():
+    """Next to the port; in the data directory when the port is read-only (AppImage)."""
+    if WINDOWS or os.access(PORT_DIR, os.W_OK):
+        return PORT_DIR / 'fsr4_shaders'
+    return DATA_DIR / 'fsr4_shaders'
+
+
 def fsr4_missing():
-    folder = PORT_DIR / 'fsr4_shaders'
+    folder = fsr4_folder()
     return [name for name in fsr4_files() if not (folder / name).is_file() or not (folder / name).stat().st_size]
 
 
@@ -345,6 +419,26 @@ def game_info(folder):
         return APP_NAME, '?'
 
 
+def meta_folder(game_dir, update_dir):
+    """The folder the title, version and patches are read from: the update when there is one."""
+    if update_dir and (Path(update_dir) / 'eboot.bin').is_file():
+        return update_dir
+    return game_dir
+
+
+VIDEO_BACKENDS = [('auto', ('Automatic',)), ('wayland', ('Wayland',)), ('x11', ('X11 (XWayland)',))]
+VULKAN_LAYER_DIRS = ('/usr/share/vulkan/implicit_layer.d', '/etc/vulkan/implicit_layer.d',
+                     os.path.expanduser('~/.local/share/vulkan/implicit_layer.d'))
+
+
+def linux_tools():
+    """Which of the optional Linux integrations this system has."""
+    return {'wayland': bool(os.environ.get('WAYLAND_DISPLAY')),
+            'gamemode': bool(shutil.which('gamemoderun')),
+            'mangohud': bool(shutil.which('mangohud')) or any(
+                glob.glob(os.path.join(d, '*angoHud*.json')) for d in VULKAN_LAYER_DIRS)}
+
+
 REQUIRED_GAME_FILES = ('sce_sys/param.sfo', 'sce_module/libc.prx', 'sce_module/libSceFios2.prx')
 
 
@@ -353,24 +447,87 @@ def missing_game_files(folder):
     return [name for name in REQUIRED_GAME_FILES if not (Path(folder) / name).is_file()]
 
 
+DESKTOP_MARKER = 'X-GOW3-Integration=true'
+
+
+def desktop_entry(command, icon, marker=False):
+    """The menu entry; its StartupWMClass is the application id of the launcher and of the game window."""
+    return ('[Desktop Entry]\nType=Application\nName=God of War III Remastered\n'
+            f'Exec={command}\nIcon={icon}\nTerminal=false\nCategories=Game;\nStartupWMClass=gow3\n'
+            + (DESKTOP_MARKER + '\n' if marker else ''))
+
+
+def integrate_desktop(enabled, appimage, icon_source, data_dir, home=None):
+    """AppImage on Linux: the menu entry the desktop matches the windows (application id gow3) to,
+    which is what shows their icon in the dock. The entry is ours while it carries the marker; one
+    without it was written by hand (the Desktop shortcut button) and is left alone."""
+    entry = Path(home or Path.home()) / '.local' / 'share' / 'applications' / 'gow3.desktop'
+    try:
+        ours = entry.is_file() and DESKTOP_MARKER in entry.read_text(encoding='utf-8', errors='replace')
+        if not enabled:
+            if ours:
+                entry.unlink()
+            return None
+        if not appimage or (entry.is_file() and not ours):
+            return None
+        icon = Path(data_dir) / 'gow3.png'
+        icon.parent.mkdir(parents=True, exist_ok=True)
+        if not icon.is_file() or icon.read_bytes() != Path(icon_source).read_bytes():
+            shutil.copyfile(icon_source, icon)
+        text = desktop_entry(f'"{appimage}"', icon, marker=True)
+        entry.parent.mkdir(parents=True, exist_ok=True)
+        if not entry.is_file() or entry.read_text(encoding='utf-8') != text:
+            entry.write_text(text, encoding='utf-8')
+        return entry
+    except OSError:
+        return None
+
+
+def steam_icon(game):
+    """Picture of the Steam shortcut's icon: the launcher's own on Linux, the game's on Windows."""
+    return Path(game) / 'sce_sys' / 'icon0.png' if WINDOWS else PORT_DIR / 'launcher' / 'gow3.png'
+
+
+def steam_launch_command():
+    """(program, launch options, start folder) with which Steam starts the game without the window."""
+    appimage = os.environ.get('APPIMAGE')
+    if appimage:
+        return appimage, '--play', str(Path(appimage).parent)
+    if FROZEN:
+        return sys.executable, '--play', str(Path(sys.executable).parent)
+    return sys.executable, f'"{Path(__file__).resolve()}" --play', str(PORT_DIR)
+
+
 def game_profile_of(folder):
     """(title id, (ids, built-in XML, app version)) of a game with a patch profile, else (id, None)."""
     from patches import game_profile, game_title_id
     title_id = game_title_id(folder) if folder else None
-    return title_id, game_profile(title_id)
+    return title_id, game_profile(title_id, folder or None)
 
 
 def game_environment(s):
     env = dict(os.environ)
     env['GOW3_GAME_DIR'] = s['game_dir']
+    env.pop('GOW3_PATCH_DIR', None)
+    env['GOW3_EXPERIMENTAL_UPSCALER'] = '1' if s.get('experimental_upscaler') else '0'
+    if s.get('update_dir'):
+        env['GOW3_PATCH_DIR'] = s['update_dir']
+    if not WINDOWS:
+        backend = s.get('video_backend', 'auto')
+        if backend in ('wayland', 'x11'):
+            env['SDL_VIDEO_DRIVER'] = env['SDL_VIDEODRIVER'] = backend
+        env['GOW3_GAMEMODE'] = '1' if s.get('gamemode') else '0'
+        env['GOW3_MANGOHUD'] = '1' if s.get('mangohud') else '0'
     # The launcher's patch selection is the whole list (run.py, patches.py).
-    title_id, profile = game_profile_of(s['game_dir'])
+    title_id, profile = game_profile_of(meta_folder(s['game_dir'], s.get('update_dir')))
     chosen = s.get('game_patches', {}).get(title_id) if title_id else None
     if profile and chosen is not None:
         env['GOW3_PATCHES'] = ';'.join(chosen)
         env['GOW3_PATCHES_ONLY'] = '1'
     if s['user_dir']:
         env['GOW3_USER_DIR'] = s['user_dir']
+    if not WINDOWS:
+        env['GOW3_FSR4_DIR'] = str(fsr4_folder())
     env['GOW3_MODS_DIR'] = s['mods_dir'] or str(DATA_DIR / 'mods')
     env['GOW3_MODS_CONFIG'] = str(DATA_DIR / 'mods.json')
     env['GOW3_MODS_ENABLED'] = '1' if s['mods_enabled'] else '0'
@@ -440,33 +597,77 @@ class Launcher:
                 pass
         root.configure(bg=BG)
         self.dpi = root.winfo_fpixels('1i') / 96.0
-        root.geometry(f'{self.px(1120)}x{self.px(740)}')
-        root.minsize(self.px(980), self.px(660))
+        left, top, width, height = (0, 0, 0, 0) if WINDOWS else monitor_under_pointer(root)
+        if width:
+            # Linux reports 96 dpi everywhere: size the interface by the monitor it opens on.
+            boost = max(1.0, min(width / 1920, height / 1080, 2.0)) * 1.25
+            self.dpi *= boost
+            root.tk.call('tk', 'scaling', root.winfo_fpixels('1i') / 72.0 * boost)
+        window_width, window_height = self.px(1120), self.px(740)
+        if width:
+            window_width, window_height = min(window_width, int(width * 0.9)), min(window_height, int(height * 0.9))
+            root.geometry(f'{window_width}x{window_height}+{left + (width - window_width) // 2}'
+                          f'+{top + (height - window_height) // 2}')
+        else:
+            root.geometry(f'{window_width}x{window_height}')
+        root.minsize(min(self.px(980), window_width), min(self.px(660), window_height))
         self.set_icon()
         self.style()
         self.build()
+        self.link_sharpening()
         self.show('home')
         root.protocol('WM_DELETE_WINDOW', self.close)
         root.after(100, self.drain_output)
-        if self.app.get('check_updates', True):
+        if WINDOWS and self.app.get('check_updates', True):
             threading.Thread(target=self.check_update, daemon=True).start()
+
+    def link_sharpening(self):
+        """The upscaler sharpens by itself, so with it on the screen's RCAS pass and the upscaler's
+        sharpening never stay on together: turning one on turns the other off."""
+        rcas, sharpen = self.var('rcas', 'ini'), self.var('sharpen', 'ini')
+        experimental, upscaler = self.var('experimental_upscaler', 'app'), self.var('upscaler', 'ini')
+
+        def active():
+            return experimental.get() and upscaler.get() != 'off'
+
+        def settings_changed(*_args):
+            if active() and sharpen.get() and rcas.get():
+                rcas.set(False)
+
+        def sharpen_changed(*_args):
+            if active() and sharpen.get():
+                rcas.set(False)
+
+        def rcas_changed(*_args):
+            if active() and rcas.get():
+                sharpen.set(False)
+        experimental.trace_add('write', settings_changed)
+        upscaler.trace_add('write', settings_changed)
+        sharpen.trace_add('write', sharpen_changed)
+        rcas.trace_add('write', rcas_changed)
+        settings_changed()
+
+    def meta_dir(self):
+        return meta_folder(self.var('game_dir', 'app').get(), self.var('update_dir', 'app').get())
 
     def px(self, size):
         return int(size * self.dpi)
 
     def set_icon(self):
-        game_icon = Path(self.var('game_dir', 'app').get() or '.') / 'sce_sys' / 'icon0.png'
-        try:
-            from PIL import Image
-            ico = CONFIG_DIR / 'game_icon.ico'
-            CONFIG_DIR.mkdir(parents=True, exist_ok=True)
-            with Image.open(game_icon) as image:
-                image.convert('RGBA').save(ico, sizes=[(16, 16), (32, 32), (48, 48), (64, 64), (256, 256)])
-            self.root.iconbitmap(default=str(ico))
-            return
-        except (ImportError, OSError, self.tk.TclError):
-            pass
-        for icon in (game_icon, PORT_DIR / 'launcher' / 'gow3.png'):
+        game_icon = Path(self.meta_dir() or '.') / 'sce_sys' / 'icon0.png'
+        if WINDOWS:
+            try:
+                from PIL import Image
+                ico = CONFIG_DIR / 'game_icon.ico'
+                CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+                with Image.open(game_icon) as image:
+                    image.convert('RGBA').save(ico, sizes=[(16, 16), (32, 32), (48, 48), (64, 64), (256, 256)])
+                self.root.iconbitmap(default=str(ico))
+                return
+            except (ImportError, OSError, self.tk.TclError):
+                pass
+        own_icon = PORT_DIR / 'launcher' / 'gow3.png'
+        for icon in ((game_icon, own_icon) if WINDOWS else (own_icon, game_icon)):
             try:
                 self.icon = self.tk.PhotoImage(file=str(icon))
                 if self.icon.width() > 128:
@@ -511,7 +712,7 @@ class Launcher:
             ('Bb.indicator', {'side': 'left', 'sticky': ''}),
             ('Checkbutton.focus', {'side': 'left', 'sticky': 'w', 'children': [
                 ('Checkbutton.label', {'sticky': 'nswe'})]})]})])
-        base = ('Segoe UI', 10)
+        base = (UI_FONT, 10)
         self.root.option_add('*TCombobox*Listbox.background', CARD)
         self.root.option_add('*TCombobox*Listbox.foreground', TEXT)
         self.root.option_add('*TCombobox*Listbox.selectBackground', ACCENT)
@@ -520,8 +721,8 @@ class Launcher:
                     lightcolor=LINE, darkcolor=LINE, troughcolor=CARD, focuscolor=ACCENT, font=base)
         s.configure('TFrame', background=PANEL)
         s.configure('TLabel', background=PANEL, foreground=TEXT)
-        s.configure('Muted.TLabel', background=PANEL, foreground=MUTED, font=('Segoe UI', 9))
-        s.configure('Restart.TLabel', background=PANEL, foreground=ACCENT_HI, font=('Segoe UI', 8, 'bold'))
+        s.configure('Muted.TLabel', background=PANEL, foreground=MUTED, font=(UI_FONT, 9))
+        s.configure('Restart.TLabel', background=PANEL, foreground=ACCENT_HI, font=(UI_FONT, 8, 'bold'))
         s.configure('Section.TLabel', background=PANEL, foreground=ACCENT_HI, font=heading_font(12))
         s.configure('TCheckbutton', background=PANEL, foreground=TEXT, padding=(0, 3))
         s.map('TCheckbutton', background=[('active', PANEL)], foreground=[('disabled', MUTED)])
@@ -666,11 +867,13 @@ class Launcher:
         self.side_title.pack(anchor='w', padx=22, pady=(24, 22))
         self.side = side
         self.nav, self.current_page = {}, None
-        for name, title in (('home', _('Home')), ('display', _('Display')), ('performance', _('Performance')),
+        for name, title in (('home', _('Home')), ('display', _('Display')),
+                            ('graphics', _('Graphics (experimental)', 'Графика (эксп.)')),
+                            ('performance', _('Performance')),
                             ('game', _('Game', 'Игра')), ('patches', _('Patches', 'Патчи')),
                             ('mods', _('Mods', 'Моды')), ('controls', _('Controls', 'Управление')),
                             ('advanced', _('Advanced', 'Дополнительно')), ('log', _('Log', 'Журнал'))):
-            item = tk.Label(side, text='    ' + title, bg=BG, fg=TEXT, anchor='w', font=heading_font(11, 'Segoe UI'),
+            item = tk.Label(side, text='    ' + title, bg=BG, fg=TEXT, anchor='w', font=heading_font(11, UI_FONT),
                             pady=10, cursor='hand2')
             item.pack(fill='x')
             item.bind('<Button-1>', lambda _e, n=name: self.show(n))
@@ -681,18 +884,18 @@ class Launcher:
         self.update_box = None
         self.side_note = tk.Label(side, text=_('In the game: Insert or R3+L2\nopens the port\'s menu.',
                                                'В игре: Insert или R3+L2\nоткрывает меню порта.'),
-                                  bg=BG, fg=MUTED, font=('Segoe UI', 9), justify='left', wraplength=self.px(210))
+                                  bg=BG, fg=MUTED, font=(UI_FONT, 9), justify='left', wraplength=self.px(210))
         self.side_note.pack(anchor='w', padx=22, pady=(0, 18))
 
         right = tk.Frame(self.root, bg=PANEL)
         right.pack(side='left', fill='both', expand=True)
-        bar = tk.Frame(right, bg=BG, height=72)
+        bar = tk.Frame(right, bg=BG, height=self.px(72))
         bar.pack(fill='x', side='bottom')
         bar.pack_propagate(False)
-        self.status = tk.Label(bar, text='', bg=BG, fg=MUTED, font=('Segoe UI', 10), anchor='w', justify='left')
+        self.status = tk.Label(bar, text='', bg=BG, fg=MUTED, font=(UI_FONT, 10), anchor='w', justify='left')
         self.status.pack(side='left', padx=24)
         self.play_button = ttk.Button(bar, text=_('PLAY', 'ИГРАТЬ'), style='Play.TButton', command=self.play)
-        self.play_button.pack(side='right', padx=(10, 24), pady=11)
+        self.play_button.pack(side='right', padx=(self.px(10), self.px(24)), pady=self.px(11))
         self.content = tk.Frame(right, bg=PANEL)
         self.content.pack(fill='both', expand=True)
 
@@ -759,7 +962,7 @@ class Launcher:
         tk, c = self.tk, self.banner
         c.delete('all')
         w, h = max(c.winfo_width(), 400), int(c['height'])
-        folder = self.var('game_dir', 'app').get()
+        folder = self.meta_dir()
         info = game_info(folder)
         art = Path(folder or '.') / 'sce_sys' / 'pic1.png'
         if self.banner_source != art:
@@ -781,10 +984,10 @@ class Launcher:
         if info:
             title_id = game_profile_of(folder)[0]
             sub = _('{} · version {}', '{} · версия {}').format(title_id or '?', info[1])
-            c.create_text(33, h - 30, text=sub, anchor='w', fill=ACCENT_HI, font=('Segoe UI', 11, 'bold'))
+            c.create_text(33, h - 30, text=sub, anchor='w', fill=ACCENT_HI, font=(UI_FONT, 11, 'bold'))
         else:
             c.create_text(w // 2, h // 2 - 40, text=_('Choose your game folder to play.'),
-                          fill=TEXT, font=('Segoe UI', 12))
+                          fill=TEXT, font=(UI_FONT, 12))
             c.create_window(w // 2, h // 2, window=self.banner_button)
 
     def scaled_art(self, path, width):
@@ -799,13 +1002,19 @@ class Launcher:
             return self.banner_image.subsample(factor) if factor > 1 else self.banner_image
 
     def build_graphics(self):
-        """Temporal upscalers: not calibrated for this game yet (run.py turns them off), so this page
-        stays out of the menu."""
+        """Temporal upscalers: not calibrated for this game yet, so run.py turns them off unless the
+        switch at the top of this page is on."""
         ttk = self.ttk
-        f = self.scrolled_page('graphics', _('Graphics', 'Графика'),
+        f = self.scrolled_page('graphics', _('Graphics (experimental)', 'Графика (эксп.)'),
                                _('Stored in gow3.ini; the in-game menu (Insert or R3+L2) changes the same values.',
                                  'Хранится в gow3.ini; в игре меняется через меню (Insert или R3+L2).'))
-        self.section(f, _('Upscaling', 'Апскейлинг'), top=4)
+        self.section(f, _('Experimental'), top=4)
+        self.check(f, 'experimental_upscaler', 'app', _('Enable the upscaler (experimental)'),
+                   _('Off (default): the game runs without temporal upscaling. These upscalers are not calibrated '
+                     'for this game yet: expect ghosting or flicker. FSR 3.1 needs nothing else; FSR 4 needs the '
+                     'assets below, and without them the game uses FSR 3.1. The options on this page only take '
+                     'effect with this switch on.'), restart=True)
+        self.section(f, _('Upscaling', 'Апскейлинг'))
         self.row(f, _('Upscaler', 'Апскейлер'), self.choice(f, 'upscaler', 'ini', UPSCALERS),
                  _("Temporal upscaling with the game's own motion vectors. FSR 4 needs its assets (below) and "
                    'a GPU with INT8 dot products; otherwise the game falls back to FSR 3.1 by itself.',
@@ -822,7 +1031,9 @@ class Launcher:
                    'game restarts it). On: change output and preset in the game without a restart, at a cost.',
                    'Выкл.: разрешения кроме 1080p задаются патчем при запуске (быстрее). Вкл.: менять в игре '
                    'без перезапуска, но медленнее.'))
-        self.check(f, 'sharpen', 'ini', _('Sharpening (RCAS)', 'Резкость (RCAS)'))
+        self.check(f, 'sharpen', 'ini', _('Upscaler sharpening (RCAS)'),
+                   _("The upscaler's own sharpening. With the upscaler on, this and the screen's sharpening "
+                     'switch each other off: they would stack.'))
         holder = ttk.Frame(f)
         ttk.Scale(holder, from_=0.0, to=2.0, variable=self.var('sharpness', 'ini'), length=300).pack(side='left')
         value = ttk.Label(holder, width=5)
@@ -863,7 +1074,9 @@ class Launcher:
         self.check(f, 'fsr1', 'ini', _('Upscale with FSR 1'),
                    _('Enlarges a smaller game image to the window. With Render resolution 720p (Performance) '
                      'it raises the FPS; at the size of the window it does nothing.'))
-        self.check(f, 'rcas', 'ini', _('Sharpening (RCAS)'))
+        self.check(f, 'rcas', 'ini', _('Screen sharpening (RCAS)'),
+                   _('Sharpens the final image when it is the size of the window. With the upscaler on, '
+                     'turn on its own sharpening (Graphics page) instead: they switch each other off.'))
         holder = ttk.Frame(f)
         strength = self.var('rcas_strength', 'ini')
         tk.Scale(holder, from_=0, to=100, orient='horizontal', variable=strength, showvalue=False, length=self.px(260),
@@ -937,6 +1150,11 @@ class Launcher:
                       'CUSA01623, version 01.02 for the community patches.',
                       'Ваш дамп игры (eboot.bin, sce_module, sce_sys); God of War III Remastered: CUSA01623, '
                       'версия 01.02 для патчей сообщества.'), on_change=self.game_changed)
+        self.folder(f, 'update_dir', _('Update folder (optional)'),
+                    _('Choose the folder of the update (eboot.bin, sce_sys)'),
+                    _('Only if the update is dumped apart from the game: it is laid over the game folder '
+                      'without changing either. Leave empty when the game folder already has the update.'),
+                    on_change=self.game_changed)
         self.folder(f, 'user_dir', _('Saves folder', 'Папка сохранений'),
                     _('Choose the saves folder', 'Выберите папку сохранений'),
                     _('Empty: {} (shader caches are kept there too).',
@@ -1013,7 +1231,7 @@ class Launcher:
         for widget in f.winfo_children():
             widget.destroy()
         f.columnconfigure(1, weight=1)
-        folder = self.var('game_dir', 'app').get()
+        folder = self.meta_dir()
         title_id, profile = game_profile_of(folder)
         self.game_patch_title, self.game_patch_vars = None, {}
         if not profile:
@@ -1142,6 +1360,25 @@ class Launcher:
             self.control_vars['pad'][button].set(pad or '')
         self.relabel_pad_controls()
 
+    def build_linux_options(self, f):
+        """Wayland / X11, GameMode and MangoHud: only the ones this system has can be turned on."""
+        tools = linux_tools()
+        self.section(f, _('Linux'), top=4)
+        self.check(f, 'desktop_integration', 'app', _('Menu entry and icon (AppImage)'),
+                   _('Creates gow3.desktop in ~/.local/share/applications so the launcher and the game show their '
+                     'icon in the dock and the menu. Turning it off removes the entry.'))
+        self.row(f, _('Window system'), self.choice(f, 'video_backend', 'app', VIDEO_BACKENDS), restart=True,
+                 hint=_('Automatic lets SDL choose. Pick X11 if the window misbehaves on Wayland (it runs through '
+                        'XWayland).') + ('' if tools['wayland'] else '  ' + _('No Wayland session detected.')))
+        for key, title, name, hint in (
+                ('gamemode', _('GameMode'), 'gamemode', _('Asks GameMode (gamemoderun) for the performance governor '
+                                                          'while the game runs.')),
+                ('mangohud', _('MangoHud overlay'), 'mangohud', _('Shows MangoHud (FPS, frame times, temperatures) '
+                                                                   'through its Vulkan layer.'))):
+            box = self.check(f, key, 'app', title, hint + ('' if tools[name] else '  ' + _('Not installed.')), restart=True)
+            if not tools[name]:
+                box.configure(state='disabled')
+
     def build_advanced(self):
         tk, ttk = self.tk, self.ttk
         f = self.scrolled_page('advanced', _('Advanced', 'Дополнительно'),
@@ -1150,15 +1387,20 @@ class Launcher:
         self.row(f, _('Launcher language', 'Язык лаунчера'), self.choice(f, 'ui_language', 'app', UI_LANGUAGES),
                  _('Applies when the launcher opens again.', 'Применится при следующем открытии лаунчера.'))
         self.check(f, 'close_on_play', 'app', _('Close the launcher when the game starts', 'Закрывать лаунчер при запуске игры'))
-        self.check(f, 'check_updates', 'app', _('Check for updates when the launcher opens',
-                                                'Проверять обновления при открытии лаунчера'))
+        if WINDOWS:
+            self.check(f, 'check_updates', 'app', _('Check for updates when the launcher opens',
+                                                    'Проверять обновления при открытии лаунчера'))
         holder = ttk.Frame(f)
         holder.grid(row=self.next_row(f), column=0, columnspan=2, sticky='w', pady=(10, 0))
-        ttk.Button(holder, text=_('Check for updates', 'Проверить обновления'),
-                   command=lambda: threading.Thread(target=self.check_update, args=(True,), daemon=True).start()
-                   ).pack(side='left')
+        if WINDOWS:
+            ttk.Button(holder, text=_('Check for updates', 'Проверить обновления'),
+                       command=lambda: threading.Thread(target=self.check_update, args=(True,), daemon=True).start()
+                       ).pack(side='left')
         ttk.Button(holder, text=_('Desktop shortcut', 'Ярлык на рабочем столе'), command=self.shortcut).pack(side='left', padx=6)
+        ttk.Button(holder, text=_('Add to Steam'), command=self.add_to_steam).pack(side='left')
         ttk.Label(holder, text=f'v{VERSION}', style='Muted.TLabel').pack(side='left', padx=10)
+        if not WINDOWS:
+            self.build_linux_options(f)
         self.section(f, _('Files'))
         holder = ttk.Frame(f)
         holder.grid(row=self.next_row(f), column=0, columnspan=2, sticky='w', pady=(6, 0))
@@ -1207,7 +1449,7 @@ class Launcher:
         ttk.Button(top, text=_('Copy', 'Копировать'), command=self.copy_log).pack(side='right')
         ttk.Button(top, text=_('Clear', 'Очистить'), command=lambda: self.set_log('')).pack(side='right', padx=6)
         self.log = tk.Text(page, wrap='none', bg='#0a0808', fg='#cfc6bc', insertbackground=TEXT, relief='flat',
-                           font=('Consolas', 9), padx=8, pady=6, state='disabled', highlightthickness=0)
+                           font=(MONO_FONT, 9), padx=8, pady=6, state='disabled', highlightthickness=0)
         bar = ttk.Scrollbar(page, command=self.log.yview)
         self.log.configure(yscrollcommand=bar.set)
         bar.pack(side='right', fill='y')
@@ -1215,7 +1457,7 @@ class Launcher:
 
     # ---- state -------------------------------------------------------------------------------
     def game_changed(self):
-        folder = self.var('game_dir', 'app').get()
+        folder = self.meta_dir()
         info = game_info(folder)
         title = info[0] if info else APP_NAME
         self.root.title(f'{title} (PC)')
@@ -1228,7 +1470,7 @@ class Launcher:
         self.refresh_status()
 
     def refresh_status(self):
-        info = game_info(self.var('game_dir', 'app').get())
+        info = game_info(self.meta_dir())
         if not self.process:
             self.play_button.configure(text=_('PLAY', 'ИГРАТЬ'), state='normal' if info else 'disabled')
             self.status.configure(text=self.summary() if info else _('Choose the game folder first.',
@@ -1236,11 +1478,11 @@ class Launcher:
 
     def summary(self):
         self.store_game_patches()
-        title_id, _profile = game_profile_of(self.var('game_dir', 'app').get())
+        title_id, _profile = game_profile_of(self.meta_dir())
         names = self.app.get('game_patches', {}).get(title_id) or []
         resolution = dict((v, t[0]) for v, t in RESOLUTION_CHOICES).get(self.var('render_resolution', 'ini').get(), '?')
         from patches import game_patchable, unported_build
-        folder = self.var('game_dir', 'app').get()
+        folder = self.meta_dir()
         if not game_patchable(folder):
             if unported_build(folder):
                 return _('{} · 60 FPS engine · full 01.02 update detected: patch support in progress').format(resolution)
@@ -1251,15 +1493,15 @@ class Launcher:
         total, missing = len(fsr4_files()), len(fsr4_missing())
         self.fsr4_progress.configure(value=total - missing)
         self.fsr4_label.configure(
-            text=_('Installed: {} files in {}.', 'Установлены: {} файлов в {}.').format(total, PORT_DIR / 'fsr4_shaders')
+            text=_('Installed: {} files in {}.', 'Установлены: {} файлов в {}.').format(total, fsr4_folder())
             if not missing else _('{} of {} files missing in {}.', 'Нет {} из {} файлов в {}.').format(
-                missing, total, PORT_DIR / 'fsr4_shaders'))
+                missing, total, fsr4_folder()))
         self.fsr4_button.configure(state='normal' if missing and not self.downloading else 'disabled')
 
     def download_fsr4(self):
         self.downloading = True
         self.fsr4_button.configure(state='disabled')
-        folder = PORT_DIR / 'fsr4_shaders'
+        folder = fsr4_folder()
 
         def work():
             error = None
@@ -1330,7 +1572,7 @@ class Launcher:
             ttk.Button(presets, text=_('Save', 'Сохранить'), command=self.save_mod_preset).pack(side='left', padx=(6, 0))
             ttk.Button(presets, text=_('Delete', 'Удалить'), command=self.delete_mod_preset).pack(side='left', padx=(6, 0))
         chosen = load_json(DATA_DIR / 'patches.json', {})
-        _title_id, game = game_profile_of(self.var('game_dir', 'app').get())
+        _title_id, game = game_profile_of(self.meta_dir())
         found = external_patches(Path(self.var('patches_dir', 'app').get() or DATA_DIR / 'patches'),
                                  game[2], game[1], game[0]) if game else []
         old = {n: v.get() for n, v in self.patch_vars.items()}
@@ -1447,7 +1689,7 @@ class Launcher:
         try:
             self.process = subprocess.Popen(run_command(), cwd=PORT_DIR, env=game_environment(self.app),
                                             stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
-                                            stderr=subprocess.STDOUT, creationflags=NO_WINDOW)
+                                            stderr=subprocess.STDOUT, creationflags=NO_WINDOW, **NEW_GROUP)
         except OSError as error:
             self.append(_('Could not start: {}', 'Не удалось запустить: {}').format(error) + '\n')
             self.process = None
@@ -1518,7 +1760,11 @@ class Launcher:
             self.collect()
         elif not path.exists():
             path.mkdir(parents=True, exist_ok=True)
-        os.startfile(str(path))
+        if WINDOWS:
+            os.startfile(str(path))
+        else:
+            subprocess.Popen(['xdg-open', str(path)], env=host_environment(), stdin=subprocess.DEVNULL,
+                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
     # ---- updates -------------------------------------------------------------------------------
     def check_update(self, manual=False):
@@ -1545,7 +1791,7 @@ class Launcher:
         tk, ttk = self.tk, self.ttk
         text = _('Version {} is available.', 'Доступна версия {}.').format(version)
         box = tk.Frame(self.side, bg=CARD, highlightthickness=1, highlightbackground=ACCENT)
-        self.update_label = tk.Label(box, text=text, bg=CARD, fg=TEXT, font=('Segoe UI', 10, 'bold'),
+        self.update_label = tk.Label(box, text=text, bg=CARD, fg=TEXT, font=(UI_FONT, 10, 'bold'),
                                      wraplength=self.px(160), justify='left')
         self.update_label.pack(anchor='w', padx=10, pady=(8, 6))
         buttons = tk.Frame(box, bg=CARD)
@@ -1553,7 +1799,7 @@ class Launcher:
         self.update_button = ttk.Button(buttons, text=_('Update', 'Обновить'),
                                         command=lambda: self.install_update(version, url, page))
         self.update_button.pack(fill='x')
-        ttk.Button(buttons, text=_("What's new", 'Что нового'), command=lambda: webbrowser.open(page)).pack(
+        ttk.Button(buttons, text=_("What's new", 'Что нового'), command=lambda: open_url(page)).pack(
             fill='x', pady=(4, 0))
         box.pack(fill='x', padx=(22, 18), pady=(0, 14), before=self.side_note)
         self.update_box = box
@@ -1565,7 +1811,7 @@ class Launcher:
             self.messagebox.showinfo(APP_NAME, _('Close the game before updating.', 'Закройте игру перед обновлением.'))
             return
         if not FROZEN or not url:  # a source tree updates with git
-            webbrowser.open(page)
+            open_url(page)
             return
         if not self.messagebox.askyesno(APP_NAME, _(
                 'Install version {} now? The launcher closes, installs it and opens again. Saves and settings are kept.',
@@ -1623,7 +1869,10 @@ class Launcher:
                                                  'минут будет подтормаживать, пока кэш собирается заново.'))
 
     def shortcut(self):
-        """God of War III.lnk on the desktop."""
+        """God of War III.lnk on the desktop (a .desktop entry in the menu and on the desktop on Linux)."""
+        if not WINDOWS:
+            self.linux_shortcut()
+            return
         if FROZEN:
             target, arguments, icon = sys.executable, '', f'{sys.executable},0'
         else:  # a source tree: the launcher script with the windowless Python
@@ -1641,6 +1890,69 @@ class Launcher:
         else:
             self.messagebox.showerror(APP_NAME, result.stderr.decode(errors='replace')[:400])
 
+    def linux_shortcut(self):
+        launcher = os.environ.get('APPIMAGE') or (sys.executable if FROZEN else '')
+        command = f'"{launcher}"' if launcher else f'python3 "{Path(__file__).resolve()}"'
+        icon_dir = Path.home() / '.local' / 'share' / 'icons'
+        icon = icon_dir / 'gow3.png'
+        try:
+            icon_dir.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(PORT_DIR / 'launcher' / 'gow3.png', icon)
+        except OSError:
+            icon = 'gow3'
+        entry = desktop_entry(command, icon)
+        folders = [Path.home() / '.local' / 'share' / 'applications']
+        try:
+            desktop = subprocess.run(['xdg-user-dir', 'DESKTOP'], capture_output=True, text=True,
+                                     env=host_environment()).stdout.strip()
+        except OSError:
+            desktop = ''
+        folders.append(Path(desktop) if desktop else Path.home() / 'Desktop')
+        created = []
+        try:
+            for folder in folders:
+                if not folder.is_dir() and folder != folders[0]:
+                    continue
+                folder.mkdir(parents=True, exist_ok=True)
+                # In the applications menu the file is named after the window's application id.
+                target = folder / ('gow3.desktop' if folder == folders[0] else 'God of War III.desktop')
+                target.write_text(entry, encoding='utf-8')
+                target.chmod(0o755)
+                created.append(str(target))
+        except OSError as error:
+            self.messagebox.showerror(APP_NAME, str(error))
+            return
+        self.messagebox.showinfo(APP_NAME, _('Shortcut created:', 'Ярлык создан:') + '\n' + '\n'.join(created))
+
+    def add_to_steam(self):
+        """A non-Steam shortcut with the game's icon, capsules, hero and logo (scripts/steam_shortcut.py)."""
+        self.collect()
+        game = self.var('game_dir', 'app').get()
+        if not game_info(game):
+            self.messagebox.showerror(APP_NAME, _('Choose the game folder with eboot.bin (CUSA01623).',
+                                                  'Выберите папку игры с eboot.bin (CUSA01623).'))
+            return
+        self.root.configure(cursor='watch')
+        self.root.update_idletasks()
+        try:
+            result = steam_shortcut.add_to_steam(game, steam_launch_command(), steam_icon(game))
+        except steam_shortcut.SteamError as error:
+            text = {'running': _('Steam is open. Close it completely (Steam > Exit) and click again: Steam '
+                                 'rewrites its shortcuts when it closes.'),
+                    'no_steam': _('Steam was not found for this user.'),
+                    'no_art': _('The game folder has no sce_sys/pic1.png for the pictures.')}
+            self.messagebox.showerror(APP_NAME, text.get(error.code, str(error)))
+        except (OSError, ValueError, ImportError) as error:
+            self.messagebox.showerror(APP_NAME, str(error))
+        else:
+            text = (_('The shortcut "{}" was updated in Steam (accounts: {}), with its icon, capsules, background '
+                      'and logo. Open Steam to see it in the library.') if result['updated'] else
+                    _('The shortcut "{}" was added to Steam (accounts: {}), with its icon, capsules, background '
+                      'and logo. Open Steam to see it in the library.'))
+            self.messagebox.showinfo(APP_NAME, text.format(steam_shortcut.APP_NAME, result['accounts']))
+        finally:
+            self.root.configure(cursor='')
+
     def close(self):
         try:
             self.collect()
@@ -1654,6 +1966,10 @@ class GameJob:
     by the in-game restart (no longer descendants of the first process)."""
 
     def __init__(self, process):
+        if not WINDOWS:
+            self.group = process.pid  # started with start_new_session: its own process group
+            self.handle = None
+            return
         kernel32 = ctypes.windll.kernel32
         kernel32.CreateJobObjectW.restype = ctypes.c_void_p
         self.handle = kernel32.CreateJobObjectW(None, None)
@@ -1661,8 +1977,18 @@ class GameJob:
             kernel32.AssignProcessToJobObject(ctypes.c_void_p(self.handle), ctypes.c_void_p(int(process._handle)))
 
     def terminate(self):
+        if not WINDOWS:
+            self.signal_group(signal.SIGTERM)
+            threading.Timer(3, self.signal_group, args=(signal.SIGKILL,)).start()
+            return
         if self.handle:
             ctypes.windll.kernel32.TerminateJobObject(ctypes.c_void_p(self.handle), 1)
+
+    def signal_group(self, number):
+        try:
+            os.killpg(self.group, number)
+        except (ProcessLookupError, PermissionError):
+            pass
 
     def close(self):
         if self.handle:
@@ -1727,7 +2053,7 @@ def install_update(target, wait_pid):
         ctypes.windll.user32.MessageBoxW(None, _(
             'Could not install the update. Download it from the releases page.',
             'Не удалось установить обновление. Скачайте его со страницы релизов.'), APP_NAME, 0x10)
-        webbrowser.open(RELEASES_PAGE)
+        open_url(RELEASES_PAGE)
         return 1
     subprocess.Popen([str(target / 'God of War III.exe')], cwd=str(target))
     return 0
@@ -1740,21 +2066,26 @@ def main():
         sys.exit(run_role(args))
     settings = {**APP_DEFAULTS, **load_json(CONFIG_FILE, {})}
     LANG = settings.get('ui_language') or windows_language()
-    if args[:1] == ['--install-update'] and len(args) == 3:
+    if not WINDOWS:
+        integrate_desktop(settings.get('desktop_integration', True), os.environ.get('APPIMAGE'),
+                          PORT_DIR / 'launcher' / 'gow3.png', DATA_DIR)
+    if WINDOWS and args[:1] == ['--install-update'] and len(args) == 3:
         sys.exit(install_update(args[1], args[2]))
-    if FROZEN and UPDATE_DIR not in PORT_DIR.parents:
+    if WINDOWS and FROZEN and UPDATE_DIR not in PORT_DIR.parents:
         shutil.rmtree(UPDATE_DIR, ignore_errors=True)  # what a finished update left behind
     # Without a usable game folder there is nothing to play yet: open the launcher instead.
     if '--play' in args and (Path(settings['game_dir'] or '.') / 'eboot.bin').is_file():
         sys.exit(play_without_window(settings))
-    try:
-        ctypes.windll.shcore.SetProcessDpiAwareness(1)  # sharp text on scaled displays
-    except (AttributeError, OSError):
-        pass
-    FONT_LOADED = register_font(FONT_FILE)  # titles keep Georgia without it
+    if WINDOWS:
+        try:
+            ctypes.windll.shcore.SetProcessDpiAwareness(1)  # sharp text on scaled displays
+        except (AttributeError, OSError):
+            pass
+    FONT_LOADED = register_font(FONT_FILE)  # titles keep the usual serif without it
     import tkinter as tk
-    from tkinter import filedialog, messagebox, ttk
-    root = tk.Tk()
+    from tkinter import filedialog, font, messagebox, ttk
+    root = tk.Tk() if WINDOWS else tk.Tk(className='gow3')
+    pick_fonts(font.families(root))
     Launcher(root, tk, ttk, filedialog, messagebox)
     root.mainloop()
 
