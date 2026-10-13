@@ -56,6 +56,27 @@ Scheduler::~Scheduler() {
 #endif
 }
 
+bool Scheduler::FullBarriers() {
+    static const bool enabled = [] {
+        const char* env = std::getenv("GOW3_FULL_BARRIERS");
+        return env && env[0] == '1';
+    }();
+    return enabled;
+}
+
+void Scheduler::RecordFullBarrier(vk::CommandBuffer cmdbuf) {
+    const vk::MemoryBarrier2 barrier{
+        .srcStageMask = vk::PipelineStageFlagBits2::eAllCommands,
+        .srcAccessMask = vk::AccessFlagBits2::eMemoryRead | vk::AccessFlagBits2::eMemoryWrite,
+        .dstStageMask = vk::PipelineStageFlagBits2::eAllCommands,
+        .dstAccessMask = vk::AccessFlagBits2::eMemoryRead | vk::AccessFlagBits2::eMemoryWrite,
+    };
+    cmdbuf.pipelineBarrier2(vk::DependencyInfo{
+        .memoryBarrierCount = 1,
+        .pMemoryBarriers = &barrier,
+    });
+}
+
 void Scheduler::BeginRendering(const RenderState& new_state) {
     if (is_rendering && render_state == new_state) {
         return;
@@ -109,6 +130,9 @@ void Scheduler::BeginRendering(const RenderState& new_state) {
     };
 
     if (!recording_threaded) {
+        if (FullBarriers()) {
+            RecordFullBarrier(current_cmdbuf);
+        }
         current_cmdbuf.beginRendering(rendering_info);
         return;
     }
@@ -122,6 +146,9 @@ void Scheduler::BeginRendering(const RenderState& new_state) {
         if (info.pStencilAttachment) {
             info.pStencilAttachment = &stencil_attachment;
         }
+        if (FullBarriers()) {
+            RecordFullBarrier(cmdbuf);
+        }
         cmdbuf.beginRendering(info);
     });
 }
@@ -131,7 +158,12 @@ void Scheduler::EndRendering() {
         return;
     }
     is_rendering = false;
-    Record([](vk::CommandBuffer cmdbuf) { cmdbuf.endRendering(); });
+    Record([](vk::CommandBuffer cmdbuf) {
+        cmdbuf.endRendering();
+        if (FullBarriers()) {
+            RecordFullBarrier(cmdbuf);
+        }
+    });
 }
 
 void Scheduler::TraceDirectRecording(void* caller) {
