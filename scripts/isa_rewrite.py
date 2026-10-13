@@ -5,8 +5,18 @@ site: JMP (5+ bytes, patched with a jump to a stub), JMP_RELOCATE (4 bytes,
 the jump also covers the plain next instruction, copied into the stub), INT3
 (4 bytes, trapped at run time) or UNSUPPORTED (an encoding the stubs do not
 emulate: segment override, LOCK, 32-bit addressing or F16C).
+
+Usage: isa_rewrite.py out/boot-linked.bin --out out
+Reads the G3PROBE5 image, scans its executable segments and writes
+<out>/isa-rewrite.bin (format G3ISA1: HEADER, then one RECORD per site).
 """
+import argparse
 from dataclasses import dataclass
+import hashlib
+from pathlib import Path
+import struct
+import sys
+from prepare import span, unpack
 
 try:
     import iced_x86
@@ -18,6 +28,8 @@ except ImportError:
  KIND_BLSI, KIND_BLSMSK, KIND_BLSR, KIND_VCVTPH2PS, KIND_VCVTPS2PH) = range(1, 12)
 MODE_JMP, MODE_JMP_RELOCATE, MODE_INT3, MODE_UNSUPPORTED = range(4)
 NO_REG = 0xFF
+HEADER = struct.Struct('<8sQ32sII8x')                # magic, image size, sha256, sites, unsupported
+RECORD = struct.Struct('<QBBBBBBBBBBBB4xq15sB15sx')  # mirrors IsaSite in the C loader
 SET_OF_KIND = {KIND_MOVBE_LOAD: 'MOVBE', KIND_MOVBE_STORE: 'MOVBE', KIND_LZCNT: 'LZCNT',
                KIND_TZCNT: 'BMI1', KIND_ANDN: 'BMI1', KIND_BEXTR: 'BMI1', KIND_BLSI: 'BMI1',
                KIND_BLSMSK: 'BMI1', KIND_BLSR: 'BMI1', KIND_VCVTPH2PS: 'F16C', KIND_VCVTPS2PH: 'F16C'}
@@ -115,3 +127,71 @@ def scan_segment(code, address):
         if ip not in targets:
             site.mode, site.relocated = MODE_JMP_RELOCATE, relocated
     return sites
+
+
+def read_boot_linked(data):
+    """Segments (address, size, flags) and image of a G3PROBE5 file, in link_modules.py's order."""
+    magic, size, entry, ns, nr, ni, flags = unpack('<8s6Q', data, 0)
+    if magic != b'G3PROBE5':
+        raise ValueError('not a G3PROBE5 image')
+    pos = 56 + 8 + 32   # header, procparam, main TLS
+    nmodules, = unpack('<Q', data, pos)
+    pos += 8 + nmodules * 56
+    nbindings, = unpack('<Q', data, pos)
+    pos += 8 + nbindings * 24
+    segments = [unpack('<3Q', data, pos + i * 24) for i in range(ns)]
+    pos += ns * 24 + ni * 128 + nr * 32
+    return segments, span(data, pos, size)
+
+
+def encode_table(image, sites):
+    unsupported = sum(s.mode == MODE_UNSUPPORTED for s in sites)
+    table = [HEADER.pack(b'G3ISA1\0\0', len(image), hashlib.sha256(image).digest(), len(sites), unsupported)]
+    for s in sites:
+        table.append(RECORD.pack(s.offset, s.length, s.kind, s.width, s.mode, s.dst, s.src1, s.src2, s.mem_slot,
+                                 s.base, s.index, s.scale, s.mem_flags, s.disp, s.original, len(s.relocated),
+                                 s.relocated))
+    return b''.join(table)
+
+
+def summary(sites):
+    sets = [SET_OF_KIND[s.kind] for s in sites]
+    modes = [s.mode for s in sites]
+    per_set = ', '.join(f'{name} {sets.count(name)}' for name in ('MOVBE', 'BMI1', 'LZCNT', 'F16C'))
+    return (f'ISA: {len(sites)} sites ({per_set}); {modes.count(MODE_JMP_RELOCATE)} relocated, '
+            f'{modes.count(MODE_INT3)} int3, {modes.count(MODE_UNSUPPORTED)} unsupported')
+
+
+def fixture_code():
+    """Code behind tests/data/isa_fixture.bin, loaded by the C loader test."""
+    return b''.join(bytes.fromhex(h) for h in (
+        'c4e270f3c9',              # blsr ecx, ecx                 JMP
+        '0f38f108', '90',          # movbe [rax], ecx; nop         JMP_RELOCATE
+        'c4e270f7050c000000',      # bextr eax, [rip+0xc], ecx     JMP
+        '66f30fbdc1',              # lzcnt ax, cx                  JMP
+        'f3480fbcc1',              # tzcnt rax, rcx                JMP
+        '0f38f108', 'ebfe',        # movbe [rax], ecx; jmp $       INT3
+        'c3'))                     # ret
+
+
+def main(argv):
+    p = argparse.ArgumentParser(description=__doc__)
+    p.add_argument('boot', type=Path)
+    p.add_argument('--out', type=Path, default=Path(__file__).resolve().parent.parent / 'out')
+    a = p.parse_args(argv)
+    try:
+        if iced_x86 is None:
+            raise RuntimeError('iced_x86 is not installed')
+        segments, image = read_boot_linked(a.boot.read_bytes())
+        sites = [site for address, size, flags in segments if flags & 1
+                 for site in scan_segment(span(image, address, size), address)]
+        (a.out / 'isa-rewrite.bin').write_bytes(encode_table(image, sites))
+    except (OSError, ValueError, RuntimeError) as e:
+        print(f'ISA: rewrite table unavailable ({e})')
+        return 1
+    print(summary(sites))
+    return 0
+
+
+if __name__ == '__main__':
+    sys.exit(main(sys.argv[1:]))
