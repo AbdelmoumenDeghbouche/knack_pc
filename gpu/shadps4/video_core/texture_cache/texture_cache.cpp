@@ -611,8 +611,8 @@ std::tuple<ImageId, int, int> TextureCache::ResolveOverlap(const ImageInfo& imag
 
     // Equal address
     if (image_info.guest_address == cache_image.info.guest_address) {
-        const u32 lhs_block_size = image_info.num_bits * image_info.num_samples;
-        const u32 rhs_block_size = cache_image.info.num_bits * cache_image.info.num_samples;
+        const u32 lhs_block_size = image_info.num_bits * image_info.guest_samples;
+        const u32 rhs_block_size = cache_image.info.num_bits * cache_image.info.guest_samples;
         if (image_info.BlockDim() != cache_image.info.BlockDim() ||
             lhs_block_size != rhs_block_size) {
             // Very likely this kind of overlap is caused by allocation from a pool.
@@ -1119,7 +1119,7 @@ ImageView& TextureCache::FindDepthTarget(ImageId image_id, const ImageDesc& desc
 }
 
 void TextureCache::RefreshImage(Image& image) {
-    if (False(image.flags & ImageFlagBits::Dirty) || image.info.num_samples > 1) {
+    if (False(image.flags & ImageFlagBits::Dirty) || image.info.guest_samples > 1) {
         return;
     }
     ResolveReadbacks(image.info.guest_address, image.info.guest_size, true,

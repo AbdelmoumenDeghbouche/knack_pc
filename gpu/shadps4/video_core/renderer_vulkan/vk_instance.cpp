@@ -12,6 +12,7 @@
 #include "common/types.h"
 #include "imgui/renderer/imgui_core.h"
 #include "sdl_window.h"
+#include "video_core/amdgpu/gow3_msaa.h"
 #include "video_core/renderer_vulkan/liverpool_to_vk.h"
 #include "video_core/renderer_vulkan/vk_amd_paths.h"
 #include "video_core/renderer_vulkan/vk_dlss.h"
@@ -803,6 +804,15 @@ void Instance::CollectDeviceParameters() {
 
     driver_id = driver.driverID;
     vendor_name = driver.driverName.data();
+
+    // gow3: see video_core/amdgpu/gow3_msaa.h.
+    const char* no_msaa_env = std::getenv("GOW3_NO_MSAA");
+    const bool no_msaa = no_msaa_env && *no_msaa_env
+                             ? *no_msaa_env == '1'
+                             : driver_id == vk::DriverId::eAmdProprietary;
+    AmdGpu::no_msaa.store(no_msaa, std::memory_order_relaxed);
+    std::printf("GPU: guest multisampling %s\n",
+                no_msaa ? "off (single-sampled images; GOW3_NO_MSAA=0 keeps it)" : "on");
 
     const std::string model_name{GetModelName()};
     const std::string driver_version = GetDriverVersionName();
