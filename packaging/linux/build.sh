@@ -25,9 +25,10 @@ install -m644 "$icon" "$share/launcher/gow3.png"
 
 # The launcher also runs run.py (--run) and the preparation scripts (--script) itself, as on
 # Windows: the standard modules those scripts import come along as hidden imports.
+# iced-x86 (pip install iced-x86==1.21.0): scripts/isa_rewrite.py, CPUs without MOVBE/BMI1/LZCNT.
 hidden=()
 for module in argparse base64 collections hashlib json re shutil struct tempfile xml.etree.ElementTree \
-              urllib.request; do
+              urllib.request iced_x86; do
     hidden+=(--hidden-import "$module")
 done
 python3 -m PyInstaller --noconfirm --clean --log-level WARN --windowed --name gow3-launcher \
