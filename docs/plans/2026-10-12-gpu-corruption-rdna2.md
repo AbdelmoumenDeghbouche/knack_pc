@@ -176,8 +176,10 @@ Nenhuma correção: diagnóstico. Nada muda para quem não liga as variáveis.
 ## 7. Como testar (RX 6600)
 
 Cache limpo antes de cada execução (**Clear shader cache**), jogo aberto por um `teste.bat` ao
-lado de `God of War III.exe` (com esta PR o botão PLAY grava o `user\last_run.log`; sem ela, use
-`Play God of War III.exe` no `start`):
+lado de `God of War III.exe`. Com esta PR o botão PLAY grava o `user\last_run.log`, **desde que
+"Close the launcher when the game starts" esteja desmarcado** (com a opção ligada o arquivo que
+sobra é de uma execução anterior). Sem a PR, ou com a opção ligada, troque o `start` por
+`"Play God of War III.exe"`:
 
 ```bat
 @echo off
