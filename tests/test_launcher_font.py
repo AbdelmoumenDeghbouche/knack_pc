@@ -95,3 +95,11 @@ class LatinHeadingsTest(unittest.TestCase):
         self.assertEqual(launcher.heading_text('Графика'), 'Графика')
         launcher.LANG, launcher.FONT_LOADED = 'pt', False
         self.assertEqual(launcher.heading_text('GRÁFICOS'), 'GRÁFICOS')
+
+    def test_the_game_name_keeps_other_scripts_whole(self):
+        """The game's name (every_language) only loses Latin accents: Cyrillic, kana and hangul
+        letters are not decomposed (Й is not И, ゴ is not コ)."""
+        launcher.LANG = 'ru'
+        for name in ('ГЕРОЙ ВОЙНЫ · ЁЖ', 'ゴッド・オブ・ウォーIII', '갓 오브 워 III'):
+            self.assertEqual(launcher.heading_text(name, every_language=True), name)
+        self.assertEqual(launcher.heading_text('GRÁFICOS', every_language=True), 'GRAFICOS')

@@ -246,13 +246,20 @@ def heading_font(size, fallback=None, every_language=False):
     return (fallback or SERIF_FONT, size)
 
 
+def plain_letter(c):
+    """c without its accents when its base letter is ASCII (Á becomes A). The other scripts keep
+    their letters whole: Й is not И, ゴ is not コ, a hangul syllable is not its jamo."""
+    base = unicodedata.normalize('NFD', c)[0]
+    return base if base.isascii() else c
+
+
 def heading_text(text, every_language=False):
     """A heading's text for its font: in the God of War face the accents go (GRÁFICOS becomes
     GRAFICOS) and the letters it lacks become their plain pair (ß becomes ss)."""
     if not heading_face(every_language):
         return text
     text = ''.join(HEADING_LETTERS.get(c, c) for c in text)
-    return ''.join(c for c in unicodedata.normalize('NFD', text) if unicodedata.category(c) != 'Mn')
+    return ''.join(plain_letter(c) for c in text)
 
 
 # ---------------------------------------------------------------------------------------------
