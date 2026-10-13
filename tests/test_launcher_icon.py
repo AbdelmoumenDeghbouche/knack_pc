@@ -39,6 +39,9 @@ class WindowIconTest(unittest.TestCase):
     def window_icons(self):
         self.root.update()
         user32 = ctypes.windll.user32
+        user32.GetAncestor.argtypes, user32.GetAncestor.restype = (ctypes.c_void_p, ctypes.c_uint), ctypes.c_void_p
+        user32.SendMessageW.argtypes = (ctypes.c_void_p, ctypes.c_uint, ctypes.c_void_p, ctypes.c_void_p)
+        user32.SendMessageW.restype = ctypes.c_void_p  # an HICON, 64-bit
         hwnd = user32.GetAncestor(self.root.winfo_id(), 2)
         return user32.SendMessageW(hwnd, WM_GETICON, ICON_BIG, 0), user32.SendMessageW(hwnd, WM_GETICON, ICON_SMALL, 0)
 

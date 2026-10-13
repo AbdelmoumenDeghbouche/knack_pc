@@ -808,7 +808,7 @@ class Launcher:
 
     def choice(self, parent, key, store, options, width=30, var=None):
         """A combobox over (value, (english, russian)) pairs, kept in sync with its variable."""
-        var = var or self.var(key, store)
+        var = var if var is not None else self.var(key, store)
         values = [v for v, _t in options]
         box = self.ttk.Combobox(parent, values=[_(*text) for _v, text in options], state='readonly', width=width)
         if var.get() not in values:
@@ -1640,7 +1640,8 @@ class Launcher:
             except self.tk.TclError:  # an unfinished number in a spinbox
                 value = APP_DEFAULTS.get(key, INI_DEFAULTS.get(key))
             if var.store == 'ini':
-                ini[key] = ('1' if value else '0') if key in INI_FLAGS else                     f'{float(value):.2f}' if key == 'sharpness' else str(value)
+                ini[key] = ('1' if value else '0') if key in INI_FLAGS else \
+                    f'{float(value):.2f}' if key == 'sharpness' else str(value)
             else:
                 app[key] = value
         app['controls'] = {kind: control_changes({b: v.get() for b, v in vars_.items()}, kind)

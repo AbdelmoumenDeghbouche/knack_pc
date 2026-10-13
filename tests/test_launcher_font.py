@@ -61,10 +61,6 @@ class HeadingFontTest(unittest.TestCase):
         self.assertEqual(launcher.heading_font(15, every_language=True), ('Georgia', 15))
 
 
-if __name__ == '__main__':
-    unittest.main()
-
-
 class LatinHeadingsTest(unittest.TestCase):
     """The face has ASCII only: Latin-script languages use it with the accents stripped from headings."""
     def setUp(self):
@@ -103,3 +99,7 @@ class LatinHeadingsTest(unittest.TestCase):
         for name in ('ГЕРОЙ ВОЙНЫ · ЁЖ', 'ゴッド・オブ・ウォーIII', '갓 오브 워 III'):
             self.assertEqual(launcher.heading_text(name, every_language=True), name)
         self.assertEqual(launcher.heading_text('GRÁFICOS', every_language=True), 'GRAFICOS')
+
+
+if __name__ == '__main__':
+    unittest.main()

@@ -144,12 +144,8 @@ class EverySettingSavesTest(LauncherOverTemporaryFiles):
                         mock.patch.object(launcher.Launcher, 'check_update', lambda app, manual=False: None)]
         for patch in self.patches:
             patch.start()
+            self.addCleanup(patch.stop)
         super().setUp()
-
-    def tearDown(self):
-        super().tearDown()
-        for patch in self.patches:
-            patch.stop()
 
     def other_value(self, key, var):
         """A valid value of a setting that differs from its current one."""
