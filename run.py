@@ -114,6 +114,35 @@ def find_executable(name):
     return None
 
 
+def glyph_mounts(env, probe, game, out):
+    """(probe arguments, style) of the controller glyphs: patched copies of the WADs that hold the
+    game's button icons, mounted over them (scripts/glyphs.py). Opt-in: unless GOW3_GLYPH_STYLE is
+    auto, xbox or nintendo nothing is asked, drawn or mounted, and old copies are removed. The
+    game folder is never written."""
+    choice = env.get('GOW3_GLYPH_STYLE', 'off')
+    if choice not in ('auto', 'xbox', 'nintendo'):
+        shutil.rmtree(Path(out) / 'glyphs', ignore_errors=True)
+        return [], None
+    try:
+        import glyphs
+        pad = ''
+        if choice == 'auto':
+            pad = subprocess.run([str(probe), '--gamepad'], stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                                 text=True, timeout=15, creationflags=no_console()).stdout
+        style, faces, name = glyphs.resolve(choice, pad)
+        mounts = glyphs.build(game, out, style, faces, env.get('GOW3_PAD_MAP', ''))
+    except Exception as error:  # noqa: BLE001  (icons only: whatever fails, the game still starts)
+        print(f'Glyphs: {error}; the game keeps its own button icons', flush=True)
+        return [], None
+    if not mounts:
+        print('Glyphs: no Xbox or Nintendo controller, the game keeps its own button icons' if style == 'playstation'
+              else 'Glyphs: no button icons found in this game folder', flush=True)
+        return [], None
+    print(f'Glyphs: {style}{f" ({name})" if name else ""}, on copies in {Path(out) / "glyphs"}; game files untouched',
+          flush=True)
+    return [part for guest, path in mounts.items() for part in ('--mount', f'{guest}={path}')], style
+
+
 def main():
     args = sys.argv[1:]
     if len(args) >= 2 and args[0] == '--after':
@@ -245,6 +274,10 @@ def main():
         print(f'Engine frame rate: {engine_fps} FPS'
               + ('' if engine_fps > 60 or graphics['engine_fps'] == '60' else
                  ' (the frame rate patch was not found in this eboot.bin)'), flush=True)
+        glyph_args, glyph_style = glyph_mounts(env, probe, game, out)
+        if glyph_style:  # the in-game menu names the buttons the same way
+            env['GOW3_GLYPHS'] = glyph_style
+            derived.append('GOW3_GLYPHS')
         env['GOW3_DERIVED'] = ','.join(derived)
 
         # The in-game restart starts this script again once this process is gone.
@@ -267,7 +300,7 @@ def main():
         command = [*launch_prefix(env), str(probe), str(out / 'boot-linked.bin'), '--content-profile', str(out / 'content.bin'),
                    '--patches', str(out / 'patches.bin'), '--app0', str(game),
                    '--user', str(user_dir),
-                   '--timeout', env.get('GOW3_TIMEOUT', '0'), *isa_args, *args]
+                   '--timeout', env.get('GOW3_TIMEOUT', '0'), *isa_args, *glyph_args, *args]
         # No stdin: an inherited pipe (shells such as Git Bash) cost the game its console output.
         return subprocess.run(command, stdin=subprocess.DEVNULL, creationflags=no_console()).returncode
     finally:

@@ -899,6 +899,10 @@ EXTRA = {
         'Choose two separate folders for the game and its update, or leave the update folder empty.': 'Escolha duas pastas separadas para o jogo e o update, ou deixe a pasta do update em branco.',
         'Copying the system files…': 'Copiando os arquivos de sistema…',
         'The update folder {} is incomplete. Missing or empty files:\n\n{}\n\nChoose the folder of the update (eboot.bin, sce_sys), or leave it empty.': 'A pasta do update {} está incompleta. Arquivos faltando ou vazios:\n\n{}\n\nEscolha a pasta do update (eboot.bin, sce_sys), ou deixe em branco.',
+        'In-game button icons': 'Ícones dos botões no jogo',
+        'Original (default)': 'Original (padrão)',
+        'Match my controller': 'Igual ao meu controle',
+        "Replaces the PlayStation button icons inside the game with the ones of your controller. Works on a copy of two game files in the port's data folder (about 70 MB); your game folder is never changed. Applied when the game starts.": 'Troca os ícones de botões PlayStation dentro do jogo pelos do seu controle. Funciona com uma cópia de dois arquivos do jogo na pasta de dados do port (cerca de 70 MB); a pasta do jogo nunca é alterada. Aplicado quando o jogo inicia.',
     },
 }
 
