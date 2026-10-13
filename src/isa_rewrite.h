@@ -27,10 +27,12 @@ int isa_table_matches(const IsaTable *t, const unsigned char *image, uint64_t si
 size_t isa_stub_area_size(const IsaTable *t);           /* count * ISA_STUB_BYTES */
 unsigned isa_site_set(const IsaSite *s);                 /* CPU_SET_* of the kind */
 /* Rewrites the sites whose set is in `sets` (spec 5.4). Writes nothing and returns
- * unsupported_needed > 0 when a needed site is UNSUPPORTED. `stubs` has isa_stub_area_size bytes, RW. */
+ * unsupported_needed > 0 when a needed site is UNSUPPORTED. `stubs` has isa_stub_area_size bytes, RW.
+ * A JMP_RELOCATE site whose next instruction no longer matches becomes INT3 (its mode in t changes);
+ * each skipped or downgraded site gets one stderr line. */
 IsaReport isa_rewrite_apply(IsaTable *t, unsigned char *image, unsigned char *stubs, unsigned sets);
 
-/* int3 at `address` (the CC byte): 1 when it is a rewritten INT3 site; regs updated, *next_rip = site + 4.
+/* int3 at `address` (the CC byte): 1 when it is a rewritten INT3 site; regs updated, *next_rip = site + its length (4).
  * 0 otherwise, with regs and *next_rip untouched. */
 int isa_rewrite_trap(IsaTable *t, uintptr_t address, IsaRegs *regs, uintptr_t *next_rip);
 /* Site index whose stub holds rip, or -1. */

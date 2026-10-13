@@ -65,12 +65,22 @@ static uint32_t read_u32(const unsigned char *p) {
     return (uint32_t)p[0] | (uint32_t)p[1] << 8 | (uint32_t)p[2] << 16 | (uint32_t)p[3] << 24;
 }
 
+static int register_valid(uint8_t reg) { return reg <= 15 || reg == ISA_NO_REG; }
+
 /* Field ranges of spec 4.4, plus what the patch writes: a 5-byte jmp needs a 5-byte site (mode 0)
- * or a relocated instruction (mode 1), and every write stays inside the image. */
+ * or a relocated instruction (mode 1), an int3 site is 4 bytes, and every write stays inside the image.
+ * The writer stores scale 0 without a memory operand, else iced's scale (1 when there is no index). */
 static int record_valid(const IsaSite *s, uint64_t image_size) {
     if (s->length < 4 || s->length > 15 || s->relocated_length > 15) return 0;
     if (s->kind < ISA_MOVBE_LOAD || s->kind > ISA_VCVTPS2PH || s->mode > ISA_MODE_UNSUPPORTED) return 0;
+    if (!register_valid(s->dst) || !register_valid(s->src1) || !register_valid(s->src2) || !register_valid(s->base) ||
+        !register_valid(s->index) || s->mem_slot > ISA_MEM_SRC)
+        return 0;
+    if (s->kind <= ISA_BLSR && s->width != 16 && s->width != 32 && s->width != 64) return 0;
+    if (s->scale != 1 && s->scale != 2 && s->scale != 4 && s->scale != 8 && !(s->scale == 0 && s->index == ISA_NO_REG))
+        return 0;
     if (s->mode == ISA_MODE_JMP && s->length < JMP_BYTES) return 0;
+    if (s->mode == ISA_MODE_INT3 && s->length != 4) return 0;
     if (s->mode == ISA_MODE_JMP_RELOCATE && (s->length != 4 || s->relocated_length == 0)) return 0;
     uint64_t end = s->mode == ISA_MODE_JMP_RELOCATE ? 4u + s->relocated_length : s->length;
     return s->offset <= image_size && end <= image_size - s->offset;
@@ -237,8 +247,16 @@ IsaReport isa_rewrite_apply(IsaTable *t, unsigned char *image, unsigned char *st
         if (s->mode == ISA_MODE_UNSUPPORTED || !(isa_site_set(s) & sets)) continue;
         unsigned char *site = image + s->offset;
         if (memcmp(site, s->original, s->length) != 0) {
+            fprintf(stderr, "ISA: site 0x%llx %s skipped: bytes changed\n", (unsigned long long)s->offset,
+                    isa_kind_name(s->kind));
             report.skipped++;
             continue;
+        }
+        if (s->mode == ISA_MODE_JMP_RELOCATE && memcmp(site + 4, s->relocated, s->relocated_length) != 0) {
+            /* A patch or hook changed the instruction the jmp would cover: the stub would run the old copy. */
+            fprintf(stderr, "ISA: site 0x%llx %s: next instruction changed, int3 fallback\n",
+                    (unsigned long long)s->offset, isa_kind_name(s->kind));
+            t->sites[i].mode = ISA_MODE_INT3;
         }
         if (s->mode == ISA_MODE_INT3) {
             patch_site(site, s, 0);
@@ -285,7 +303,7 @@ int isa_rewrite_trap(IsaTable *t, uintptr_t address, IsaRegs *regs, uintptr_t *n
     if (t->sites[lo].mode != ISA_MODE_INT3 || *(const unsigned char *)address != 0xcc) return 0;
     isa_emulate(&t->sites[lo], regs);
     t->hits[lo]++;
-    *next_rip = address + 4;
+    *next_rip = address + t->sites[lo].length;
     return 1;
 }
 

@@ -219,6 +219,56 @@ static void check_rip_relative(void) {
     }
 }
 
+/* ANDN r, r, [rbx + 8] (32, 64) and BEXTR r32, [rbx - 4], r32: base + displacement memory sources. */
+static void check_memory_sources(void) {
+    for (int i = 0; i < RANDOM_INPUTS; i++) {
+        unsigned char buffer[32];
+        for (int j = 0; j < 32; j += 8) {
+            uint64_t r = xorshift64();
+            memcpy(buffer + j, &r, 8);
+        }
+        uint64_t src1 = xorshift64(), ctrl = xorshift64() & 0x3f3f, flags_start = FLAG_STARTS[i & 1];
+        uint64_t defined = isa_defined_flags(ISA_ANDN);
+        for (int width = 32; width <= 64; width += 32) {
+            uint64_t dst = RAX_START, flags = 0;
+            if (width == 32)
+                __asm__("andnl %[m], %k[s1], %k[d]" FLAGS_OUT
+                        : [d] "+r"(dst), [f] "=r"(flags) : [s1] "r"(src1), [m] "m"(*(uint32_t (*)[1])(buffer + 8)) : "cc");
+            else
+                __asm__("andnq %[m], %q[s1], %q[d]" FLAGS_OUT
+                        : [d] "+r"(dst), [f] "=r"(flags) : [s1] "r"(src1), [m] "m"(*(uint64_t (*)[1])(buffer + 8)) : "cc");
+            IsaSite site = register_site(ISA_ANDN, width);
+            site.src2 = ISA_NO_REG;
+            site.mem_slot = ISA_MEM_SRC;
+            site.base = 3;
+            site.disp = 8;
+            IsaRegs regs = {.rflags = flags_start};
+            regs.gpr[0] = RAX_START;
+            regs.gpr[1] = src1;
+            regs.gpr[3] = (uint64_t)(uintptr_t)buffer;
+            isa_emulate(&site, &regs);
+            if (regs.gpr[0] != dst) fail(ISA_ANDN, width, src1, 0, "rax (memory)", dst, regs.gpr[0]);
+            if ((regs.rflags ^ flags) & defined) fail(ISA_ANDN, width, src1, 0, "flags (memory)", flags & defined, regs.rflags & defined);
+        }
+        uint64_t dst = RAX_START, flags = 0;
+        __asm__("bextrl %k[c], %[m], %k[d]" FLAGS_OUT
+                : [d] "+r"(dst), [f] "=r"(flags) : [c] "r"(ctrl), [m] "m"(*(uint32_t (*)[1])(buffer + 12)) : "cc");
+        IsaSite site = register_site(ISA_BEXTR, 32);
+        site.src1 = ISA_NO_REG;
+        site.mem_slot = ISA_MEM_SRC;
+        site.base = 3;
+        site.disp = -4;
+        IsaRegs regs = {.rflags = flags_start};
+        regs.gpr[0] = RAX_START;
+        regs.gpr[2] = ctrl;
+        regs.gpr[3] = (uint64_t)(uintptr_t)(buffer + 16);
+        isa_emulate(&site, &regs);
+        defined = isa_defined_flags(ISA_BEXTR);
+        if (regs.gpr[0] != dst) fail(ISA_BEXTR, 32, ctrl, 0, "rax (memory)", dst, regs.gpr[0]);
+        if ((regs.rflags ^ flags) & defined) fail(ISA_BEXTR, 32, ctrl, 0, "flags (memory)", flags & defined, regs.rflags & defined);
+    }
+}
+
 int main(void) {
     char missing[128];
     if (cpu_missing_rewritable(cpu_feature_words(), missing, sizeof missing) & (CPU_SET_MOVBE | CPU_SET_BMI1 | CPU_SET_LZCNT)) {
@@ -234,6 +284,7 @@ int main(void) {
     check_registers();
     check_movbe();
     check_rip_relative();
+    check_memory_sources();
     puts("isa-emulate-test ok");
     return 0;
 }

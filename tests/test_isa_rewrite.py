@@ -139,6 +139,12 @@ class TableTests(unittest.TestCase):
         record = isa_rewrite.RECORD.unpack_from(isa_rewrite.encode_table(b'', sites), 64)
         self.assertEqual(record[13], -8)
 
+    def test_encode_table_sorts_records_by_offset(self):
+        late, early = isa_rewrite.scan_segment(BLSR_ECX, 0x2000) + isa_rewrite.scan_segment(BLSR_ECX, 0x1000)
+        table = isa_rewrite.encode_table(bytes(0x3000), [late, early])
+        offsets = [isa_rewrite.RECORD.unpack_from(table, 64 + 64 * i)[0] for i in range(2)]
+        self.assertEqual(offsets, [0x1000, 0x2000])
+
     def test_summary_line(self):
         sites = isa_rewrite.scan_segment(BLSR_ECX + MOVBE_STORE + NOP + bytes.fromhex('c4e2791310') + RET, 0)
         self.assertEqual(isa_rewrite.summary(sites),

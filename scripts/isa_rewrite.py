@@ -147,7 +147,7 @@ def read_boot_linked(data):
 def encode_table(image, sites):
     unsupported = sum(s.mode == MODE_UNSUPPORTED for s in sites)
     table = [HEADER.pack(b'G3ISA1\0\0', len(image), hashlib.sha256(image).digest(), len(sites), unsupported)]
-    for s in sites:
+    for s in sorted(sites, key=lambda s: s.offset):   # the C loader rejects records out of order
         table.append(RECORD.pack(s.offset, s.length, s.kind, s.width, s.mode, s.dst, s.src1, s.src2, s.mem_slot,
                                  s.base, s.index, s.scale, s.mem_flags, s.disp, s.original, len(s.relocated),
                                  s.relocated))

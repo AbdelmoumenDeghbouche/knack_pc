@@ -352,6 +352,67 @@ static void test_report_top_sites(void) {
     assert(strcmp(text, "ISA: most executed sites:\n  0x30 lzcnt 7\n  0x10 blsr 5\n  0x40 bextr 1\n") == 0);
 }
 
+/* The instruction after a JMP_RELOCATE site changed (a patch or hook): the site falls back to int3,
+ * so the changed instruction runs instead of the table's copy. */
+static void test_relocated_next_changed(void) {
+    reset_region();
+    image[S2 + 6] = 0x31;   /* mov eax, ecx -> xor eax, eax */
+    image[S2 + 7] = 0xc0;
+    IsaTable *t = snippet_table();
+    IsaReport r = isa_rewrite_apply(t, image, stubs, 0xffffffffu);
+    assert(r.rewritten == 5 && r.jmp == 3 && r.relocated == 0 && r.int3 == 2 && r.skipped == 0);
+    assert(t->sites[1].mode == ISA_MODE_INT3);
+    assert(image[S2 + 2] == 0xcc && memcmp(image + S2 + 3, pristine + S2 + 3, 3) == 0);
+    assert(image[S2 + 6] == 0x31 && image[S2 + 7] == 0xc0);
+    trap_table = t;
+    install_trap_handler();
+    uint32_t buffer = 0;
+    Snippet s2 = (Snippet)(void *)(image + S2);
+    uint64_t result = s2((uint64_t)(uintptr_t)&buffer, (uint64_t *)(uintptr_t)0x11223344);
+    assert(buffer == 0x44332211 && result == 0);
+    assert(t->hits[1] == 1);
+}
+
+/* A copy of the fixture, `size` bytes long, with byte `at` set to `value`, must not load. */
+static void expect_rejected(const unsigned char *fixture, long size, long at, unsigned char value) {
+    const char *dir = getenv("TMPDIR");
+    if (!dir) dir = getenv("TEMP");
+    if (!dir) dir = "/tmp";
+    char path[512];
+    snprintf(path, sizeof path, "%s/gow3-isa-stub-test.bin", dir);
+    FILE *f = fopen(path, "wb");
+    assert(f != NULL);
+    for (long i = 0; i < size; i++) fputc(i == at ? value : fixture[i], f);
+    assert(fclose(f) == 0);
+    assert(isa_table_load(path) == NULL);
+    remove(path);
+}
+
+enum { RECORD0 = 64, RECORD1 = 128, R_LENGTH = 8, R_WIDTH = 10, R_MODE = 11, R_DST = 12, R_MEM_SLOT = 15,
+       R_BASE = 16, R_SCALE = 18 };
+
+/* Last: each rejection prints one "ISA: ..." line on stderr. */
+static void test_table_load_rejects(const char *path) {
+    unsigned char fixture[64 + 6 * 64 + 1];
+    FILE *f = fopen(path, "rb");
+    assert(f != NULL);
+    long size = (long)fread(fixture, 1, sizeof fixture - 1, f);
+    assert(size == (long)sizeof fixture - 1 && fgetc(f) == EOF);
+    fclose(f);
+    fixture[size] = 0;
+    assert(fixture[RECORD0 + R_MODE] == ISA_MODE_JMP && fixture[RECORD0 + R_LENGTH] == 5);
+    assert(fixture[RECORD1 + R_MEM_SLOT] == ISA_MEM_DST && fixture[RECORD1 + R_SCALE] == 1);
+    expect_rejected(fixture, size, 0, 'X');                                /* magic */
+    expect_rejected(fixture, size + 1, -1, 0);                             /* file size */
+    expect_rejected(fixture, size - 1, -1, 0);
+    expect_rejected(fixture, size, RECORD1, fixture[RECORD0]);             /* offsets not ascending */
+    expect_rejected(fixture, size, RECORD0 + R_DST, 16);                   /* register 16 */
+    expect_rejected(fixture, size, RECORD1 + R_BASE, 16);
+    expect_rejected(fixture, size, RECORD0 + R_WIDTH, 8);                  /* width 8 */
+    expect_rejected(fixture, size, RECORD1 + R_SCALE, 3);                  /* scale 3 */
+    expect_rejected(fixture, size, RECORD0 + R_MODE, ISA_MODE_INT3);       /* 5-byte int3 */
+}
+
 int main(int argc, char **argv) {
     if (argc != 2) {
         fprintf(stderr, "usage: isa-stub-test tests/data/isa_fixture.bin\n");
@@ -387,6 +448,8 @@ int main(int argc, char **argv) {
     test_trap_unknown_address();
     test_site_of_stub();
     test_report_top_sites();
+    test_relocated_next_changed();
+    test_table_load_rejects(argv[1]);
     puts("isa-stub-test ok");
     return 0;
 }

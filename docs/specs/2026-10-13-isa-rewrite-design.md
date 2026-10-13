@@ -140,7 +140,7 @@ Registros de 64 bytes, ordenados por offset:
 | 13 | u8 registrador fonte 1 (0-15; 0xFF ausente ou memória) |
 | 14 | u8 registrador fonte 2 (BEXTR: controle; ANDN: segunda fonte; 0xFF ausente) |
 | 15 | u8 operando de memória: 0 nenhum, 1 destino, 2 fonte |
-| 16 | u8 base (0-15; 0xFF nenhuma), u8 índice (0-15; 0xFF nenhum), u8 escala (1, 2, 4, 8), u8 flags: bit 0 = RIP-relativo já resolvido |
+| 16 | u8 base (0-15; 0xFF nenhuma), u8 índice (0-15; 0xFF nenhum), u8 escala (1, 2, 4, 8; 0 sem operando de memória), u8 flags: bit 0 = RIP-relativo já resolvido |
 | 20 | reservado (4 bytes) |
 | 24 | i64 deslocamento; se RIP-relativo, offset absoluto na imagem |
 | 32 | bytes originais (15 bytes) |
@@ -172,7 +172,8 @@ POPCNT, AVX) → `STOP` com texto novo: `(Intel Sandy Bridge 2011 or newer, or A
 newer, is needed)`, código 20. Conjunto reescrevível ausente (MOVBE, BMI1, LZCNT, F16C)
 sem `--isa-rewrite`, com tabela inválida, ou com sha256 diferente da imagem → `STOP:
 this CPU lacks MOVBE, BMI1, LZCNT and no rewrite table matches the image`, código 20.
-Com tabela válida → segue.
+Com `GOW3_ISA_REWRITE=0` o texto é `STOP: this CPU lacks MOVBE, BMI1, LZCNT and the
+rewrite is disabled (GOW3_ISA_REWRITE=0)`, código 20. Com tabela válida → segue.
 
 ### 5.2 `cpu_check`
 
@@ -198,7 +199,11 @@ linha extra `While emulating site 0x<offset> (<mnemônico>)`.
 `patch_tcb_loads`. Para cada sítio selecionado:
 
 1. Compara os bytes da imagem com os bytes originais do registro. Diferentes (um patch
-   mexeu ali): pula e conta em `skipped`.
+   mexeu ali): pula, conta em `skipped` e imprime `ISA: site 0x<offset> <mnemônico>
+   skipped: bytes changed`. Em `JMP_RELOCATE` compara também a instrução seguinte com a
+   cópia realocada; diferente (um patch ou hook mudou a seguinte), o sítio passa a `INT3`,
+   conta em `int3` e imprime `ISA: site 0x<offset> <mnemônico>: next instruction
+   changed, int3 fallback`.
 2. Gera o stub na posição `stub_base + 256 * i`.
 3. Escreve os bytes do modo (tabela em 4.3). Em `JMP_RELOCATE` a volta é para
    `sítio + 4 + tamanho_realocado`; em `JMP`, para `sítio + tamanho`.
@@ -270,14 +275,14 @@ Windows: `EXCEPTION_BREAKPOINT` em `vectored_fault`, antes do caminho fatal. Lin
 Windows `ExceptionAddress` já aponta para o `int3`; no Linux é `REG_RIP − 1`. Busca
 binária na tabela.
 Sem sítio: caminho de hoje. Com sítio: monta `IsaRegs` a partir do `CONTEXT`/`ucontext`,
-chama `isa_emulate`, copia de volta registradores e flags, RIP = sítio + 4, incrementa
+chama `isa_emulate`, copia de volta registradores e flags, RIP = sítio + tamanho (4), incrementa
 `hits`.
 
 ### 5.8 Log
 
 Na aplicação:
 `ISA: CPU lacks MOVBE, BMI1, LZCNT: 1412 sites rewritten (1327 jmp, 85 relocated, 0 int3), 0 skipped`.
-Em modo forçado: `ISA: forced rewrite of all 1412 sites (GOW3_ISA_REWRITE=1)`.
+Em modo forçado: `ISA: forced rewrite of all 1412 sites (GOW3_ISA_REWRITE=1), 0 skipped`.
 Na saída normal e no relatório de falha: `ISA: most executed sites:` seguido dos 10
 sítios com mais `hits` (`0x<offset> <mnemônico> <hits>`). Serve para decidir se um dia
 vale um caminho rápido em asm para algum sítio.
@@ -338,8 +343,9 @@ vale um caminho rápido em asm para algum sítio.
   ponta em modo forçado exercita o jogo real. Um sítio problemático vira `INT3` por
   ajuste no localizador.
 - Hooks (cheats, multiplicadores) que copiam instruções do guest para trampolins
-  próprios não são cobertos; uma cópia com instrução Haswell falha em CPU antiga com o
-  relatório fatal de hoje, que nomeia o offset.
+  próprios não são cobertos. Numa cópia, MOVBE e BMI1 falham em CPU antiga com o
+  relatório fatal de hoje, que nomeia o offset; LZCNT e TZCNT não falham: executam como
+  BSR e BSF e dão resultado errado em silêncio.
 - Desempenho nas CPUs alvo não medido; os contadores de `hits` dizem onde otimizar.
 - O stub usa cerca de 0x120 bytes da pilha do guest mais o frame C, comparável a uma
   entrega de sinal.

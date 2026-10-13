@@ -657,7 +657,11 @@ int main(int argc, char **argv) {
     /* GOW3_ISA_REWRITE=0 never rewrites, =1 rewrites every site; by default the sets the CPU lacks. */
     const char *policy = getenv("GOW3_ISA_REWRITE");
     unsigned isa_sets = policy && !strcmp(policy, "1") ? 0xffffffffu : policy && !strcmp(policy, "0") ? 0 : cpu_missing_sets;
-    if ((cpu_missing_sets && !isa_sets) || (isa_sets && cpu_missing_sets && !isa_file)) {
+    if (cpu_missing_sets && !isa_sets) {
+        printf("STOP: this CPU lacks %s and the rewrite is disabled (GOW3_ISA_REWRITE=0)\n", missing);
+        return 20;
+    }
+    if (cpu_missing_sets && !isa_file) {
         printf("STOP: this CPU lacks %s and no rewrite table matches the image\n", missing);
         return 20;
     }
@@ -887,14 +891,13 @@ int main(int argc, char **argv) {
     printf("Guest TCB loads redirected to the TEB TLS slot: %" PRIu64 "\n", patch_tcb_loads(segments, ns));
 #endif
     if (isa_table) {
-        isa_emulate_set_image(image);
         IsaReport r = isa_rewrite_apply(isa_table, image, stubs, isa_sets);
         if (r.unsupported_needed) {
             printf("STOP: this CPU lacks %s and %u sites use encodings the rewrite cannot emulate\n", missing, r.unsupported_needed);
             fflush(NULL);
             _exit(20); /* no destructors: GPU threads are running */
         }
-        if (isa_sets == 0xffffffffu) printf("ISA: forced rewrite of all %u sites (GOW3_ISA_REWRITE=1)\n", r.rewritten);
+        if (isa_sets == 0xffffffffu) printf("ISA: forced rewrite of all %u sites (GOW3_ISA_REWRITE=1), %u skipped\n", r.rewritten, r.skipped);
         else printf("ISA: CPU lacks %s: %u sites rewritten (%u jmp, %u relocated, %u int3), %u skipped\n",
                     missing, r.rewritten, r.jmp, r.relocated, r.int3, r.skipped);
         runtime_set_report_hook(isa_report_hook);
