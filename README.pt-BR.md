@@ -1,4 +1,4 @@
-# God of War III Remastered para PC
+# God of War III Remastered para PC | [![ko-fi](https://ko-fi.com/img/githubbutton_sm.svg)](https://ko-fi.com/K1B328P98H)
 
 [English](README.md) | **Português (Brasil)**
 
