@@ -13,6 +13,7 @@
 #include "imgui/renderer/imgui_core.h"
 #include "sdl_window.h"
 #include "video_core/renderer_vulkan/liverpool_to_vk.h"
+#include "video_core/renderer_vulkan/vk_amd_paths.h"
 #include "video_core/renderer_vulkan/vk_dlss.h"
 #include "video_core/renderer_vulkan/vk_instance.h"
 #include "video_core/renderer_vulkan/vk_platform.h"
@@ -362,19 +363,29 @@ bool Instance::CreateDevice() {
         LOG_INFO(Render_Vulkan, "- primitiveTopologyPatchListRestart: {}",
                  list_restart_features.primitiveTopologyPatchListRestart);
     }
+    // gow3: GOW3_AMD_PATHS_OFF=shaderext leaves the AMD shader extensions out (vk_amd_paths.h).
+    const auto amd_paths_off = AmdPathsOff::Current();
     amd_shader_explicit_vertex_parameter =
+        !amd_paths_off.shaderext &&
         add_extension(VK_AMD_SHADER_EXPLICIT_VERTEX_PARAMETER_EXTENSION_NAME);
     if (!amd_shader_explicit_vertex_parameter) {
         fragment_shader_barycentric =
             add_extension(VK_KHR_FRAGMENT_SHADER_BARYCENTRIC_EXTENSION_NAME);
     }
+    if (amd_paths_off.shaderext) {
+        std::printf("GPU: fragment barycentrics: %s\n",
+                    fragment_shader_barycentric ? "VK_KHR_fragment_shader_barycentric" : "none");
+    }
     provoking_vertex = add_extension(VK_EXT_PROVOKING_VERTEX_EXTENSION_NAME);
     shader_stencil_export = add_extension(VK_EXT_SHADER_STENCIL_EXPORT_EXTENSION_NAME);
     image_load_store_lod = add_extension(VK_AMD_SHADER_IMAGE_LOAD_STORE_LOD_EXTENSION_NAME);
-    amd_gcn_shader = add_extension(VK_AMD_GCN_SHADER_EXTENSION_NAME);
-    amd_shader_trinary_minmax = add_extension(VK_AMD_SHADER_TRINARY_MINMAX_EXTENSION_NAME);
+    amd_gcn_shader = !amd_paths_off.shaderext && add_extension(VK_AMD_GCN_SHADER_EXTENSION_NAME);
+    amd_shader_trinary_minmax =
+        !amd_paths_off.shaderext && add_extension(VK_AMD_SHADER_TRINARY_MINMAX_EXTENSION_NAME);
     nv_framebuffer_mixed_samples = add_extension(VK_NV_FRAMEBUFFER_MIXED_SAMPLES_EXTENSION_NAME);
-    amd_mixed_attachment_samples = add_extension(VK_AMD_MIXED_ATTACHMENT_SAMPLES_EXTENSION_NAME);
+    // gow3: GOW3_AMD_PATHS_OFF=mixed forces equal colour and depth samples, as on Intel.
+    amd_mixed_attachment_samples =
+        !amd_paths_off.mixed && add_extension(VK_AMD_MIXED_ATTACHMENT_SAMPLES_EXTENSION_NAME);
     shader_atomic_float = add_extension(VK_EXT_SHADER_ATOMIC_FLOAT_EXTENSION_NAME);
     shader_atomic_float2 = add_extension(VK_EXT_SHADER_ATOMIC_FLOAT_2_EXTENSION_NAME);
     if (shader_atomic_float2) {

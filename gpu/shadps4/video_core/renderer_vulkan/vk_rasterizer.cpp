@@ -5,6 +5,7 @@
 #include "video_core/renderer_vulkan/ui_composition.h"
 #include "gow3_toggles.h"
 #include "video_core/renderer_vulkan/vk_frame_capture.h"
+#include "video_core/renderer_vulkan/vk_lighting_test.h"
 #include "video_core/renderer_vulkan/vk_pass_census.h"
 #include "common/debug.h"
 #include "core/debug_state.h"
@@ -3430,10 +3431,11 @@ void Rasterizer::UpdateDepthStencilState() const {
     dynamic_state.SetDepthBiasEnabled(depth_bias_enabled);
     if (depth_bias_enabled) {
         const bool front = regs.polygon_control.enable_polygon_offset_front;
+        // gow3: GOW3_LIGHTING_TEST=bias passes the slope scale as the guest gives it.
+        const float slope = front ? regs.poly_offset.front_scale : regs.poly_offset.back_scale;
         dynamic_state.SetDepthBias(
             front ? regs.poly_offset.front_offset : regs.poly_offset.back_offset,
-            regs.poly_offset.depth_bias,
-            (front ? regs.poly_offset.front_scale : regs.poly_offset.back_scale) / 16.f);
+            regs.poly_offset.depth_bias, LightingTest::Current().bias ? slope : slope / 16.f);
     }
 
     const bool stencil_test_enabled = depth_stencil.stencil_test_enable;
