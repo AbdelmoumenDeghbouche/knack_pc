@@ -1,6 +1,7 @@
 """Boundary tests for the native loader; uses tiny synthetic x86-64 images."""
 from paths import ROOT
 from pathlib import Path
+import os
 import struct
 import subprocess
 import sys
@@ -157,7 +158,12 @@ class LoaderTests(unittest.TestCase):
 @unittest.skipUnless(HOST_EXE.exists(), 'build native probe first')
 class CpuFeaturesTests(unittest.TestCase):
     def test_cpu_features_mode_reports_this_machine(self):
-        result = subprocess.run([str(HOST_EXE.resolve()), '--cpu-features'], capture_output=True, text=True)
+        env = dict(os.environ)
+        # Development builds run from the MSYS2 tree: its CLANG64 DLLs (SDL3, ...), as in run.py.
+        if sys.platform == 'win32' and not (HOST_EXE.parent / 'SDL3.dll').is_file():
+            clang64 = Path(env.get('MSYS2_ROOT', r'C:\msys64')) / 'clang64' / 'bin'
+            env['PATH'] = f'{clang64}{os.pathsep}{env.get("PATH", "")}'
+        result = subprocess.run([str(HOST_EXE.resolve()), '--cpu-features'], capture_output=True, text=True, env=env)
         self.assertEqual(result.returncode, 0)
         self.assertRegex(result.stdout, r'^CPU: (complete|missing [A-Z0-9., ]+)\n$')
 
