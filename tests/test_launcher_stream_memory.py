@@ -113,6 +113,7 @@ class StreamMemoryLauncherTest(unittest.TestCase):
                             mock.patch.object(launcher.subprocess, 'Popen', return_value=process) as start, \
                             mock.patch.object(launcher, 'GameJob'), \
                             mock.patch.object(launcher.threading, 'Thread'), \
+                            mock.patch.object(launcher, 'open_play_log', return_value=launcher._NullLog()), \
                             mock.patch.object(app, 'set_log', create=True):
                         app.play()
                     self.assertEqual(start.call_args.kwargs['env']['GOW3_STREAM_MEMORY'], value)
