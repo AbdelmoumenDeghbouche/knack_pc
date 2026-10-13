@@ -1688,25 +1688,33 @@ class Launcher:
             self.show('game')
             return
         self.set_log('')
+        # The same last_run.log as --play, so a report from the PLAY button has the file too.
+        run_log = open_run_log(self.app)
         try:
             self.process = subprocess.Popen(run_command(), cwd=PORT_DIR, env=game_environment(self.app),
                                             stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
                                             stderr=subprocess.STDOUT, creationflags=NO_WINDOW, **NEW_GROUP)
         except OSError as error:
+            run_log.close()
             self.append(_('Could not start: {}', 'Не удалось запустить: {}').format(error) + '\n')
             self.process = None
             return
         self.job = GameJob(self.process)
-        threading.Thread(target=self.read_output, args=(self.process,), daemon=True).start()
+        threading.Thread(target=self.read_output, args=(self.process, run_log), daemon=True).start()
         self.play_button.configure(text=_('RUNNING'), state='disabled')
         self.status.configure(text=_('Preparing the game; it opens in its own window…',
                                      'Подготовка игры; она откроется в своём окне…'), fg=TEXT)
         if self.app.get('close_on_play'):
             self.root.after(5000, self.root.destroy)  # the game keeps running
 
-    def read_output(self, process):
+    def read_output(self, process, run_log=None):
         for raw in iter(process.stdout.readline, b''):
-            self.output.put(raw.decode('utf-8', errors='replace'))
+            text = raw.decode('utf-8', errors='replace')
+            if run_log:
+                run_log.write(text)
+            self.output.put(text)
+        if run_log:
+            run_log.close()
         self.output.put((process.wait(),))
 
     def drain_output(self):
@@ -1998,13 +2006,41 @@ class GameJob:
             self.handle = None
 
 
+def run_log_path(settings):
+    """<saves folder>/last_run.log: the game's output, written by both launch paths."""
+    return Path(settings.get('user_dir') or DATA_DIR / 'user') / 'last_run.log'
+
+
+class _NullLog:
+    """Stands in for the run log when its folder cannot be written: the game still starts."""
+    def write(self, text):
+        pass
+
+    def close(self):
+        pass
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+
+def open_run_log(settings):
+    """The run log, truncated, line-buffered; a null log when the folder is unusable."""
+    path = run_log_path(settings)
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        return open(path, 'w', encoding='utf-8', buffering=1)
+    except (OSError, ValueError):
+        return _NullLog()
+
+
 def play_without_window(settings):
     """--play: the game with the saved settings (shortcuts, Steam). Output goes to the console
     when there is one and to <saves folder>/last_run.log."""
     attach_stdio()
-    log_dir = Path(settings.get('user_dir') or DATA_DIR / 'user')
-    log_dir.mkdir(parents=True, exist_ok=True)
-    with open(log_dir / 'last_run.log', 'w', encoding='utf-8', buffering=1) as log:
+    with open_run_log(settings) as log:
         process = subprocess.Popen(run_command(), cwd=PORT_DIR, env=game_environment(settings),
                                    stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
                                    stderr=subprocess.STDOUT, creationflags=NO_WINDOW)
