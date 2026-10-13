@@ -249,6 +249,10 @@ INI_DEFAULTS = {'upscaler': 'fsr4', 'preset': '1', 'sharpen': '1', 'sharpness': 
                 'rcas_strength': '75', 'frames_queued': '1', 'cheat_very_hard': '0', 'cheat_double_jumps': '0'}
 DISPLAY_MODES = [('windowed', ('Windowed',)), ('borderless', ('Borderless',)), ('fullscreen', ('Fullscreen',))]
 FPS_LIMITS = [('30', ('30',)), ('60', ('60',)), ('120', ('120',)), ('240', ('240',)), ('0', ('Unlimited',))]
+# The sidebar's pages, top to bottom, and the methods that refresh a page's lists when it is shown.
+PAGES = ('home', 'graphics', 'performance', 'game', 'advanced')
+PAGE_REFRESH = {'home': ('refresh_status',), 'graphics': ('refresh_fsr4',),
+                'game': ('refresh_lists', 'refresh_game_patches')}
 APP_DEFAULTS = {'ui_language': 'en', 'game_dir': os.environ.get('GOW3_GAME_DIR', str(PORT_DIR.parent / 'CUSA01623') if WINDOWS else ''), 'update_dir': '', 'experimental_upscaler': False,
                 'video_backend': 'auto', 'gamemode': False, 'mangohud': False, 'desktop_integration': True, 'user_dir': '',
                 'mods_dir': '', 'mods_enabled': True, 'patches_dir': '', 'language': '1',
@@ -867,13 +871,10 @@ class Launcher:
         self.side_title.pack(anchor='w', padx=22, pady=(24, 22))
         self.side = side
         self.nav, self.current_page = {}, None
-        for name, title in (('home', _('Home')), ('display', _('Display')),
-                            ('graphics', _('Graphics (experimental)', 'Графика (эксп.)')),
-                            ('performance', _('Performance')),
-                            ('game', _('Game', 'Игра')), ('patches', _('Patches', 'Патчи')),
-                            ('mods', _('Mods', 'Моды')), ('controls', _('Controls', 'Управление')),
-                            ('advanced', _('Advanced', 'Дополнительно')), ('log', _('Log', 'Журнал'))):
-            item = tk.Label(side, text='    ' + title, bg=BG, fg=TEXT, anchor='w', font=heading_font(11, UI_FONT),
+        titles = {'home': _('Home'), 'graphics': _('Graphics', 'Графика'), 'performance': _('Performance'),
+                  'game': _('Game', 'Игра'), 'advanced': _('Advanced', 'Дополнительно')}
+        for name in PAGES:
+            item = tk.Label(side, text='    ' + titles[name], bg=BG, fg=TEXT, anchor='w', font=heading_font(11, UI_FONT),
                             pady=10, cursor='hand2')
             item.pack(fill='x')
             item.bind('<Button-1>', lambda _e, n=name: self.show(n))
@@ -902,14 +903,9 @@ class Launcher:
         self.pages = {}
         self.build_home()
         self.build_graphics()
-        self.build_display()
         self.build_performance()
         self.build_game()
-        self.build_patches()
-        self.build_mods()
-        self.build_controls()
         self.build_advanced()
-        self.build_log()
         self.root.bind_all('<MouseWheel>', self.wheel)
         self.game_changed()
 
@@ -926,14 +922,8 @@ class Launcher:
         self.current_page = name
         for n, item in self.nav.items():
             item.configure(bg=PANEL if n == name else BG, fg=ACCENT_HI if n == name else TEXT)
-        if name in ('mods', 'patches'):
-            self.refresh_lists()
-        if name == 'patches':
-            self.refresh_game_patches()
-        elif name == 'graphics':
-            self.refresh_fsr4()
-        elif name == 'home':
-            self.refresh_status()
+        for method in PAGE_REFRESH.get(name, ()):
+            getattr(self, method)()
 
     def build_home(self):
         tk, ttk = self.tk, self.ttk
@@ -1002,13 +992,12 @@ class Launcher:
             return self.banner_image.subsample(factor) if factor > 1 else self.banner_image
 
     def build_graphics(self):
-        """Temporal upscalers: not calibrated for this game yet, so run.py turns them off unless the
-        switch at the top of this page is on."""
+        """The display options, then the temporal upscalers: not calibrated for this game yet, so
+        run.py turns them off unless the Experimental switch is on."""
         ttk = self.ttk
-        f = self.scrolled_page('graphics', _('Graphics (experimental)', 'Графика (эксп.)'),
-                               _('Stored in gow3.ini; the in-game menu (Insert or R3+L2) changes the same values.',
-                                 'Хранится в gow3.ini; в игре меняется через меню (Insert или R3+L2).'))
-        self.section(f, _('Experimental'), top=4)
+        f = self.scrolled_page('graphics', _('Graphics', 'Графика'), _('How the game appears on your screen.'))
+        self.build_display(f)
+        self.section(f, _('Experimental'))
         self.check(f, 'experimental_upscaler', 'app', _('Enable the upscaler (experimental)'),
                    _('Off (default): the game runs without temporal upscaling. These upscalers are not calibrated '
                      'for this game yet: expect ghosting or flicker. FSR 3.1 needs nothing else; FSR 4 needs the '
@@ -1060,9 +1049,9 @@ class Launcher:
                        'С GitHub FireBurn/Q2RTX (собраны из MIT-исходников AMD FidelityFX), около 30 МБ, '
                        'в папку fsr4_shaders порта.'), top=6)
 
-    def build_display(self):
+    def build_display(self, f):
+        """Window, scaling and overlay: the top of the Graphics page."""
         tk, ttk = self.tk, self.ttk
-        f = self.scrolled_page('display', _('Display'), _('How the game appears on your screen.'))
         self.section(f, _('Window', 'Окно'), top=4)
         self.row(f, _('Display mode'), self.choice(f, 'display_mode', 'ini', DISPLAY_MODES),
                  _('Borderless covers the screen without changing the display mode.'))
@@ -1076,7 +1065,7 @@ class Launcher:
                      'it raises the FPS; at the size of the window it does nothing.'))
         self.check(f, 'rcas', 'ini', _('Screen sharpening (RCAS)'),
                    _('Sharpens the final image when it is the size of the window. With the upscaler on, '
-                     'turn on its own sharpening (Graphics page) instead: they switch each other off.'))
+                     'turn on its own sharpening (Experimental, below) instead: they switch each other off.'))
         holder = ttk.Frame(f)
         strength = self.var('rcas_strength', 'ini')
         tk.Scale(holder, from_=0, to=100, orient='horizontal', variable=strength, showvalue=False, length=self.px(260),
@@ -1136,7 +1125,7 @@ class Launcher:
                    'Насколько точно данные, записанные GPU, возвращаются игре.'))
 
     def build_game(self):
-        f = self.scrolled_page('game', _('Game', 'Игра'), _('Your game dump, saves and language.'))
+        f = self.scrolled_page('game', _('Game', 'Игра'), _('Your game dump, saves and the game patches.'))
         self.section(f, _('Cheats'), top=4)
         self.check(f, 'cheat_double_jumps', 'ini', _('Infinite Double Jumps'),
                    _('Repeat air jumps without landing. Also available in the in-game Cheats menu.'))
@@ -1163,6 +1152,9 @@ class Launcher:
         self.build_save_backups(f)
         self.section(f, _('Language'))
         self.row(f, _('Game language', 'Язык игры'), self.choice(f, 'language', 'app', LANGUAGES))
+        self.build_patches(f)
+        self.build_mods(f)
+        self.build_controls(f)
 
     def user_dir(self):
         return Path(self.var('user_dir', 'app').get() or DATA_DIR / 'user')
@@ -1205,11 +1197,10 @@ class Launcher:
         self.messagebox.showinfo(APP_NAME, _('Saves restored from {}.').format(name) +
                                  (_(' Previous saves: {}.').format(safety.name) if safety else ''))
 
-    def build_patches(self):
-        """Community patches of the selected game's built-in XML and third-party patch files.
-        Resolution and frame rate patches follow Performance (gow3.ini; run.py adds them)."""
-        f = self.scrolled_page('patches', _('Patches', 'Патчи'), _('Changes applied to the game code at start.'))
-        self.section(f, _('Game patches', 'Патчи игры'), top=4)
+    def build_patches(self, f):
+        """Community patches of the selected game's built-in XML and third-party patch files, on the
+        Game page. Resolution and frame rate patches follow Performance (gow3.ini; run.py adds them)."""
+        self.section(f, _('Game patches', 'Патчи игры'))
         self.game_patch_frame = self.ttk.Frame(f)
         self.game_patch_frame.grid(row=self.next_row(f), column=0, columnspan=2, sticky='we')
         self.game_patch_title, self.game_patch_vars = None, {}
@@ -1262,25 +1253,25 @@ class Launcher:
         self.app.setdefault('game_patches', {})[self.game_patch_title] = \
             [n for n, v in self.game_patch_vars.items() if v.get()]
 
-    def build_mods(self):
-        f = self.scrolled_page('mods', _('Mods', 'Моды'),
-                               _('Files layered over the game at start; the game files are never changed.'))
+    def build_mods(self, f):
+        """Loose-file mods layered over the game at start, on the Game page."""
+        self.section(f, _('Mods', 'Моды'))
         self.check(f, 'mods_enabled', 'app', _('Load mods', 'Загружать моды'),
                    _('Loose-file mods, each in its own folder with dvdroot_ps4.',
                      'Моды из файлов, каждый в своей папке с dvdroot_ps4.'))
         self.folder(f, 'mods_dir', _('Mods folder', 'Папка модов'), _('Choose the mods folder', 'Выберите папку модов'),
                     _('Empty: {}', 'Пусто: {}').format(DATA_DIR / 'mods'), on_change=self.refresh_lists)
-        self.section(f, _('Mods', 'Моды'))
         self.mods_frame = self.ttk.Frame(f)
         self.mods_frame.grid(row=self.next_row(f), column=0, columnspan=2, sticky='we', pady=(8, 0))
         self.ttk.Button(f, text=_('Refresh', 'Обновить'), command=self.refresh_lists).grid(
             row=self.next_row(f), column=0, sticky='w', pady=(14, 0))
 
-    def build_controls(self):
-        """Remapping of the PS4 buttons (run.py passes GOW3_KEY_MAP and GOW3_PAD_MAP to the game)."""
+    def build_controls(self, f):
+        """Remapping of the PS4 buttons, on the Game page (run.py passes GOW3_KEY_MAP and
+        GOW3_PAD_MAP to the game)."""
         tk, ttk = self.tk, self.ttk
-        f = self.scrolled_page('controls', _('Controls', 'Управление'),
-                               _('Which key or gamepad button presses each button of the game.'))
+        self.section(f, _('Controls', 'Управление'))
+        self.note(f, _('Which key or gamepad button presses each button of the game.'), top=4)
         saved = {kind: control_values(self.app.get('controls'), kind) for kind in ('key', 'pad')}
         style = self.app.get('pad_style') if self.app.get('pad_style') in PAD_STYLES else 'playstation'
         self.pad_style = tk.StringVar(value=style)
@@ -1438,22 +1429,24 @@ class Launcher:
         toggle.bind('<Button-1>', flip)
         shown.set(True)
         flip()
+        self.build_log(f)
 
-    def build_log(self):
+    def build_log(self, f):
+        """The game's output, at the end of the Advanced page (the wheel over it scrolls the log)."""
         tk, ttk = self.tk, self.ttk
-        page = ttk.Frame(self.content, padding=(20, 14, 20, 8))
-        self.pages['log'] = page
-        top = ttk.Frame(page)
-        top.pack(fill='x', pady=(0, 8))
-        ttk.Label(top, text=_('Log', 'Журнал').upper(), font=heading_font(20)).pack(side='left')
-        ttk.Button(top, text=_('Copy', 'Копировать'), command=self.copy_log).pack(side='right')
-        ttk.Button(top, text=_('Clear', 'Очистить'), command=lambda: self.set_log('')).pack(side='right', padx=6)
-        self.log = tk.Text(page, wrap='none', bg='#0a0808', fg='#cfc6bc', insertbackground=TEXT, relief='flat',
-                           font=(MONO_FONT, 9), padx=8, pady=6, state='disabled', highlightthickness=0)
-        bar = ttk.Scrollbar(page, command=self.log.yview)
+        self.section(f, _('Log', 'Журнал'))
+        buttons = ttk.Frame(f)
+        buttons.grid(row=self.next_row(f), column=0, columnspan=2, sticky='w', pady=(6, 8))
+        ttk.Button(buttons, text=_('Copy', 'Копировать'), command=self.copy_log).pack(side='left')
+        ttk.Button(buttons, text=_('Clear', 'Очистить'), command=lambda: self.set_log('')).pack(side='left', padx=6)
+        holder = ttk.Frame(f)
+        holder.grid(row=self.next_row(f), column=0, columnspan=2, sticky='we')
+        self.log = tk.Text(holder, wrap='none', height=18, bg='#0a0808', fg='#cfc6bc', insertbackground=TEXT,
+                           relief='flat', font=(MONO_FONT, 9), padx=8, pady=6, state='disabled', highlightthickness=0)
+        bar = ttk.Scrollbar(holder, command=self.log.yview)
         self.log.configure(yscrollcommand=bar.set)
         bar.pack(side='right', fill='y')
-        self.log.pack(fill='both', expand=True)
+        self.log.pack(side='left', fill='both', expand=True)
 
     # ---- state -------------------------------------------------------------------------------
     def game_changed(self):
@@ -1462,7 +1455,7 @@ class Launcher:
         title = info[0] if info else APP_NAME
         self.root.title(f'{title} (PC)')
         self.side_title.configure(text=title.upper())
-        if self.current_page == 'patches':
+        if self.current_page == 'game':
             self.refresh_game_patches()
         self.banner_source = None
         self.draw_banner()

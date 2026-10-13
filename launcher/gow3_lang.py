@@ -873,7 +873,7 @@ EXTRA = {
         'Upscaler sharpening (RCAS)': 'Nitidez do upscaler (RCAS)',
         "The upscaler's own sharpening. With the upscaler on, this and the screen's sharpening switch each other off: they would stack.": 'A nitidez do próprio upscaler. Com o upscaler ligado, esta e a nitidez da tela se desligam mutuamente: elas se somariam.',
         'Screen sharpening (RCAS)': 'Nitidez da tela (RCAS)',
-        'Sharpens the final image when it is the size of the window. With the upscaler on, turn on its own sharpening (Graphics page) instead: they switch each other off.': 'Aplica nitidez à imagem final quando ela tem o tamanho da janela. Com o upscaler ligado, use a nitidez dele (página Gráficos): as duas se desligam mutuamente.',
+        'Sharpens the final image when it is the size of the window. With the upscaler on, turn on its own sharpening (Experimental, below) instead: they switch each other off.': 'Aplica nitidez à imagem final quando ela tem o tamanho da janela. Com o upscaler ligado, use a nitidez dele (Experimental, abaixo): as duas se desligam mutuamente.',
         'Add to Steam': 'Adicionar à Steam',
         'Steam is open. Close it completely (Steam > Exit) and click again: Steam rewrites its shortcuts when it closes.': 'A Steam está aberta. Feche-a por completo (Steam > Sair) e clique de novo: a Steam reescreve os atalhos quando fecha.',
         'Steam was not found for this user.': 'A Steam não foi encontrada para este usuário.',
