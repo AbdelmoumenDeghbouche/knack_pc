@@ -129,20 +129,21 @@ void Pipeline::RecordWaveSizes() const {
     bool news = false;
     for (const vk::PipelineExecutablePropertiesKHR& executable : executables) {
         std::string key = vk::to_string(executable.stages);
-        if (instance.IsAmdShaderInfoEnabled()) {
-            // One stage bit per query; the first of the set names the executable.
-            const vk::ShaderStageFlagBits stage =
-                is_compute ? vk::ShaderStageFlagBits::eCompute
-                : (executable.stages & vk::ShaderStageFlagBits::eFragment)
-                    ? vk::ShaderStageFlagBits::eFragment
-                    : vk::ShaderStageFlagBits::eVertex;
+        // One stage bit per query: the last stage of the executable (vk_wave_stats.h).
+        const std::uint32_t stage_bit = AmdShaderInfoStageBit(
+            is_compute ? static_cast<std::uint32_t>(vk::ShaderStageFlagBits::eCompute)
+                       : static_cast<std::uint32_t>(executable.stages));
+        if (instance.IsAmdShaderInfoEnabled() && stage_bit != 0) {
+            const auto stage = static_cast<vk::ShaderStageFlagBits>(stage_bit);
             const auto [stats_result, stats] = instance.GetDevice().getShaderInfoAMD(
                 *pipeline, stage, vk::ShaderInfoTypeAMD::eStatistics);
             std::string stats_line = "stats unavailable";
+            std::optional<std::uint32_t> vgprs;
             if (stats_result == vk::Result::eSuccess &&
                 stats.size() >= sizeof(vk::ShaderStatisticsInfoAMD)) {
                 vk::ShaderStatisticsInfoAMD info{};
                 std::memcpy(&info, stats.data(), sizeof(info));
+                vgprs = info.numPhysicalVgprs;
                 key += "/vgpr" + std::to_string(info.numPhysicalVgprs);
                 stats_line = "physical vgprs " + std::to_string(info.numPhysicalVgprs) +
                              ", available " + std::to_string(info.numAvailableVgprs) +
@@ -162,14 +163,8 @@ void Pipeline::RecordWaveSizes() const {
                         Common::FS::GetUserPath(Common::FS::PathType::ShaderDir) / "wave_dumps";
                     std::error_code ec;
                     std::filesystem::create_directories(dir, ec);
-                    std::string name = vk::to_string(stage) + "_" +
-                                       std::to_string(histogram.DumpsOf(key)) + "_" +
-                                       std::to_string(executable.subgroupSize) + ".txt";
-                    for (char& c : name) {
-                        if (c == ' ' || c == '{' || c == '}' || c == '|') {
-                            c = '_';
-                        }
-                    }
+                    const std::string name = WaveDumpFileName(
+                        key, vgprs, histogram.DumpsOf(key), executable.subgroupSize);
                     std::ofstream out(dir / name, std::ios::binary);
                     out << "key " << key << "\n" << stats_line << "\n";
                     out.write(reinterpret_cast<const char*>(isa.data()),

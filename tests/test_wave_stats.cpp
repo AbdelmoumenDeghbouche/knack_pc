@@ -4,6 +4,7 @@
 #include <cassert>
 #include <cstdio>
 #include <cstdlib>
+#include <optional>
 
 #include "video_core/renderer_vulkan/vk_wave_stats.h"
 
@@ -46,6 +47,26 @@ int main() {
     assert(!dumps.ShouldDump("{ Compute }", 1));
     assert(dumps.DumpsOf("{ Fragment }") == 2u);
     assert(dumps.DumpsOf("{ Vertex }") == 0u);
+
+    // VK_AMD_shader_info takes one stage bit: the last stage of the executable (a merged
+    // executable such as { Vertex | TessellationControl } answers the same for either bit),
+    // none when no known graphics or compute bit is set.
+    assert(AmdShaderInfoStageBit(0x10u) == 0x10u);      // { Fragment }
+    assert(AmdShaderInfoStageBit(0x1u) == 0x1u);        // { Vertex }
+    assert(AmdShaderInfoStageBit(0x1u | 0x2u) == 0x2u); // { Vertex | TessellationControl }
+    assert(AmdShaderInfoStageBit(0x4u | 0x8u) == 0x8u); // { TessellationEvaluation | Geometry }
+    assert(AmdShaderInfoStageBit(0x8u) == 0x8u);        // { Geometry }
+    assert(AmdShaderInfoStageBit(0x20u) == 0x20u);      // { Compute }
+    assert(AmdShaderInfoStageBit(0x40u) == 0u);         // task, mesh, ray tracing: skipped
+    assert(AmdShaderInfoStageBit(0u) == 0u);
+
+    // Dump file names carry the stage set, the physical VGPR count (what separates wave32 from
+    // wave64 on AMD), the index within that key and the reported width, so two keys never
+    // overwrite each other; the braces, spaces, bars and slashes of the key are dropped.
+    assert(WaveDumpFileName("{ Fragment }", 32u, 1, 0) == "Fragment_vgpr32_1_0.txt");
+    assert(WaveDumpFileName("{ Vertex | TessellationControl }", 24u, 3, 0) ==
+           "Vertex_TessellationControl_vgpr24_3_0.txt");
+    assert(WaveDumpFileName("{ Compute }", std::nullopt, 2, 64) == "Compute_vgprNA_2_64.txt");
 
     std::puts("wave-stats-test: ok");
     return 0;

@@ -8,10 +8,44 @@
 
 #include <cstdint>
 #include <map>
+#include <optional>
 #include <string>
 #include <utility>
 
 namespace Vulkan {
+
+/// The one stage bit VK_AMD_shader_info is queried with for an executable of `stages`
+/// (VkShaderStageFlags): the last stage of the graphics pipeline that is set, or compute. A
+/// merged executable such as { Vertex | TessellationControl } answers the same for either of
+/// its bits. 0 when no known bit is set (task, mesh, ray tracing).
+inline std::uint32_t AmdShaderInfoStageBit(std::uint32_t stages) {
+    constexpr std::uint32_t kCompute = 0x20, kFragment = 0x10, kGeometry = 0x08,
+                            kTessEval = 0x04, kTessControl = 0x02, kVertex = 0x01;
+    for (const std::uint32_t bit :
+         {kCompute, kFragment, kGeometry, kTessEval, kTessControl, kVertex}) {
+        if (stages & bit) {
+            return bit;
+        }
+    }
+    return 0;
+}
+
+/// "<stages>_vgpr<V>_<index>_<width>.txt": the ISA dump of the `index`-th executable of the
+/// key (stages plus physical VGPR count, "NA" without statistics), so that two keys never share
+/// a file. The braces and spaces of vk::to_string are dropped; bars and slashes become '_'.
+inline std::string WaveDumpFileName(const std::string& stages, std::optional<std::uint32_t> vgprs,
+                                    std::uint32_t index, std::uint32_t width) {
+    std::string name;
+    for (const char c : stages) {
+        if (c == '{' || c == '}' || c == ' ') {
+            continue;
+        }
+        name += (c == '|' || c == '/') ? '_' : c;
+    }
+    name += "_vgpr" + (vgprs ? std::to_string(*vgprs) : std::string{"NA"});
+    name += "_" + std::to_string(index) + "_" + std::to_string(width) + ".txt";
+    return name;
+}
 
 class WaveSizeHistogram {
 public:
