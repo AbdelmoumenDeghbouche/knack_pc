@@ -250,6 +250,7 @@ if (WIN32)
     target_include_directories(tsc-clock-test PRIVATE .. ../src)
     target_link_libraries(tsc-clock-test PRIVATE bcrypt -pthread)
     add_executable(gow3-gpu-capabilities ../tools/gpu_capabilities.c ../packaging/windows/gow3-gpu-capabilities.rc)
+    target_include_directories(gow3-gpu-capabilities PRIVATE shadps4)
     target_link_libraries(gow3-gpu-capabilities PRIVATE Vulkan::Vulkan)
     # "Play God of War III.exe": the game with the launcher's saved settings, no launcher window.
     add_executable(gow3-play WIN32 ../packaging/windows/play.c ../packaging/windows/play.rc)

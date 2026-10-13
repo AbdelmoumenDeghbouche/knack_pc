@@ -10,7 +10,8 @@
 // instead: the depth test and the shaders then use the same single-sampled buffer. Guest
 // sizes and addresses still use the real sample count (GuestNumSamples).
 //
-// On with AMD's proprietary driver; GOW3_NO_MSAA=0 or 1 decides otherwise (vk_instance.cpp).
+// On with AMD's and Intel's Windows drivers (gow3_msaa_default.h); GOW3_NO_MSAA=0 or 1 decides
+// otherwise (vk_instance.cpp).
 
 #pragma once
 
