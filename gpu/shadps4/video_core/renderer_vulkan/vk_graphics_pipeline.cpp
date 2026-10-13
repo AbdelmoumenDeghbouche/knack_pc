@@ -437,6 +437,7 @@ GraphicsPipeline::GraphicsPipeline(
                vk::to_string(pipeline_result));
     pipeline = std::move(pipe);
     SetObjectName(device, *pipeline, "Graphics Pipeline {}", debug_str);
+    RecordWaveSizes();
 
     if (needs_square_pass) {
         auto square_blending = color_blending;

@@ -11,6 +11,9 @@
 #include "video_core/renderer_vulkan/vk_pipeline_cache.h"
 #include "video_core/renderer_vulkan/vk_pipeline_common.h"
 #include "video_core/renderer_vulkan/vk_scheduler.h"
+#include "video_core/renderer_vulkan/vk_wave_stats.h"
+#include <cstdio>
+#include <mutex>
 
 namespace Vulkan {
 
@@ -100,6 +103,30 @@ std::string Pipeline::GetDebugString() const {
         }
     }
     return stage_desc;
+}
+
+// gow3: one histogram for every pipeline of the process, reported to last_run.log on news and
+// every 256 pipelines (vk_wave_stats.h).
+void Pipeline::RecordWaveSizes() const {
+    if (!instance.IsPipelineExecutableInfoEnabled() || !pipeline) {
+        return;
+    }
+    const auto [result, executables] = instance.GetDevice().getPipelineExecutablePropertiesKHR(
+        vk::PipelineInfoKHR{.pipeline = *pipeline});
+    if (result != vk::Result::eSuccess) {
+        return;
+    }
+    static std::mutex mutex;
+    static WaveSizeHistogram histogram;
+    std::scoped_lock lock{mutex};
+    bool news = false;
+    for (const vk::PipelineExecutablePropertiesKHR& executable : executables) {
+        news |= histogram.Add(vk::to_string(executable.stages), executable.subgroupSize);
+    }
+    if (histogram.EndPipeline(news)) {
+        std::printf("GPU: wave sizes after %u pipelines: %s\n", histogram.Pipelines(),
+                    histogram.Summary().c_str());
+    }
 }
 
 } // namespace Vulkan

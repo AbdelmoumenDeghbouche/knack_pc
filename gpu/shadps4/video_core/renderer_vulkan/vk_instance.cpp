@@ -271,7 +271,8 @@ bool Instance::CreateDevice() {
         vk::PhysicalDeviceComputeShaderDerivativesFeaturesKHR,
         vk::PhysicalDeviceShaderMixedFloatDotProductFeaturesVALVE,
         vk::PhysicalDevicePipelineBinaryFeaturesKHR,
-        vk::PhysicalDeviceMaintenance5FeaturesKHR>();
+        vk::PhysicalDeviceMaintenance5FeaturesKHR,
+        vk::PhysicalDevicePipelineExecutablePropertiesFeaturesKHR>();
     features = feature_chain.get().features;
 
     const vk::StructureChain properties_chain = physical_device.getProperties2<
@@ -425,6 +426,18 @@ bool Instance::CreateDevice() {
         shader_clock_features = feature_chain.get<vk::PhysicalDeviceShaderClockFeaturesKHR>();
         LOG_INFO(Render_Vulkan, "- shaderSubgroupClock: {}",
                  shader_clock_features.shaderSubgroupClock);
+    }
+    // gow3: GOW3_WAVE_STATS=1 logs the subgroup width the driver compiled each pipeline stage
+    // at (vk_wave_stats.h). Off by default: the feature may change how the driver caches
+    // pipelines.
+    pipeline_executable_properties = [&] {
+        const char* env = std::getenv("GOW3_WAVE_STATS");
+        return env && env[0] == '1' &&
+               add_extension(VK_KHR_PIPELINE_EXECUTABLE_PROPERTIES_EXTENSION_NAME);
+    }();
+    if (pipeline_executable_properties) {
+        pipeline_executable_features =
+            feature_chain.get<vk::PhysicalDevicePipelineExecutablePropertiesFeaturesKHR>();
     }
     const bool calibrated_timestamps =
         TRACY_GPU_ENABLED ? add_extension(VK_EXT_CALIBRATED_TIMESTAMPS_EXTENSION_NAME) : false;
@@ -627,7 +640,13 @@ bool Instance::CreateDevice() {
         vk::PhysicalDeviceShaderMixedFloatDotProductFeaturesVALVE{
             .shaderMixedFloatDotProductFloat16AccFloat32 = true,
         },
+        vk::PhysicalDevicePipelineExecutablePropertiesFeaturesKHR{
+            .pipelineExecutableInfo = pipeline_executable_features.pipelineExecutableInfo,
+        },
     };
+    if (!pipeline_executable_properties) {
+        device_chain.unlink<vk::PhysicalDevicePipelineExecutablePropertiesFeaturesKHR>();
+    }
 
     if (!custom_border_color) {
         device_chain.unlink<vk::PhysicalDeviceCustomBorderColorFeaturesEXT>();
