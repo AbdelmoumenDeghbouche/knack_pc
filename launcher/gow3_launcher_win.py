@@ -24,6 +24,7 @@ import subprocess
 import sys
 import tempfile
 import threading
+import unicodedata
 import time
 import urllib.request
 import webbrowser
@@ -226,12 +227,32 @@ def register_font(path):
         return False
 
 
+# The God of War face has ASCII letters only: the Latin-script languages use it for headings with
+# the accents stripped (heading_text); the other scripts keep the launcher's usual families.
+LATIN_UI_LANGUAGES = ('en', 'es', 'pt', 'fr', 'de', 'it', 'pl', 'tr')
+HEADING_LETTERS = {'ß': 'ss', 'ẞ': 'SS', 'œ': 'oe', 'Œ': 'OE', 'æ': 'ae', 'Æ': 'AE', 'ø': 'o', 'Ø': 'O',
+                   'ł': 'l', 'Ł': 'L', 'ı': 'i', 'đ': 'd', 'Đ': 'D'}
+
+
+def heading_face(every_language=False):
+    """Whether headings are drawn with the God of War face: once its file is registered, in the
+    Latin-script languages, or in every language for the game's name."""
+    return FONT_LOADED and (every_language or LANG in LATIN_UI_LANGUAGES)
+
+
 def heading_font(size, fallback=None, every_language=False):
-    """Titles use the God of War face once its file is registered: in the English UI, or in every language
-    for the game's name. Otherwise the launcher's usual family."""
-    if FONT_LOADED and (every_language or LANG == 'en'):
+    if heading_face(every_language):
         return ('GodOfWar', size)
     return (fallback or SERIF_FONT, size)
+
+
+def heading_text(text, every_language=False):
+    """A heading's text for its font: in the God of War face the accents go (GRÁFICOS becomes
+    GRAFICOS) and the letters it lacks become their plain pair (ß becomes ss)."""
+    if not heading_face(every_language):
+        return text
+    text = ''.join(HEADING_LETTERS.get(c, c) for c in text)
+    return ''.join(c for c in unicodedata.normalize('NFD', text) if unicodedata.category(c) != 'Mn')
 
 
 # ---------------------------------------------------------------------------------------------
@@ -817,7 +838,7 @@ class Launcher:
 
     def section(self, parent, title, top=20):
         r = self.next_row(parent)
-        self.ttk.Label(parent, text=title.upper(), style='Section.TLabel').grid(
+        self.ttk.Label(parent, text=heading_text(title.upper()), style='Section.TLabel').grid(
             row=r, column=0, columnspan=2, sticky='w', pady=(top, 0))
         self.tk.Frame(parent, bg=LINE, height=1).grid(row=r + 1, column=0, columnspan=2, sticky='we', pady=(2, 2))
 
@@ -844,7 +865,7 @@ class Launcher:
         outer = ttk.Frame(self.content)
         head = ttk.Frame(outer, padding=(28, 22, 28, 6))
         head.pack(fill='x')
-        ttk.Label(head, text=title.upper(), background=PANEL, foreground=TEXT, font=heading_font(20)).pack(anchor='w')
+        ttk.Label(head, text=heading_text(title.upper()), background=PANEL, foreground=TEXT, font=heading_font(20)).pack(anchor='w')
         ttk.Label(head, text=subtitle, style='Muted.TLabel').pack(anchor='w')
         canvas = tk.Canvas(outer, bg=PANEL, highlightthickness=0, bd=0)
         bar = ttk.Scrollbar(outer, orient='vertical', command=canvas.yview)
@@ -866,7 +887,8 @@ class Launcher:
         side = tk.Frame(self.root, bg=BG, width=self.px(220))
         side.pack(side='left', fill='y')
         side.pack_propagate(False)
-        self.side_title = tk.Label(side, text=APP_NAME.upper(), bg=BG, fg=TEXT, font=heading_font(15, every_language=True),
+        self.side_title = tk.Label(side, text=heading_text(APP_NAME.upper(), every_language=True), bg=BG, fg=TEXT,
+                                   font=heading_font(15, every_language=True),
                                    wraplength=self.px(190), justify='left')
         self.side_title.pack(anchor='w', padx=22, pady=(24, 22))
         self.side = side
@@ -874,7 +896,8 @@ class Launcher:
         titles = {'home': _('Home'), 'graphics': _('Graphics', 'Графика'), 'performance': _('Performance'),
                   'game': _('Game', 'Игра'), 'advanced': _('Advanced', 'Дополнительно')}
         for name in PAGES:
-            item = tk.Label(side, text='    ' + titles[name], bg=BG, fg=TEXT, anchor='w', font=heading_font(11, UI_FONT),
+            item = tk.Label(side, text='    ' + heading_text(titles[name]), bg=BG, fg=TEXT, anchor='w',
+                            font=heading_font(11, UI_FONT),
                             pady=10, cursor='hand2')
             item.pack(fill='x')
             item.bind('<Button-1>', lambda _e, n=name: self.show(n))
@@ -895,7 +918,7 @@ class Launcher:
         bar.pack_propagate(False)
         self.status = tk.Label(bar, text='', bg=BG, fg=MUTED, font=(UI_FONT, 10), anchor='w', justify='left')
         self.status.pack(side='left', padx=24)
-        self.play_button = ttk.Button(bar, text=_('PLAY', 'ИГРАТЬ'), style='Play.TButton', command=self.play)
+        self.play_button = ttk.Button(bar, text=heading_text(_('PLAY', 'ИГРАТЬ')), style='Play.TButton', command=self.play)
         self.play_button.pack(side='right', padx=(self.px(10), self.px(24)), pady=self.px(11))
         self.content = tk.Frame(right, bg=PANEL)
         self.content.pack(fill='both', expand=True)
@@ -936,7 +959,7 @@ class Launcher:
                                         command=lambda: self.show('game'))
         quick = ttk.Frame(page, padding=(28, 14, 28, 8))
         quick.pack(fill='x')
-        ttk.Label(quick, text=_('Quick settings', 'Основное').upper(), style='Section.TLabel').grid(
+        ttk.Label(quick, text=heading_text(_('Quick settings', 'Основное').upper()), style='Section.TLabel').grid(
             row=0, column=0, columnspan=4, sticky='w')
         tk.Frame(quick, bg=LINE, height=1).grid(row=1, column=0, columnspan=4, sticky='we', pady=(2, 6))
         items = ((_('Display mode'), 'display_mode', DISPLAY_MODES), (_('Frame rate limit'), 'fps_limit', FPS_LIMITS),
@@ -970,7 +993,8 @@ class Launcher:
                 c.create_rectangle(0, h - 120 + i * 24, w, h - 96 + i * 24, fill=PANEL, outline='', stipple=stipple)
             c.create_rectangle(0, h - 24, w, h, fill=PANEL, outline='')
         else:
-            c.create_text(30, h - 74, text=APP_NAME.upper(), anchor='w', fill=TEXT, font=heading_font(32, every_language=True))
+            c.create_text(30, h - 74, text=heading_text(APP_NAME.upper(), every_language=True), anchor='w', fill=TEXT,
+                          font=heading_font(32, every_language=True))
         if info:
             title_id = game_profile_of(folder)[0]
             sub = _('{} · version {}', '{} · версия {}').format(title_id or '?', info[1])
@@ -1275,7 +1299,7 @@ class Launcher:
         table = ttk.Frame(f)
         table.grid(row=self.next_row(f), column=0, columnspan=2, sticky='w', pady=(16, 0))
         for column, span, title in ((0, 2, _('GAME BUTTON')), (2, 1, _('KEYBOARD')), (3, 2, _('GAMEPAD'))):
-            ttk.Label(table, text=title, style='Section.TLabel').grid(row=0, column=column, columnspan=span, sticky='w')
+            ttk.Label(table, text=heading_text(title), style='Section.TLabel').grid(row=0, column=column, columnspan=span, sticky='w')
         self.control_vars, self.pad_boxes, self.pad_icons = {'key': {}, 'pad': {}}, {}, {}
         size = self.px(28)
         labels = PAD_STYLES[style]
@@ -1413,7 +1437,7 @@ class Launcher:
 
         def flip(_e=None):
             shown.set(not shown.get())
-            toggle.configure(text=('▾ ' if shown.get() else '▸ ') + _('Diagnostics (for development)').upper())
+            toggle.configure(text=('▾ ' if shown.get() else '▸ ') + heading_text(_('Diagnostics (for development)').upper()))
             if shown.get():
                 body.grid(row=body_row, column=0, columnspan=2, sticky='we')
             else:
@@ -1446,7 +1470,7 @@ class Launcher:
         info = game_info(folder)
         title = info[0] if info else APP_NAME
         self.root.title(f'{title} (PC)')
-        self.side_title.configure(text=title.upper())
+        self.side_title.configure(text=heading_text(title.upper(), every_language=True))
         if self.current_page == 'game':
             self.refresh_game_patches()
         self.banner_source = None
@@ -1457,7 +1481,7 @@ class Launcher:
     def refresh_status(self):
         info = game_info(self.meta_dir())
         if not self.process:
-            self.play_button.configure(text=_('PLAY', 'ИГРАТЬ'), state='normal' if info else 'disabled')
+            self.play_button.configure(text=heading_text(_('PLAY', 'ИГРАТЬ')), state='normal' if info else 'disabled')
             self.status.configure(text=self.summary() if info else _('Choose the game folder first.',
                                                                      'Сначала выберите папку игры.'), fg=MUTED)
 
@@ -1647,7 +1671,7 @@ class Launcher:
             return
         self.job = GameJob(self.process)
         threading.Thread(target=self.read_output, args=(self.process,), daemon=True).start()
-        self.play_button.configure(text=_('RUNNING'), state='disabled')
+        self.play_button.configure(text=heading_text(_('RUNNING')), state='disabled')
         self.status.configure(text=_('Preparing the game; it opens in its own window…',
                                      'Подготовка игры; она откроется в своём окне…'), fg=TEXT)
         if self.app.get('close_on_play'):
