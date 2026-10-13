@@ -1687,6 +1687,7 @@ class Launcher:
         global LANG
         LANG = language
         log, page, update = self.log.get('1.0', 'end-1c'), self.current_page, self.pending_update
+        status = self.status['text'], self.status['fg']  # of the running game; otherwise build() redoes it
         for var in self.vars.values():  # the old widgets' value labels and links
             for modes, name in var.trace_info():
                 var.trace_remove(modes, name)
@@ -1698,6 +1699,7 @@ class Launcher:
         self.set_log(log)
         if self.process:
             self.play_button.configure(text=heading_text(_('RUNNING')), state='disabled')
+            self.status.configure(text=status[0], fg=status[1])
         if update:
             self.offer_update(*update)
         self.show(page)

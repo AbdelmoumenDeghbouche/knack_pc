@@ -89,6 +89,14 @@ class SaveButtonTest(LauncherOverTemporaryFiles):
         self.assertIn('line one', self.app.log.get('1.0', 'end'))
         self.assertEqual(self.save_state(), 'disabled')
 
+    def test_rebuilding_keeps_the_status_of_a_running_game(self):
+        self.app.process = mock.Mock()
+        self.app.status.configure(text='The game is running.', fg=launcher.TEXT)
+        self.app.var('ui_language', 'app').set('ru')
+        self.app.save()
+        self.assertEqual(str(self.app.status['text']), 'The game is running.')
+        self.assertEqual(str(self.app.status['fg']), launcher.TEXT)
+
     def test_nothing_is_written_before_saving(self):
         self.app.var('vsync', 'ini').set(False)
         self.save_state()
