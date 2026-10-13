@@ -4,16 +4,17 @@
 
 On Windows the pool is one SEC_COMMIT section of GOW3_DMEM_MB plus the 1 GiB flexible span,
 charged in full at start. The 4K patch asks for about 11 GiB of direct memory: on a 16 GB PC
-with stream buffers in system RAM the game then showed a black screen with no error in the
-log, and ran with GOW3_STREAM_MEMORY=device. The page file may grow (system managed), so the
-commit free before the start says little; the installed RAM is compared instead.
+with a small system managed page file the start then depends on Windows growing the page file
+in time, and the game closes ("cannot create ... MiB of guest memory (error 1450)") when it
+does not. The page file may grow, so the commit free before the start says little; the
+installed RAM is compared instead.
 """
 import sys
 
 DMEM_RETAIL_MB = 5056  # runtime_memory.c pool_size_bytes default
 FLEX_SPAN_MB = 1024    # runtime_memory.c FLEX_SPAN
 # The probe's own memory besides the pool. Measured on one PC (RTX 5070, 16 GB, 4K): about
-# 2 GiB with stream buffers in GPU memory; with them in system RAM (cached/host) it did not fit.
+# 2 GiB with stream buffers in GPU memory, more with them in system RAM (cached/host).
 HEADROOM_MB = {'device': 2048, 'cached': 4096, 'host': 4096}
 
 
@@ -58,5 +59,5 @@ def memory_warning(dmem_mb, physical_mb, stream_memory='cached'):
         return None
     advice = 'set Performance -> Stream buffer memory to GPU memory, ' if stream != 'device' else ''
     return (f'Memory: the guest memory pool commits {pool} MiB and the game needs about {needed} MiB '
-            f'in all, more than the {physical_mb} MiB of RAM. The game may freeze on a black screen: '
+            f'in all, more than the {physical_mb} MiB of RAM. The game may close at start (error 1450): '
             f'{advice}make sure the Windows page file can grow, or choose a lower render resolution.')
