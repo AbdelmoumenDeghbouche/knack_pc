@@ -6,6 +6,7 @@
 #include <string.h>
 #include <inttypes.h>
 #include "runtime.h"
+#include "cpu_check.h"
 #include "orb_hook.h"
 #include "cheat_hook.h"
 #include "actor_hook.h"
@@ -581,6 +582,16 @@ int main(int argc, char **argv) {
     if (argc < 2) {
         fprintf(stderr, "Usage: %s boot.bin [--cpu-only] [--strict-imports] [--check-imports] [--content-profile file] [--app0 dir] [--user dir] [--patches file] [--timeout seconds] | --vulkan-only\n", argv[0]);
         return 1;
+    }
+    /* The guest code needs the PS4's instruction sets (#33, #66); GOW3_CPU_CHECK=0 skips this. */
+    const char *cpu_check = getenv("GOW3_CPU_CHECK");
+    if (!cpu_check || strcmp(cpu_check, "0")) {
+        char missing[128];
+        if (cpu_missing_features(cpu_feature_words(), missing, sizeof missing)) {
+            printf("STOP: this CPU lacks instruction sets the game's code uses: %s "
+                   "(Intel Haswell 2013 or newer, or AMD Ryzen or newer, is needed)\n", missing);
+            return 20;
+        }
     }
     if (content_profile) {
         FILE *profile=fopen(content_profile,"rb");

@@ -107,6 +107,10 @@ com X e 120 FPS vêm ligados. Mude resolução e FPS na **Home** ou em **Perform
 ## Requisitos
 
 - Windows 10 (1903 ou mais novo) ou Windows 11, 64 bits.
+- Processador de 64 bits com os conjuntos de instruções do PS4 (AVX, F16C, BMI1, MOVBE, LZCNT):
+  Intel Haswell (2013) ou mais novo, AMD Ryzen ou mais novo. O código do jogo roda na CPU como
+  está, então um processador mais antigo para na abertura com uma linha `STOP: this CPU lacks`
+  no log.
 - Placa de vídeo com Vulkan 1.3 e driver atualizado.
 - Sua cópia do jogo: CUSA01623 com a atualização 01.02 aplicada (a pasta com `eboot.bin`,
   `sce_module` e `sce_sys`).

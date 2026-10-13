@@ -106,6 +106,9 @@ Patches and fixes are included and applied automatically: texture fix, skip vide
 ## Requirements
 
 - Windows 10 (1903 or newer) or Windows 11, 64-bit.
+- A 64-bit processor with the PS4's instruction sets (AVX, F16C, BMI1, MOVBE, LZCNT): Intel
+  Haswell (2013) or newer, AMD Ryzen or newer. The game's own code runs on the CPU as it is, so
+  an older processor stops at start with a `STOP: this CPU lacks` line in the log.
 - A graphics card with Vulkan 1.3 and a current driver.
 - Your copy of the game: CUSA01623 with the 01.02 update applied (the folder with `eboot.bin`,
   `sce_module` and `sce_sys`).
