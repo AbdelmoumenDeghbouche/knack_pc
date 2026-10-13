@@ -67,6 +67,8 @@ int main() {
     assert(WaveDumpFileName("{ Vertex | TessellationControl }", 24u, 3, 0) ==
            "Vertex_TessellationControl_vgpr24_3_0.txt");
     assert(WaveDumpFileName("{ Compute }", std::nullopt, 2, 64) == "Compute_vgprNA_2_64.txt");
+    // The caller may pass the histogram key, which already carries the VGPR suffix.
+    assert(WaveDumpFileName("{ Fragment }/vgpr32", 32u, 1, 0) == "Fragment_vgpr32_1_0.txt");
 
     std::puts("wave-stats-test: ok");
     return 0;

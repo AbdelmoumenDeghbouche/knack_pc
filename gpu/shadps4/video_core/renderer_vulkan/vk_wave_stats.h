@@ -32,9 +32,13 @@ inline std::uint32_t AmdShaderInfoStageBit(std::uint32_t stages) {
 
 /// "<stages>_vgpr<V>_<index>_<width>.txt": the ISA dump of the `index`-th executable of the
 /// key (stages plus physical VGPR count, "NA" without statistics), so that two keys never share
-/// a file. The braces and spaces of vk::to_string are dropped; bars and slashes become '_'.
-inline std::string WaveDumpFileName(const std::string& stages, std::optional<std::uint32_t> vgprs,
+/// a file. `stages` may be the histogram key itself, whose "/vgprN" suffix is dropped before the
+/// count is appended once. The braces and spaces of vk::to_string are dropped; bars become '_'.
+inline std::string WaveDumpFileName(std::string stages, std::optional<std::uint32_t> vgprs,
                                     std::uint32_t index, std::uint32_t width) {
+    if (const auto slash = stages.find("/vgpr"); slash != std::string::npos) {
+        stages.erase(slash);
+    }
     std::string name;
     for (const char c : stages) {
         if (c == '{' || c == '}' || c == ' ') {

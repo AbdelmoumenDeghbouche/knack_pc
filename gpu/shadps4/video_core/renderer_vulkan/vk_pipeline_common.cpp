@@ -128,7 +128,8 @@ void Pipeline::RecordWaveSizes() const {
     std::scoped_lock lock{mutex};
     bool news = false;
     for (const vk::PipelineExecutablePropertiesKHR& executable : executables) {
-        std::string key = vk::to_string(executable.stages);
+        const std::string stages = vk::to_string(executable.stages);
+        std::string key = stages;
         // One stage bit per query: the last stage of the executable (vk_wave_stats.h).
         const std::uint32_t stage_bit = AmdShaderInfoStageBit(
             is_compute ? static_cast<std::uint32_t>(vk::ShaderStageFlagBits::eCompute)
@@ -164,7 +165,7 @@ void Pipeline::RecordWaveSizes() const {
                     std::error_code ec;
                     std::filesystem::create_directories(dir, ec);
                     const std::string name = WaveDumpFileName(
-                        key, vgprs, histogram.DumpsOf(key), executable.subgroupSize);
+                        stages, vgprs, histogram.DumpsOf(key), executable.subgroupSize);
                     std::ofstream out(dir / name, std::ios::binary);
                     out << "key " << key << "\n" << stats_line << "\n";
                     out.write(reinterpret_cast<const char*>(isa.data()),
