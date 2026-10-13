@@ -4,7 +4,7 @@
 
 Every setting of the port in one window: the game folder and saves, gow3.ini (upscaler,
 preset, output, effects), start-up options passed to run.py as environment variables
-(frame rate, presentation, HDR, ...), mods, third-party patches and the FSR 4 assets.
+(frame rate, presentation, HDR, ...), mods, third-party patches and controls.
 Launcher options live in %APPDATA%/gow3-launcher/settings.json (~/.config/gow3-launcher on Linux).
 
 Frozen with PyInstaller (packaging/windows/package.sh) the same God of War III.exe also runs the
@@ -241,7 +241,7 @@ def heading_font(size, fallback=None, every_language=False):
 INI_FLAGS = {'cheat_double_jumps', 'cheat_very_hard', 'sharpen', 'object_motion', 'show_fps', 'vsync', 'async_shaders', 'deferred_readback',
              'stale_readback', 'fsr1', 'rcas'}
 # The graphics keys are also in the in-game menu (Insert / R3+L2); run.py reads the startup ones.
-INI_DEFAULTS = {'upscaler': 'fsr4', 'preset': '1', 'sharpen': '1', 'sharpness': '0.50',
+INI_DEFAULTS = {'upscaler': 'fsr3', 'preset': '1', 'sharpen': '1', 'sharpness': '0.50',
                 'object_motion': '1', 'show_fps': '1', 'output_res': '1920x1080',
                 'live_resolution': 'auto', 'display_mode': 'windowed', 'vsync': '1', 'fps_limit': '0',
                 'async_shaders': '1', 'deferred_readback': '1', 'stale_readback': '1',
@@ -251,8 +251,7 @@ DISPLAY_MODES = [('windowed', ('Windowed',)), ('borderless', ('Borderless',)), (
 FPS_LIMITS = [('30', ('30',)), ('60', ('60',)), ('120', ('120',)), ('240', ('240',)), ('0', ('Unlimited',))]
 # The sidebar's pages, top to bottom, and the methods that refresh a page's lists when it is shown.
 PAGES = ('home', 'graphics', 'performance', 'game', 'advanced')
-PAGE_REFRESH = {'home': ('refresh_status',), 'graphics': ('refresh_fsr4',),
-                'game': ('refresh_lists', 'refresh_game_patches')}
+PAGE_REFRESH = {'home': ('refresh_status',), 'game': ('refresh_lists', 'refresh_game_patches')}
 APP_DEFAULTS = {'ui_language': 'en', 'game_dir': os.environ.get('GOW3_GAME_DIR', str(PORT_DIR.parent / 'CUSA01623') if WINDOWS else ''), 'update_dir': '', 'experimental_upscaler': False,
                 'video_backend': 'auto', 'gamemode': False, 'mangohud': False, 'desktop_integration': True, 'user_dir': '',
                 'mods_dir': '', 'mods_enabled': True, 'patches_dir': '', 'language': '1',
@@ -316,12 +315,24 @@ def control_map(controls, kind):
     return ','.join(f'{button}={chosen[button].strip()}' for button, _key, _pad in CONTROLS
                     if button in chosen and not set(chosen[button]) & set(',='))
 
-UPSCALERS = [('dlss', ('DLSS (NVIDIA GeForce RTX)',)),
-             ('fsr4', ('FSR 4 (best quality)', 'FSR 4 (лучшее качество)')),
-             ('fsr411', ('FSR 4.1.1 (needs fsr4_411 assets)', 'FSR 4.1.1 (нужны ассеты fsr4_411)')),
-             ('fsr3', ('FSR 3.1 (every GPU)', 'FSR 3.1 (любая видеокарта)')),
+# The Upscaler choice: one mode over two gow3.ini keys, upscaler (the temporal ones and TAA) and
+# fsr1 (spatial). The in-game menu and old settings may still hold FSR 4 or DLSS: shown as FSR 3.1.
+UPSCALERS = [('fsr3', ('FSR 3.1 (every GPU)', 'FSR 3.1 (любая видеокарта)')),
              ('taa', ('TAA (native resolution anti-aliasing)', 'TAA (нативное сглаживание)')),
+             ('fsr1', ('FSR 1 (spatial, every GPU)', 'FSR 1 (пространственный, любая видеокарта)')),
              ('off', ('Off', 'Выключен'))]
+
+
+def upscale_mode(upscaler, fsr1):
+    """The Upscaler choice shown for gow3.ini's upscaler and fsr1 (a temporal upscaler wins)."""
+    if upscaler in ('taa', 'off'):
+        return 'fsr1' if upscaler == 'off' and fsr1 in (True, '1') else upscaler
+    return 'fsr3'
+
+
+def upscale_settings(mode):
+    """(upscaler, fsr1) of gow3.ini for an Upscaler choice."""
+    return ('off', '1') if mode == 'fsr1' else (mode, '0')
 PRESETS = [('0', ('Native AA (×1.0)',)), ('1', ('Quality (×1.5)',)), ('2', ('Balanced (×1.7)',)),
            ('3', ('Performance (×2)',)), ('4', ('Ultra Performance (×3)',))]
 OUTPUTS = [('1280x720', ('1280 × 720 (Steam Deck)',)), ('1920x1080', ('1920 × 1080',)),
@@ -341,32 +352,11 @@ STREAM_MEMORY = [('cached', ('System RAM (cached, default)',)),
 FRAMES_QUEUED = [('1', ('1 (lowest latency)',)), ('2', ('2',)), ('0', ('Unlimited',))]
 UI_LANGUAGES = gow3_lang.LANGUAGE_NAMES
 
-FSR4_COMMIT = 'ae8d628fae208813172446d1e49ed94150b04658'
-FSR4_BASE = f'https://raw.githubusercontent.com/FireBurn/Q2RTX/{FSR4_COMMIT}/baseq2/fsr4_shaders'
-
-
-def fsr4_files():
-    """The FSR 4 v07 asset set of tools/fetch_fsr4_assets.sh (1080 and 2160 tiers)."""
-    files = ['LICENSE-FSR4-v07.txt', 'rcas.spv', 'spd_auto_exposure.spv']
-    for model in ('native', 'quality', 'balanced', 'performance', 'ultraperf', 'drs'):
-        files += [f'fsr4_model_v07_i8_{model}_initializers.bin', f'fsr4_model_v07_i8_{model}_pre_weights.bin',
-                  f'fsr4_model_v07_i8_{model}_shader_manifest.json']
-        for tier in ('1080', '2160'):
-            files += [f'fsr4_model_v07_i8_{model}_{tier}_pre.spv', f'fsr4_model_v07_i8_{model}_{tier}_post.spv']
-            files += [f'fsr4_model_v07_i8_{model}_{tier}_pass{n}.spv' for n in range(1, 13)]
-    return files
-
-
 def fsr4_folder():
     """Next to the port; in the data directory when the port is read-only (AppImage)."""
     if WINDOWS or os.access(PORT_DIR, os.W_OK):
         return PORT_DIR / 'fsr4_shaders'
     return DATA_DIR / 'fsr4_shaders'
-
-
-def fsr4_missing():
-    folder = fsr4_folder()
-    return [name for name in fsr4_files() if not (folder / name).is_file() or not (folder / name).stat().st_size]
 
 
 def load_json(path, default):
@@ -617,7 +607,6 @@ class Launcher:
         self.ini, self.ini_lines = load_ini()
         self.vars = {}
         self.process = self.job = None
-        self.downloading = False
         self.output = queue.Queue()
         self.banner_source = self.banner_image = None
         self.ui_calls = queue.Queue()  # work for the Tk thread from helper threads
@@ -781,9 +770,9 @@ class Launcher:
             self.vars[key] = v
         return self.vars[key]
 
-    def choice(self, parent, key, store, options, width=30):
+    def choice(self, parent, key, store, options, width=30, var=None):
         """A combobox over (value, (english, russian)) pairs, kept in sync with its variable."""
-        var = self.var(key, store)
+        var = var or self.var(key, store)
         values = [v for v, _t in options]
         box = self.ttk.Combobox(parent, values=[_(*text) for _v, text in options], state='readonly', width=width)
         if var.get() not in values:
@@ -1005,21 +994,32 @@ class Launcher:
     def build_graphics(self):
         """The display options, then the temporal upscalers: not calibrated for this game yet, so
         run.py turns them off unless the Experimental switch is on."""
-        ttk = self.ttk
+        tk, ttk = self.tk, self.ttk
         f = self.scrolled_page('graphics', _('Graphics', 'Графика'), _('How the game appears on your screen.'))
         self.build_display(f)
         self.section(f, _('Experimental'))
         self.check(f, 'experimental_upscaler', 'app', _('Enable the upscaler (experimental)'),
-                   _('Off (default): the game runs without temporal upscaling. These upscalers are not calibrated '
-                     'for this game yet: expect ghosting or flicker. FSR 3.1 needs nothing else; FSR 4 needs the '
-                     'assets below, and without them the game uses FSR 3.1. The options on this page only take '
-                     'effect with this switch on.'), restart=True)
+                   _('Off (default): the game runs without temporal upscaling; FSR 3.1 and TAA need this switch on. '
+                     'FSR 3.1 is not calibrated for this game yet: expect ghosting or flicker. FSR 1 and the '
+                     'sharpening work either way.',
+                     'Выкл. (по умолчанию): игра без временного апскейлинга; FSR 3.1 и TAA нужен этот переключатель. '
+                     'FSR 3.1 ещё не откалиброван для этой игры: возможны гостинг и мерцание. FSR 1 и резкость '
+                     'работают в любом случае.'), restart=True)
         self.section(f, _('Upscaling', 'Апскейлинг'))
-        self.row(f, _('Upscaler', 'Апскейлер'), self.choice(f, 'upscaler', 'ini', UPSCALERS),
-                 _("Temporal upscaling with the game's own motion vectors. FSR 4 needs its assets (below) and "
-                   'a GPU with INT8 dot products; otherwise the game falls back to FSR 3.1 by itself.',
-                   'Временной апскейлинг с векторами движения игры. FSR 4 нужны ассеты (ниже) и GPU с INT8; '
-                   'иначе игра сама переключится на FSR 3.1.'))
+        upscaler, fsr1 = self.var('upscaler', 'ini'), self.var('fsr1', 'ini')
+        self.upscale_mode = tk.StringVar(value=upscale_mode(upscaler.get(), fsr1.get()))
+
+        def mode_changed(*_args):
+            value, spatial = upscale_settings(self.upscale_mode.get())
+            upscaler.set(value)
+            fsr1.set(spatial == '1')
+        self.upscale_mode.trace_add('write', mode_changed)
+        mode_changed()  # an upscaler this launcher no longer offers becomes FSR 3.1 in gow3.ini
+        self.row(f, _('Upscaler', 'Апскейлер'), self.choice(f, None, None, UPSCALERS, var=self.upscale_mode),
+                 _("FSR 3.1 and TAA: temporal, with the game's own motion vectors, at the preset's render scale. "
+                   'FSR 1: spatial, enlarges the Render resolution (Performance) to the window.',
+                   'FSR 3.1 и TAA: временные, с векторами движения игры, в масштабе пресета. '
+                   'FSR 1: пространственный, растягивает разрешение рендера (Производительность) до окна.'))
         self.row(f, _('Quality preset', 'Пресет'), self.choice(f, 'preset', 'ini', PRESETS),
                  _('Render scale per axis: Quality renders at 1/1.5 of the output size.',
                    'Масштаб рендера по каждой оси: Quality рисует в 1/1.5 размера вывода.'))
@@ -1045,38 +1045,9 @@ class Launcher:
         self.check(f, 'object_motion', 'ini', _('Object motion vectors', 'Векторы движения объектов'),
                    _('Less ghosting on characters, cloth and weapons; costs about 10% FPS.',
                      'Меньше гостинга на персонажах и одежде; стоит около 10% FPS.'))
-        self.section(f, _('FSR 4 assets', 'Ассеты FSR 4'))
-        self.fsr4_label = ttk.Label(f, text='', wraplength=self.px(640), justify='left')
-        self.fsr4_label.grid(row=self.next_row(f), column=0, columnspan=2, sticky='w')
-        holder = ttk.Frame(f)
-        holder.grid(row=self.next_row(f), column=0, columnspan=2, sticky='w', pady=(8, 0))
-        self.fsr4_button = ttk.Button(holder, text=_('Download FSR 4 assets', 'Скачать ассеты FSR 4'),
-                                      command=self.download_fsr4)
-        self.fsr4_button.pack(side='left')
-        self.fsr4_progress = ttk.Progressbar(holder, length=280, maximum=len(fsr4_files()))
-        self.fsr4_progress.pack(side='left', padx=12)
-        self.note(f, _("From FireBurn/Q2RTX on GitHub (built from AMD's MIT-licensed FidelityFX source), "
-                       'about 30 MB, into the fsr4_shaders folder of the port.',
-                       'С GitHub FireBurn/Q2RTX (собраны из MIT-исходников AMD FidelityFX), около 30 МБ, '
-                       'в папку fsr4_shaders порта.'), top=6)
-
-    def build_display(self, f):
-        """Window, scaling and overlay: the top of the Graphics page."""
-        tk, ttk = self.tk, self.ttk
-        self.section(f, _('Window', 'Окно'), top=4)
-        self.row(f, _('Display mode'), self.choice(f, 'display_mode', 'ini', DISPLAY_MODES),
-                 _('Borderless covers the screen without changing the display mode.'))
-        self.check(f, 'vsync', 'ini', _('VSync'), _('Off allows tearing for the lowest latency.'))
-        self.check(f, 'hdr', 'app', _('Allow HDR output', 'Разрешить HDR'),
-                   _('When HDR is on in Windows and the display supports it.',
-                     'Если HDR включён в Windows и монитор его поддерживает.'))
-        self.section(f, _('Scaling and sharpening'))
-        self.check(f, 'fsr1', 'ini', _('Upscale with FSR 1'),
-                   _('Enlarges a smaller game image to the window. With Render resolution 720p (Performance) '
-                     'it raises the FPS; at the size of the window it does nothing.'))
         self.check(f, 'rcas', 'ini', _('Screen sharpening (RCAS)'),
                    _('Sharpens the final image when it is the size of the window. With the upscaler on, '
-                     'turn on its own sharpening (Experimental, below) instead: they switch each other off.'))
+                     'turn on its own sharpening (above) instead: they switch each other off.'))
         holder = ttk.Frame(f)
         strength = self.var('rcas_strength', 'ini')
         tk.Scale(holder, from_=0, to=100, orient='horizontal', variable=strength, showvalue=False, length=self.px(260),
@@ -1087,7 +1058,17 @@ class Launcher:
         show = lambda *_a: value.configure(text=f'{strength.get()}%')
         strength.trace_add('write', show)
         show()
-        self.row(f, _('Sharpening strength'), holder)
+        self.row(f, _('Screen sharpening strength'), holder)
+
+    def build_display(self, f):
+        """Window and overlay: the top of the Graphics page."""
+        self.section(f, _('Window', 'Окно'), top=4)
+        self.row(f, _('Display mode'), self.choice(f, 'display_mode', 'ini', DISPLAY_MODES),
+                 _('Borderless covers the screen without changing the display mode.'))
+        self.check(f, 'vsync', 'ini', _('VSync'), _('Off allows tearing for the lowest latency.'))
+        self.check(f, 'hdr', 'app', _('Allow HDR output', 'Разрешить HDR'),
+                   _('When HDR is on in Windows and the display supports it.',
+                     'Если HDR включён в Windows и монитор его поддерживает.'))
         self.section(f, _('Overlay'))
         self.check(f, 'show_fps', 'ini', _('Show performance overlay'),
                    _('Items, size and corner: in-game menu (Insert / R3+L2) > Overlay.'))
@@ -1494,42 +1475,6 @@ class Launcher:
         if status and status.get('skipped'):
             text += ' · ' + _('{} not found in this eboot.bin at the last start (see Log)').format(len(status['skipped']))
         return text
-
-    def refresh_fsr4(self):
-        total, missing = len(fsr4_files()), len(fsr4_missing())
-        self.fsr4_progress.configure(value=total - missing)
-        self.fsr4_label.configure(
-            text=_('Installed: {} files in {}.', 'Установлены: {} файлов в {}.').format(total, fsr4_folder())
-            if not missing else _('{} of {} files missing in {}.', 'Нет {} из {} файлов в {}.').format(
-                missing, total, fsr4_folder()))
-        self.fsr4_button.configure(state='normal' if missing and not self.downloading else 'disabled')
-
-    def download_fsr4(self):
-        self.downloading = True
-        self.fsr4_button.configure(state='disabled')
-        folder = fsr4_folder()
-
-        def work():
-            error = None
-            try:
-                folder.mkdir(parents=True, exist_ok=True)
-                for name in fsr4_missing():
-                    part = folder / (name + '.part')
-                    with urllib.request.urlopen(f'{FSR4_BASE}/{name}', timeout=60) as response:
-                        part.write_bytes(response.read())
-                    part.replace(folder / name)
-                    self.ui_calls.put(self.refresh_fsr4)
-            except OSError as failure:
-                error = failure
-
-            def done():
-                self.downloading = False
-                self.refresh_fsr4()
-                self.refresh_status()
-                if error:
-                    self.messagebox.showerror('FSR 4', _('Download failed: {}', 'Не удалось скачать: {}').format(error))
-            self.ui_calls.put(done)
-        threading.Thread(target=work, daemon=True).start()
 
     def refresh_lists(self):
         if not hasattr(self, 'patches_frame'):

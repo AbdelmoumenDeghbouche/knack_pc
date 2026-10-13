@@ -13,7 +13,7 @@ class PagesTest(unittest.TestCase):
 
     def test_showing_a_page_refreshes_what_it_holds(self):
         self.assertEqual(launcher.PAGE_REFRESH['home'], ('refresh_status',))
-        self.assertEqual(launcher.PAGE_REFRESH['graphics'], ('refresh_fsr4',))
+        self.assertNotIn('graphics', launcher.PAGE_REFRESH)  # nothing on it is a list to rebuild
         self.assertEqual(launcher.PAGE_REFRESH['game'], ('refresh_lists', 'refresh_game_patches'))
 
     def test_every_refreshed_page_is_a_sidebar_page(self):
