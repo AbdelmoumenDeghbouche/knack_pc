@@ -103,31 +103,27 @@ class SaveButtonTest(LauncherOverTemporaryFiles):
         self.assertFalse((self.tmp / 'gow3.ini').exists())
 
 
-class OldUpscalerIniTest(LauncherOverTemporaryFiles):
-    """gow3.ini names an upscaler the launcher no longer offers (fsr4, dlss): shown as FSR 3.1,
-    written only by Save (or by playing and closing); FSR 1 on top of it is the user's and stays."""
-    INI = 'upscaler=fsr4\nfsr1=1\n'
+class HiddenUpscalingTest(LauncherOverTemporaryFiles):
+    INI = ('upscaler=fsr4\npreset=3\nfsr1=1\nsharpen=1\nsharpness=0.73\n'
+           'rcas=1\nrcas_strength=42\nobject_motion=0\noutput_res=2560x1440\n')
 
-    def test_fsr3_is_a_change_to_save(self):
-        self.assertEqual(self.app.upscale_mode.get(), 'fsr3')
-        self.assertEqual(self.app.var('upscaler', 'ini').get(), 'fsr3')
-        self.assertEqual(self.save_state(), 'normal')
-        self.app.save()
-        lines = (self.tmp / 'gow3.ini').read_text(encoding='utf-8').splitlines()
-        self.assertIn('upscaler=fsr3', lines)
-        self.assertIn('fsr1=1', lines)
-
-
-class TemporalWithFsr1IniTest(LauncherOverTemporaryFiles):
-    """The in-game menu allows FSR 1 under a temporal upscaler: opening the launcher keeps it."""
-    INI = 'upscaler=taa\nfsr1=1\n'
-
-    def test_opening_changes_nothing(self):
-        self.assertEqual(self.app.upscale_mode.get(), 'taa')
-        self.assertTrue(self.app.var('fsr1', 'ini').get())
+    def test_hidden_settings_are_preserved_without_migration(self):
+        before, _lines = launcher.load_ini()
+        for key in ('upscaler', 'preset', 'fsr1', 'sharpen', 'sharpness', 'rcas',
+                    'rcas_strength', 'object_motion', 'output_res', 'live_resolution',
+                    'experimental_upscaler'):
+            self.assertNotIn(key, self.app.vars)
         self.assertEqual(self.save_state(), 'disabled')
+        self.app.var('vsync', 'ini').set(False)
         self.app.save()
-        self.assertIn('fsr1=1', (self.tmp / 'gow3.ini').read_text(encoding='utf-8').splitlines())
+        after, _lines = launcher.load_ini()
+        for key in before:
+            if key != 'vsync':
+                self.assertEqual(after[key], before[key], key)
+        self.app.var('ui_language', 'app').set('ru')
+        self.app.save()
+        self.assertNotIn('upscaler', self.app.vars)
+        self.assertEqual(launcher.load_ini()[0]['upscaler'], 'fsr4')
 
 
 @unittest.skipUnless(sys.platform == 'win32' and tk, 'needs Windows and Tk')
@@ -160,6 +156,7 @@ class EverySettingSavesTest(LauncherOverTemporaryFiles):
             return str(int(current) + 5)
         return f'{key}-changed'
 
+
     def change_and_save(self, name, var, value):
         before = var.get()
         var.set(value)
@@ -171,24 +168,20 @@ class EverySettingSavesTest(LauncherOverTemporaryFiles):
 
     def test_every_setting_lights_save_persists_and_comes_back(self):
         app = self.app
-        skipped = {'upscaler', 'fsr1'}  # driven by the Upscaler choice below
         for key in list(app.vars):
-            if key not in skipped:
-                self.change_and_save(key, app.vars[key], self.other_value(key, app.vars[key]))
-        self.change_and_save('upscale_mode', app.upscale_mode, 'fsr1')
+            self.change_and_save(key, app.vars[key], self.other_value(key, app.vars[key]))
         self.change_and_save('pad_style', app.pad_style, 'xbox')
         self.change_and_save('key cross', app.control_vars['key']['cross'], 'Q')
         self.change_and_save('pad cross', app.control_vars['pad']['cross'], 'b')
         expected = {key: var.get() for key, var in app.vars.items()}
-        self.assertEqual(len(expected), len(launcher.INI_DEFAULTS) + len([k for k in launcher.APP_DEFAULTS
-                                                                          if k in app.vars]))
+        self.assertEqual(len(expected), len([k for k in launcher.INI_DEFAULTS if k in app.vars]) +
+                         len([k for k in launcher.APP_DEFAULTS if k in app.vars]))
         self.close_window()
         self.root = tk.Tk()
         reopened = launcher.Launcher(self.root, tk, ttk, filedialog, messagebox)
         self.root.update()
         for key, value in expected.items():
             self.assertEqual(reopened.vars[key].get(), value, key)
-        self.assertEqual(reopened.upscale_mode.get(), 'fsr1')
         self.assertEqual(reopened.pad_style.get(), 'xbox')
         self.assertEqual(reopened.control_vars['key']['cross'].get(), 'Q')
         self.assertEqual(reopened.control_vars['pad']['cross'].get(), 'b')

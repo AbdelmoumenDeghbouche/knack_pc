@@ -288,15 +288,15 @@ def heading_text(text, every_language=False):
 # Settings. gow3.ini keys (the game reads them, the in-game menu edits them) and the
 # launcher's own settings.json (passed to run.py as environment variables).
 
-INI_FLAGS = {'cheat_double_jumps', 'cheat_very_hard', 'sharpen', 'object_motion', 'show_fps', 'vsync', 'async_shaders', 'deferred_readback',
-             'stale_readback', 'fsr1', 'rcas'}
+INI_FLAGS = {'cheat_double_jumps', 'cheat_very_hard', 'object_motion', 'show_fps', 'vsync', 'async_shaders', 'deferred_readback',
+             'stale_readback'}
 # The graphics keys are also in the in-game menu (Insert / R3+L2); run.py reads the startup ones.
-INI_DEFAULTS = {'upscaler': 'fsr3', 'preset': '1', 'sharpen': '1', 'sharpness': '0.50',
+INI_DEFAULTS = {'upscaler': 'fsr3', 'preset': '1',
                 'object_motion': '1', 'show_fps': '1', 'output_res': '1920x1080',
                 'live_resolution': 'auto', 'display_mode': 'windowed', 'vsync': '1', 'fps_limit': '0',
                 'async_shaders': '1', 'deferred_readback': '1', 'stale_readback': '1',
-                'render_resolution': 'native', 'engine_fps': '120', 'fsr1': '0', 'rcas': '1',
-                'rcas_strength': '75', 'frames_queued': '1', 'cheat_very_hard': '0', 'cheat_double_jumps': '0'}
+                'render_resolution': 'native', 'engine_fps': '120',
+                'frames_queued': '1', 'cheat_very_hard': '0', 'cheat_double_jumps': '0'}
 DISPLAY_MODES = [('windowed', ('Windowed',)), ('borderless', ('Borderless',)), ('fullscreen', ('Fullscreen',))]
 FPS_LIMITS = [('30', ('30',)), ('60', ('60',)), ('120', ('120',)), ('240', ('240',)), ('0', ('Unlimited',))]
 # The sidebar's pages, top to bottom, and the methods that refresh a page's lists when it is shown.
@@ -365,24 +365,9 @@ def control_map(controls, kind):
     return ','.join(f'{button}={chosen[button].strip()}' for button, _key, _pad in CONTROLS
                     if button in chosen and not set(chosen[button]) & set(',='))
 
-# The Upscaler choice: one mode over two gow3.ini keys, upscaler (the temporal ones and TAA) and
-# fsr1 (spatial). The in-game menu and old settings may still hold FSR 4 or DLSS: shown as FSR 3.1.
 UPSCALERS = [('fsr3', ('FSR 3.1 (every GPU)', 'FSR 3.1 (любая видеокарта)')),
              ('taa', ('TAA (native resolution anti-aliasing)', 'TAA (нативное сглаживание)')),
-             ('fsr1', ('FSR 1 (spatial, every GPU)', 'FSR 1 (пространственный, любая видеокарта)')),
              ('off', ('Off', 'Выключен'))]
-
-
-def upscale_mode(upscaler, fsr1):
-    """The Upscaler choice shown for gow3.ini's upscaler and fsr1 (a temporal upscaler wins)."""
-    if upscaler in ('taa', 'off'):
-        return 'fsr1' if upscaler == 'off' and fsr1 in (True, '1') else upscaler
-    return 'fsr3'
-
-
-def upscale_settings(mode):
-    """(upscaler, fsr1) of gow3.ini for an Upscaler choice."""
-    return ('off', '1') if mode == 'fsr1' else (mode, '0')
 PRESETS = [('0', ('Native AA (×1.0)',)), ('1', ('Quality (×1.5)',)), ('2', ('Balanced (×1.7)',)),
            ('3', ('Performance (×2)',)), ('4', ('Ultra Performance (×3)',))]
 OUTPUTS = [('1280x720', ('1280 × 720 (Steam Deck)',)), ('1920x1080', ('1920 × 1080',)),
@@ -833,44 +818,15 @@ class Launcher:
         self.set_icon()
         self.style()
         self.build()
-        self.link_sharpening()
         self.show('home')
         self.refresh_lists()  # the Game page's lists now, so the first visit does not count as a change
         self.refresh_game_patches()
         self.saved = self.gather()
-        if self.var('upscaler', 'ini').get() not in ('fsr3', 'taa', 'off'):
-            self.var('upscaler', 'ini').set('fsr3')  # fsr4, dlss: no longer offered; a change for Save to write
         root.protocol('WM_DELETE_WINDOW', self.close)
         root.after(100, self.drain_output)
         root.after(500, self.watch_changes)
         if WINDOWS and self.app.get('check_updates', True):
             threading.Thread(target=self.check_update, daemon=True).start()
-
-    def link_sharpening(self):
-        """The upscaler sharpens by itself, so with it on the screen's RCAS pass and the upscaler's
-        sharpening never stay on together: turning one on turns the other off."""
-        rcas, sharpen = self.var('rcas', 'ini'), self.var('sharpen', 'ini')
-        experimental, upscaler = self.var('experimental_upscaler', 'app'), self.var('upscaler', 'ini')
-
-        def active():
-            return experimental.get() and upscaler.get() != 'off'
-
-        def settings_changed(*_args):
-            if active() and sharpen.get() and rcas.get():
-                rcas.set(False)
-
-        def sharpen_changed(*_args):
-            if active() and sharpen.get():
-                rcas.set(False)
-
-        def rcas_changed(*_args):
-            if active() and rcas.get():
-                sharpen.set(False)
-        experimental.trace_add('write', settings_changed)
-        upscaler.trace_add('write', settings_changed)
-        sharpen.trace_add('write', sharpen_changed)
-        rcas.trace_add('write', rcas_changed)
-        settings_changed()
 
     def meta_dir(self):
         return meta_folder(self.var('game_dir', 'app').get(), self.var('update_dir', 'app').get())
@@ -959,8 +915,6 @@ class Launcher:
                 value = self.ini.get(key, INI_DEFAULTS[key])
                 if key in INI_FLAGS:
                     v = tk.BooleanVar(value=value == '1')
-                elif key == 'sharpness':
-                    v = tk.DoubleVar(value=float(value or 0.5))
                 else:
                     v = tk.StringVar(value=value)
             else:
@@ -1200,72 +1154,33 @@ class Launcher:
             return self.banner_image.subsample(factor) if factor > 1 else self.banner_image
 
     def build_graphics(self):
-        """The display options, then the temporal upscalers: not calibrated for this game yet, so
-        run.py turns them off unless the Experimental switch is on."""
-        tk, ttk = self.tk, self.ttk
+        """Window and overlay controls; temporal upscaling stays commented out."""
         f = self.scrolled_page('graphics', _('Graphics', 'Графика'), _('How the game appears on your screen.'))
         self.build_display(f)
-        self.section(f, _('Experimental'))
-        self.check(f, 'experimental_upscaler', 'app', _('Enable the upscaler (experimental)'),
-                   _('Off (default): the game runs without temporal upscaling; FSR 3.1 and TAA need this switch on. '
-                     'FSR 3.1 is not calibrated for this game yet: expect ghosting or flicker. FSR 1 and the '
-                     'sharpening work either way.',
-                     'Выкл. (по умолчанию): игра без временного апскейлинга; FSR 3.1 и TAA нужен этот переключатель. '
-                     'FSR 3.1 ещё не откалиброван для этой игры: возможны гостинг и мерцание. FSR 1 и резкость '
-                     'работают в любом случае.'), restart=True)
-        self.section(f, _('Upscaling', 'Апскейлинг'))
-        upscaler, fsr1 = self.var('upscaler', 'ini'), self.var('fsr1', 'ini')
-        self.upscale_mode = tk.StringVar(value=upscale_mode(upscaler.get(), fsr1.get()))
-
-        def mode_changed(*_args):
-            value, spatial = upscale_settings(self.upscale_mode.get())
-            upscaler.set(value)
-            fsr1.set(spatial == '1')
-        self.upscale_mode.trace_add('write', mode_changed)
-        self.row(f, _('Upscaler', 'Апскейлер'), self.choice(f, None, None, UPSCALERS, var=self.upscale_mode),
-                 _("FSR 3.1 and TAA: temporal, with the game's own motion vectors, at the preset's render scale. "
-                   'FSR 1: spatial, enlarges the Render resolution (Performance) to the window.',
-                   'FSR 3.1 и TAA: временные, с векторами движения игры, в масштабе пресета. '
-                   'FSR 1: пространственный, растягивает разрешение рендера (Производительность) до окна.'))
-        self.row(f, _('Quality preset', 'Пресет'), self.choice(f, 'preset', 'ini', PRESETS),
-                 _('Render scale per axis: Quality renders at 1/1.5 of the output size.',
-                   'Масштаб рендера по каждой оси: Quality рисует в 1/1.5 размера вывода.'))
-        self.row(f, _('Output resolution', 'Разрешение вывода'), self.choice(f, 'output_res', 'ini', OUTPUTS),
-                 _('What the upscaler produces; the HUD is drawn at this size too.',
-                   'Что выдаёт апскейлер; интерфейс рисуется в этом же размере.'))
-        self.row(f, _('Live resolution changes', 'Смена разрешения на лету'), self.choice(f, 'live_resolution', 'ini', LIVE),
-                 _('Off: outputs other than 1080p are set by a patch at start (fastest; changing them in the '
-                   'game restarts it). On: change output and preset in the game without a restart, at a cost.',
-                   'Выкл.: разрешения кроме 1080p задаются патчем при запуске (быстрее). Вкл.: менять в игре '
-                   'без перезапуска, но медленнее.'))
-        self.check(f, 'sharpen', 'ini', _('Upscaler sharpening (RCAS)'),
-                   _("The upscaler's own sharpening. With the upscaler on, this and the screen's sharpening "
-                     'switch each other off: they would stack.'))
-        holder = ttk.Frame(f)
-        ttk.Scale(holder, from_=0.0, to=2.0, variable=self.var('sharpness', 'ini'), length=300).pack(side='left')
-        value = ttk.Label(holder, width=5)
-        value.pack(side='left', padx=10)
-        show = lambda *_a: value.configure(text=f'{self.vars["sharpness"].get():.2f}')
-        self.vars['sharpness'].trace_add('write', show)
-        show()
-        self.row(f, _('Sharpness', 'Сила резкости'), holder)
-        self.check(f, 'object_motion', 'ini', _('Object motion vectors', 'Векторы движения объектов'),
-                   _('Less ghosting on characters, cloth and weapons; costs about 10% FPS.',
-                     'Меньше гостинга на персонажах и одежде; стоит около 10% FPS.'))
-        self.check(f, 'rcas', 'ini', _('Screen sharpening (RCAS)'),
-                   _('Sharpens the final image when it is the size of the window. With the upscaler on, '
-                     'turn on its own sharpening (above) instead: they switch each other off.'))
-        holder = ttk.Frame(f)
-        strength = self.var('rcas_strength', 'ini')
-        tk.Scale(holder, from_=0, to=100, orient='horizontal', variable=strength, showvalue=False, length=self.px(260),
-                 width=self.px(12), sliderlength=self.px(18), bg=ACCENT, troughcolor=CARD, activebackground=ACCENT_HI,
-                 highlightthickness=0, bd=0, sliderrelief='flat').pack(side='left')
-        value = ttk.Label(holder, width=5)
-        value.pack(side='left', padx=10)
-        show = lambda *_a: value.configure(text=f'{strength.get()}%')
-        strength.trace_add('write', show)
-        show()
-        self.row(f, _('Screen sharpening strength'), holder)
+        # Temporal upscaling is parked until its image quality is validated.
+        # self.section(f, _('Experimental'))
+        # self.check(f, 'experimental_upscaler', 'app', _('Enable the upscaler (experimental)'),
+        #            _('Off (default): the game runs without temporal upscaling; FSR 3.1 and TAA need this switch on. '
+        #              'FSR 3.1 is not calibrated for this game yet: expect ghosting or flicker. The remaining options require this switch; '
+        #              'leave it off for normal gameplay.',
+        #              'Выкл. (по умолчанию): игра без временного апскейлинга; FSR 3.1 и TAA нужен этот переключатель. '
+        #              'FSR 3.1 ещё не откалиброван для этой игры: возможны гостинг и мерцание.'), restart=True)
+        # self.section(f, _('Upscaling', 'Апскейлинг'))
+        # self.row(f, _('Upscaler', 'Апскейлер'), self.choice(f, 'upscaler', 'ini', UPSCALERS))
+        # self.row(f, _('Quality preset', 'Пресет'), self.choice(f, 'preset', 'ini', PRESETS),
+        #          _('Render scale per axis: Quality renders at 1/1.5 of the output size.',
+        #            'Масштаб рендера по каждой оси: Quality рисует в 1/1.5 размера вывода.'))
+        # self.row(f, _('Output resolution', 'Разрешение вывода'), self.choice(f, 'output_res', 'ini', OUTPUTS),
+        #          _('What the upscaler produces; the HUD is drawn at this size too.',
+        #            'Что выдаёт апскейлер; интерфейс рисуется в этом же размере.'))
+        # self.row(f, _('Live resolution changes', 'Смена разрешения на лету'), self.choice(f, 'live_resolution', 'ini', LIVE),
+        #          _('Off: outputs other than 1080p are set by a patch at start (fastest; changing them in the '
+        #            'game restarts it). On: change output and preset in the game without a restart, at a cost.',
+        #            'Выкл.: разрешения кроме 1080p задаются патчем при запуске (быстрее). Вкл.: менять в игре '
+        #            'без перезапуска, но медленнее.'))
+        # self.check(f, 'object_motion', 'ini', _('Object motion vectors', 'Векторы движения объектов'),
+        #            _('Less ghosting on characters, cloth and weapons; costs about 10% FPS.',
+        #              'Меньше гостинга на персонажах и одежде; стоит около 10% FPS.'))
 
     def build_display(self, f):
         """Window and overlay: the top of the Graphics page."""
@@ -1324,7 +1239,7 @@ class Launcher:
                  _('How exactly data the GPU writes is copied back for the game.',
                    'Насколько точно данные, записанные GPU, возвращаются игре.'))
         card = self.var('gpu_id', 'app')
-        box = self.choice(f, 'no_msaa', 'app', no_msaa_options(gpus, card.get()))
+        box = self.choice(f, 'no_msaa', 'app', no_msaa_options(gpus, card.get()), width=46)
         self.row(f, _('Game multisampling'), box, _(NO_MSAA_HINT), restart=True)
 
         def relabel(*_args):  # Automatic names the card the game will run on
@@ -1819,8 +1734,7 @@ class Launcher:
             except self.tk.TclError:  # an unfinished number in a spinbox
                 value = APP_DEFAULTS.get(key, INI_DEFAULTS.get(key))
             if var.store == 'ini':
-                ini[key] = ('1' if value else '0') if key in INI_FLAGS else \
-                    f'{float(value):.2f}' if key == 'sharpness' else str(value)
+                ini[key] = ('1' if value else '0') if key in INI_FLAGS else str(value)
             else:
                 app[key] = value
         app['controls'] = {kind: control_changes({b: v.get() for b, v in vars_.items()}, kind)
@@ -1875,7 +1789,6 @@ class Launcher:
             child.destroy()
         self.style()
         self.build()
-        self.link_sharpening()
         self.set_log(log)
         if self.process:
             self.play_button.configure(text=heading_text(_('RUNNING')), state='disabled')
