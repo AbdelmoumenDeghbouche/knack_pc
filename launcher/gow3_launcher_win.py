@@ -252,7 +252,7 @@ FPS_LIMITS = [('30', ('30',)), ('60', ('60',)), ('120', ('120',)), ('240', ('240
 APP_DEFAULTS = {'ui_language': 'en', 'game_dir': os.environ.get('GOW3_GAME_DIR', str(PORT_DIR.parent / 'CUSA01623') if WINDOWS else ''), 'update_dir': '', 'experimental_upscaler': False,
                 'video_backend': 'auto', 'gamemode': False, 'mangohud': False, 'desktop_integration': True, 'user_dir': '',
                 'mods_dir': '', 'mods_enabled': True, 'patches_dir': '', 'language': '1',
-                'player_name': '', 'hdr': False, 'draw_pipe': '', 'readbacks': '', 'stream_memory': 'cached',
+                'player_name': '', 'hdr': False, 'draw_pipe': '', 'readbacks': '', 'no_msaa': '', 'stream_memory': 'cached',
                 'gpu_id': '', 'background_warmup': True, 'parallel_warmup': True, 'pipeline_binary_cache': True,
                 'perf_diag': False, 'frame_capture_key': False, 'frame_stats': False, 'gpu_profile': False,
                 'vk_validation': False, 'close_on_play': False,
@@ -331,6 +331,8 @@ DRAW_PIPE = [('', ('Auto (8+ threads)', 'Авто (8+ потоков)')), ('1', 
              ('0', ('Off (more stable)', 'Выключен (стабильнее)'))]
 READBACKS = [('', ('Relaxed (default)', 'Relaxed (по умолчанию)')), ('0', ('Off', 'Выключены')),
              ('2', ('Precise',))]
+# GOW3_NO_MSAA (video_core/amdgpu/gow3_msaa.h): '' leaves the game's own default (off on AMD's driver).
+NO_MSAA = [('', ("Auto (off on AMD's Windows driver)",)), ('1', ('Off (fixes black lines)',)), ('0', ('On',))]
 STREAM_MEMORY = [('cached', ('System RAM (cached, default)',)),
                  ('host', ('System RAM (uncached)',)),
                  ('device', ('GPU memory (previous behavior)',))]
@@ -538,8 +540,8 @@ def game_environment(s):
         env['GOW3_USER_NAME'] = str(s['player_name']).strip()
     if s['hdr']:
         env['GOW3_HDR'] = '1'
-    for key, name in (('draw_pipe', 'GOW3_DRAW_PIPE'), ('readbacks', 'GOW3_READBACKS')):
-        if s[key]:
+    for key, name in (('draw_pipe', 'GOW3_DRAW_PIPE'), ('readbacks', 'GOW3_READBACKS'), ('no_msaa', 'GOW3_NO_MSAA')):
+        if s.get(key):
             env[name] = s[key]
     # The saved UI choice wins over inherited diagnostic overrides, including when reverting.
     stream_memory = s.get('stream_memory', APP_DEFAULTS['stream_memory'])
@@ -1134,6 +1136,10 @@ class Launcher:
         self.row(f, _('GPU readbacks', 'Чтение данных GPU'), self.choice(f, 'readbacks', 'app', READBACKS),
                  _('How exactly data the GPU writes is copied back for the game.',
                    'Насколько точно данные, записанные GPU, возвращаются игре.'))
+        self.row(f, _('Game multisampling'), self.choice(f, 'no_msaa', 'app', NO_MSAA),
+                 _("The game's 2-sample depth buffer, read as a texture by its lighting. Some drivers read it "
+                   "wrong and lighting shows black lines: Auto turns it off on AMD's Windows driver; choose Off "
+                   'for Intel Arc or if the lines persist.'), restart=True)
 
     def build_game(self):
         f = self.scrolled_page('game', _('Game', 'Игра'), _('Your game dump, saves and language.'))

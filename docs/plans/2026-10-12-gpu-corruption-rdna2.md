@@ -211,6 +211,10 @@ Nenhuma correção: diagnóstico. Nada muda para quem não liga as variáveis.
   `=1` força em qualquer placa. O log diz `GPU: guest multisampling off (...)` ou `on`
   (`video_core/amdgpu/gow3_msaa.h`, `vk_instance.cpp`; teste `tests/test_no_msaa.cpp`, alvo
   `no-msaa-test`). **É a única mudança desta PR que altera o render por padrão, e só na AMD.**
+  No launcher: Performance > GPU data > "Multisampling do jogo" (Automático / Desligado /
+  Ligado; chave `no_msaa` em `settings.json`, vazia por padrão). Automático não exporta a
+  variável, então o jogo decide; Desligado exporta `GOW3_NO_MSAA=1` e serve às Intel Arc, onde
+  o padrão não liga (teste `tests/test_launcher_no_msaa.py`).
 - `GOW3_DIAG_IMAGES=1` (patch de kalil03, exige `GOW3_DRAW_PIPE=0`): durante uma captura de quadro
   (`GOW3_CAPTURE_TRIGGER`), grava em `GOW3_DIAG_DIR` (padrão `out/diag`, a pasta precisa existir)
   o alvo de cor de cada passe e as imagens de cada dispatch, em raw
@@ -433,4 +437,17 @@ Resultado dele, abrindo o jogo do zero até a abertura em tempo real e a primeir
 A abertura limpa sem o patch bate com o "às vezes abre sem as linhas" dos relatos. Não testado:
 o resto do jogo, FPS, outras resoluções, outras placas, bordas com e sem as 2 amostras. O build
 `windows-v2.1.7-amd-teste1` é para isso (seção 7).
+
+**Resultados do build (2026-10-13, #65).** uviiitor (5 aberturas), Tempus3214,
+eduhhh10zx-hue (RX 6650 XT, várias aberturas), rafaelsilvaiasd-lang (com o save dele) e
+FilipiEPTeixeira: linhas sumiram. Nenhum relato de volta das linhas, de bordas piores ou de FPS
+até agora; o controle com `GOW3_NO_MSAA=0` ninguém reportou.
+
+**Intel Arc (#28).** ZeroTwoMiu, Arc A750 (driver 101.9034): com o padrão (`guest
+multisampling on`) a corrupção continua; com `GOW3_NO_MSAA=1` pelo `.bat` o menu e o jogo
+ficam corretos. Hussein798o, Arc 140V: os dois logs dele dizem `guest multisampling on`, ou
+seja, nunca rodou com `=1` (o `.bat` do release era o de controle). A opção "Multisampling do
+jogo" do launcher (seção 5) existe para esse caso; ligar por padrão também no driver
+proprietário da Intel fica para a investigação da #28 (a HD 630 tem outra causa,
+`VK_EXT_vertex_input_dynamic_state`).
 

@@ -744,6 +744,11 @@ WINDOWS_LANGUAGES = {0x19: 'ru', 0x01: 'ar', 0x0a: 'es', 0x16: 'pt', 0x0c: 'fr',
 # (Positional tables need every language updated at once; these are looked up by text.)
 EXTRA = {
     'pt': {
+        'Game multisampling': 'Multisampling do jogo',
+        "Auto (off on AMD's Windows driver)": 'Automático (desligado no driver AMD do Windows)',
+        'Off (fixes black lines)': 'Desligado (corrige as linhas pretas)',
+        "The game's 2-sample depth buffer, read as a texture by its lighting. Some drivers read it wrong and lighting shows black lines: Auto turns it off on AMD's Windows driver; choose Off for Intel Arc or if the lines persist.":
+            'O buffer de profundidade de 2 amostras do jogo, lido como textura pela iluminação. Alguns drivers o leem errado e a iluminação mostra linhas pretas: Automático desliga no driver AMD do Windows; escolha Desligado nas Intel Arc ou se as linhas continuarem.',
         'Display': 'Tela',
         'How the game appears on your screen.': 'Como o jogo aparece na sua tela.',
         'Display mode': 'Modo de exibição',
