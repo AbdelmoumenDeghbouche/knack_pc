@@ -87,7 +87,7 @@ def run_role(argv):
     attach_stdio()
     for stream in (sys.stdout, sys.stderr):  # keep messages in order with the game's output
         try:
-            stream.reconfigure(line_buffering=True)
+            stream.reconfigure(encoding='utf-8', line_buffering=True)
         except (AttributeError, ValueError):
             pass
     if argv[0] == '--script':

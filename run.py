@@ -59,15 +59,16 @@ def run_script(name, *args, capture=False):
     # Inside the packaged launcher executable (PyInstaller) the executable runs scripts itself.
     script = ['--script'] if getattr(sys, 'frozen', False) else []
     command = [sys.executable, *script, str(PORT / 'scripts' / name), *map(str, args)]
+    env = {**os.environ, 'PYTHONIOENCODING': 'utf-8'}
     if capture:
         result = subprocess.run(command, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, text=True,
-                                creationflags=no_console())
+                                encoding='utf-8', env=env, creationflags=no_console())
         if result.returncode:
             sys.exit(result.returncode)
         return result.stdout
     # stdin given: the output handles are passed explicitly (a windowed launcher child would
     # get none otherwise).
-    result = subprocess.run(command, stdin=subprocess.DEVNULL, creationflags=no_console())
+    result = subprocess.run(command, stdin=subprocess.DEVNULL, env=env, creationflags=no_console())
     if result.returncode:
         sys.exit(result.returncode)
     return None
