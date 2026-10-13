@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright 2024-2026 shadPS4 Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+#include <filesystem>
 #include <xxhash.h>
 #include "video_core/amdgpu/liverpool.h"
 
@@ -327,6 +328,44 @@ void TextureCache::DownloadImageMemory(ImageId image_id, bool sync) {
                                                           download.mapped, download_size);
                 runtime.GetStagingPool().FreeDeferred(download);
             });
+    }
+}
+
+void TextureCache::DiagDumpImage(ImageId image_id, const char* tag) {
+    Image& image = slot_images[image_id];
+    const u32 bytes_per_pixel = image.info.num_bits / 8;
+    if (image.info.props.is_depth || image.info.props.is_block || bytes_per_pixel == 0) {
+        return;
+    }
+    const u32 size = image.info.pitch * image.info.size.height * bytes_per_pixel;
+    const auto download = runtime.GetStagingPool().Request(size, MemoryType::HostCached, 16);
+    const vk::BufferImageCopy copy = {
+        .bufferOffset = download.offset,
+        .bufferRowLength = image.info.pitch,
+        .bufferImageHeight = image.info.size.height,
+        .imageSubresource = {vk::ImageAspectFlagBits::eColor, 0, 0, 1},
+        .imageOffset = {0, 0, 0},
+        .imageExtent = {image.info.size.width, image.info.size.height, 1},
+    };
+    runtime.DownloadImage(&image, download.buffer, std::span{&copy, 1});
+    scheduler.Finish();
+    download.Invalidate();
+    static int sequence = 0;
+    const char* dir = std::getenv("GOW3_DIAG_DIR");
+    const char* dir_path = dir && *dir ? dir : "out/diag";
+    std::error_code ec;
+    std::filesystem::create_directories(dir_path, ec);
+    char path[512];
+    std::snprintf(path, sizeof(path), "%s/%03d_%s_%llx_%ux%u_p%u_b%u_f%d.raw", dir_path, sequence++, tag,
+                  static_cast<unsigned long long>(image.info.guest_address), image.info.size.width,
+                  image.info.size.height, image.info.pitch, bytes_per_pixel,
+                  static_cast<int>(image.info.pixel_format));
+    if (FILE* f = std::fopen(path, "wb")) {
+        std::fwrite(download.mapped, 1, size, f);
+        std::fclose(f);
+        std::printf("Diag: %s\n", path);
+    } else {
+        std::printf("Diag: cannot write %s\n", path);
     }
 }
 

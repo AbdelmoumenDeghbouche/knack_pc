@@ -33,6 +33,10 @@ public:
     static bool Active() {
         return state.load(std::memory_order_relaxed) != Idle;
     }
+    /// GPU thread: whether a frame is being recorded right now.
+    static bool IsRecording() {
+        return state.load(std::memory_order_relaxed) == Recording;
+    }
     /// GPU thread, at every draw/dispatch: starts or ends a recording at frame boundaries.
     static void Poll();
 

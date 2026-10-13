@@ -949,12 +949,43 @@ void Rasterizer::Draw(bool is_indexed, u32 index_offset, const PreparedDraw* pre
     DrawRecord(pipeline, used_prepared, is_indexed, index_offset);
 }
 
+void Rasterizer::DiagPassBoundary(bool force) {
+    static const bool enabled = [] {
+        const char* env = std::getenv("GOW3_DIAG_IMAGES");
+        return env && *env == '1';
+    }();
+    if (!enabled) {
+        return;
+    }
+    const auto& regs = Regs();
+    std::array<VAddr, 8> addresses{};
+    for (u32 cb = 0; cb < addresses.size(); ++cb) {
+        if (regs.color_buffers[cb]) {
+            addresses[cb] = regs.color_buffers[cb].Address();
+        }
+    }
+    if (!force && addresses == diag_addresses) {
+        return;
+    }
+    if (FrameCapture::IsRecording() && !diag_targets.empty()) {
+        char tag[16];
+        std::snprintf(tag, sizeof(tag), "p%03u", diag_pass++);
+        const auto targets = diag_targets;
+        for (const auto image_id : targets) {
+            texture_cache.DiagDumpImage(image_id, tag);
+        }
+    }
+    diag_targets.clear();
+    diag_addresses = force ? std::array<VAddr, 8>{} : addresses;
+}
+
 void Rasterizer::DrawRecord(const GraphicsPipeline* pipeline, const PreparedDraw* used_prepared,
                             bool is_indexed, u32 index_offset) {
     if (DrawPipe::OnStageB()) {
         FrameCapture::Poll();
         scheduler.PopPendingOperations();
     }
+    DiagPassBoundary(false);
     const auto& regs = Regs();
     // gow3: the pass copying a finished frame to a display buffer; the previous draw's
     // target is that frame.
@@ -1305,6 +1336,7 @@ void Rasterizer::DispatchRecord(const ComputePipeline* pipeline) {
     gbuffer_draw = false;
 
     scheduler.PopPendingOperations();
+    DiagPassBoundary(true);
 
     const auto& cs_program = CsRegs();
 
@@ -1353,6 +1385,21 @@ void Rasterizer::DispatchRecord(const ComputePipeline* pipeline) {
         }
     });
     DebugState.IncDispatch();
+
+    // gow3 diagnostics: GOW3_DIAG_IMAGES=1 writes the images a dispatch read and wrote, after
+    // it, while a frame capture records (GOW3_CAPTURE_TRIGGER).
+    static const bool diag_images = [] {
+        const char* env = std::getenv("GOW3_DIAG_IMAGES");
+        return env && *env == '1';
+    }();
+    if (diag_images && FrameCapture::IsRecording()) {
+        char tag[32];
+        std::snprintf(tag, sizeof(tag), "cs%08x", static_cast<u32>(cs.pgm_hash));
+        const auto images = bound_images;
+        for (const auto image_id : images) {
+            texture_cache.DiagDumpImage(image_id, tag);
+        }
+    }
 
     ResetBindings(true);
     scheduler.KickRecording();
@@ -3036,6 +3083,12 @@ RenderState Rasterizer::BeginRenderingFull(const GraphicsPipeline* pipeline) {
         census.area = {state.width, state.height};
         FrameCapture::BeginPass(colors.data(), state.num_color_attachments, depth,
                                 PassCensus::Format(census));
+        diag_targets.clear();
+        for (u32 cb = 0; cb < state.num_color_attachments; ++cb) {
+            if (cb_descs[cb].first) {
+                diag_targets.push_back(cb_descs[cb].first);
+            }
+        }
     }
     // gow3: object motion vector attachment of G-buffer pipelines.
     if (key.motion_vectors) {
