@@ -1689,7 +1689,7 @@ class Launcher:
             return
         self.set_log('')
         # The same last_run.log as --play, so a report from the PLAY button has the file too.
-        run_log = open_run_log(self.app)
+        run_log = open_play_log(self.app)
         try:
             self.process = subprocess.Popen(run_command(), cwd=PORT_DIR, env=game_environment(self.app),
                                             stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
@@ -1708,14 +1708,22 @@ class Launcher:
             self.root.after(5000, self.root.destroy)  # the game keeps running
 
     def read_output(self, process, run_log=None):
-        for raw in iter(process.stdout.readline, b''):
-            text = raw.decode('utf-8', errors='replace')
+        try:
+            for raw in iter(process.stdout.readline, b''):
+                text = raw.decode('utf-8', errors='replace')
+                if run_log:
+                    try:
+                        run_log.write(text)
+                    except (OSError, ValueError):
+                        # Disk full or folder gone: keep draining the pipe, or the game blocks
+                        # on its next print and the button stays at RUNNING.
+                        _close_quietly(run_log)
+                        run_log = None
+                self.output.put(text)
+        finally:
             if run_log:
-                run_log.write(text)
-            self.output.put(text)
-        if run_log:
-            run_log.close()
-        self.output.put((process.wait(),))
+                _close_quietly(run_log)
+            self.output.put((process.wait(),))
 
     def drain_output(self):
         while not self.ui_calls.empty():
@@ -2034,6 +2042,22 @@ def open_run_log(settings):
         return open(path, 'w', encoding='utf-8', buffering=1)
     except (OSError, ValueError):
         return _NullLog()
+
+
+def open_play_log(settings):
+    """The run log for the PLAY button. With 'close_on_play' the launcher exits 5 s after the
+    start and the reader thread dies with it: a truncated file would replace the previous full
+    log, so that mode leaves the file alone."""
+    if settings.get('close_on_play'):
+        return _NullLog()
+    return open_run_log(settings)
+
+
+def _close_quietly(log):
+    try:
+        log.close()
+    except (OSError, ValueError):
+        pass
 
 
 def play_without_window(settings):

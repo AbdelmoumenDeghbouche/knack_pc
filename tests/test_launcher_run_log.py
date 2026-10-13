@@ -1,6 +1,9 @@
 """The game's output goes to <user folder>/last_run.log from both launch paths."""
+import io
+import queue
 import sys
 import tempfile
+import types
 import unittest
 from pathlib import Path
 
@@ -33,6 +36,53 @@ class RunLogTest(unittest.TestCase):
         settings = {'user_dir': str(Path(tempfile.gettempdir()) / 'nul:\x00invalid')}
         with launcher.open_run_log(settings) as log:
             log.write('ignored\n')  # no exception
+
+    def test_read_output_writes_every_line_then_closes_and_reports_the_exit_code(self):
+        reader = _launcher_class().read_output
+        with tempfile.TemporaryDirectory() as tmp:
+            settings = {'user_dir': tmp}
+            log = launcher.open_run_log(settings)
+            process = types.SimpleNamespace(stdout=io.BytesIO(b'a\nb\n'), wait=lambda: 7)
+            owner = types.SimpleNamespace(output=queue.Queue())
+            reader(owner, process, log)
+            self.assertTrue(log.closed)
+            self.assertEqual(launcher.run_log_path(settings).read_text(encoding='utf-8'), 'a\nb\n')
+            self.assertEqual([owner.output.get_nowait() for _ in range(3)], ['a\n', 'b\n', (7,)])
+
+    def test_read_output_keeps_draining_when_the_log_fails(self):
+        # A write error (disk full, folder gone) must not kill the reader thread: the game
+        # would block on a full pipe and the PLAY button would stay at RUNNING.
+        class BrokenLog:
+            closed = False
+
+            def write(self, text):
+                raise OSError('disk full')
+
+            def close(self):
+                self.closed = True
+
+        log = BrokenLog()
+        process = types.SimpleNamespace(stdout=io.BytesIO(b'a\nb\n'), wait=lambda: 0)
+        owner = types.SimpleNamespace(output=queue.Queue())
+        _launcher_class().read_output(owner, process, log)
+        self.assertTrue(log.closed)
+        self.assertEqual([owner.output.get_nowait() for _ in range(3)], ['a\n', 'b\n', (0,)])
+
+    def test_play_log_is_skipped_when_the_launcher_closes_on_play(self):
+        # The reader thread dies with the launcher 5 s after start: a truncated file would
+        # replace the previous full log.
+        with tempfile.TemporaryDirectory() as tmp:
+            self.assertIsInstance(launcher.open_play_log({'user_dir': tmp, 'close_on_play': True}),
+                                  launcher._NullLog)
+            self.assertFalse(launcher.run_log_path({'user_dir': tmp}).exists())
+            with launcher.open_play_log({'user_dir': tmp, 'close_on_play': False}) as log:
+                log.write('x\n')
+            self.assertEqual(launcher.run_log_path({'user_dir': tmp}).read_text(encoding='utf-8'), 'x\n')
+
+
+def _launcher_class():
+    """The launcher window class, found by its method so the test does not build a Tk window."""
+    return next(c for c in vars(launcher).values() if isinstance(c, type) and hasattr(c, 'read_output'))
 
 
 if __name__ == '__main__':
