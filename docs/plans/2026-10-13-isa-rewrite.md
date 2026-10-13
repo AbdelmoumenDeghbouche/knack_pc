@@ -35,7 +35,7 @@ Entradas que a spec implica e que ficariam sem teste; cada uma ganhou o teste in
 
 ---
 
-### Tarefa 1: `cpu_check` em dois grupos e modo `--cpu-features`
+### Task 1: `cpu_check` em dois grupos e modo `--cpu-features`
 
 **Files:**
 - Modify: `src/cpu_check.h`, `src/cpu_check.c`
@@ -117,7 +117,7 @@ Expected: `cpu-check-test ok`; `test_cpu_features_mode_reports_this_machine ... 
 
 ---
 
-### Tarefa 2: localizador, decodificação e classificação de sítios
+### Task 2: localizador, decodificação e classificação de sítios
 
 **Files:**
 - Create: `scripts/isa_rewrite.py`
@@ -218,7 +218,7 @@ Expected: 8 testes `ok`.
 
 ---
 
-### Tarefa 3: tabela `G3ISA1`, leitura do `boot-linked.bin` e linha de comando
+### Task 3: tabela `G3ISA1`, leitura do `boot-linked.bin` e linha de comando
 
 **Files:**
 - Modify: `scripts/isa_rewrite.py`
@@ -294,7 +294,7 @@ Expected: todos `ok` (14 testes).
 
 ---
 
-### Tarefa 4: emulador `isa_emulate` com oráculo nativo
+### Task 4: emulador `isa_emulate` com oráculo nativo
 
 **Files:**
 - Create: `src/isa_emulate.h`, `src/isa_emulate.c`
@@ -364,7 +364,7 @@ Expected: `isa-emulate-test ok`.
 
 ---
 
-### Tarefa 5: tabela, stubs e aplicação (`isa_rewrite.c`)
+### Task 5: tabela, stubs e aplicação (`isa_rewrite.c`)
 
 **Files:**
 - Create: `src/isa_rewrite.h`, `src/isa_rewrite.c`
@@ -439,7 +439,7 @@ Expected: `isa-stub-test ok` (o teste de S4/INT3 só na Tarefa 6).
 
 ---
 
-### Tarefa 6: trap `int3`, relatório de execuções e mapeamento de stubs
+### Task 6: trap `int3`, relatório de execuções e mapeamento de stubs
 
 **Files:**
 - Modify: `src/isa_rewrite.h`, `src/isa_rewrite.c`
@@ -484,7 +484,7 @@ Expected: `isa-stub-test ok`.
 
 ---
 
-### Tarefa 7: integração no probe
+### Task 7: integração no probe
 
 **Files:**
 - Modify: `src/probe.c` (parse das opções em `main`; `allocate(round_page(size))` da imagem; bloco após `patch_tcb_loads` e antes do primeiro `protect`; `vectored_fault`, `fatal_exception`, `describe_address` no Windows; `fault()` e a instalação de `sigaction` no Linux), `src/runtime.h`, `src/runtime.c` (`runtime_report`)
@@ -535,7 +535,7 @@ Expected: build sem avisos; `isa-stub-test ok`, `isa-emulate-test ok`, `cpu-chec
 
 ---
 
-### Tarefa 8: `run.py` chama `--cpu-features` e o localizador
+### Task 8: `run.py` chama `--cpu-features` e o localizador
 
 **Files:**
 - Modify: `run.py` (`main`, antes de `run_script('prepare.py', ...)` e após `run_script('link_modules.py', ...)`; montagem de `command`)
@@ -584,7 +584,7 @@ Expected: todos `ok`.
 
 ---
 
-### Tarefa 9: empacotamento, READMEs e documentação
+### Task 9: empacotamento, READMEs e documentação
 
 **Files:**
 - Modify: `packaging/windows/package.sh` (após o `pip install ... pyinstaller`; lista `hidden`), `packaging/linux/build.sh` (lista `hidden`; comentário sobre o wheel), `packaging/windows/README.md` (parágrafo do PyInstaller), `README.md` e `README.pt-BR.md` (seção Requisitos, item do processador), `packaging/windows/README-Windows.txt` (item do processador)
@@ -608,7 +608,7 @@ Expected: cada arquivo aparece ao menos uma vez; `bash -n packaging/windows/pack
 
 ---
 
-### Tarefa 10: verificação ponta a ponta em modo forçado
+### Task 10: verificação ponta a ponta em modo forçado
 
 **Files:** nenhum (verificação).
 
