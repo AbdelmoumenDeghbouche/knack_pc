@@ -257,8 +257,9 @@ escritas; indefinidas ficam como estavam.
 | MOVBE r, m / m, r | troca de bytes na largura | nenhuma |
 
 Escrita no destino: 64 bits escrevem tudo; 32 bits zeram os 32 altos; 16 bits (LZCNT,
-TZCNT, MOVBE) preservam os bits altos. Operando de memória: endereço = `image + base +
-índice × escala + deslocamento`; RIP-relativo já vem como offset absoluto. Um store em
+TZCNT, MOVBE) preservam os bits altos. Operando de memória: os registradores do guest já
+guardam endereços do host, então endereço = `base + índice × escala + deslocamento`;
+RIP-relativo vem da tabela como offset absoluto e vira `image + deslocamento`. Um store em
 página rastreada pela GPU cai no `gow3gpu_handle_fault` existente e continua, como um
 store do guest.
 
@@ -295,8 +296,9 @@ vale um caminho rápido em asm para algum sítio.
 
 - `packaging/windows/package.sh`: `pip install iced-x86` no `out/pyenv` e
   `--hidden-import iced_x86` no PyInstaller.
-- `packaging/linux/build.sh`: `--hidden-import iced_x86`; `packaging/README.md` registra
-  que o Python da build precisa do wheel `iced-x86` (o fork do AppImage instala).
+- `packaging/linux/build.sh`: `--hidden-import iced_x86`; `packaging/windows/README.md` e um
+  comentário em `packaging/linux/build.sh` registram que o Python da build precisa do wheel
+  `iced-x86` (o fork do AppImage instala).
 - `build.sh` e `gpu/CMakeLists.txt`: `src/isa_rewrite.c` e `src/isa_emulate.c` no probe;
   `isa_emulate.c` com `-mgeneral-regs-only`; alvos de teste novos.
 - READMEs (en, pt-BR, README-Windows.txt): o requisito de CPU passa a "64 bits com AVX:
