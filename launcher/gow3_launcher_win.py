@@ -425,6 +425,23 @@ def load_ini():
     return values, lines
 
 
+def atomic_write(path, text):
+    """Replace a complete file from its own directory, preserving the old file on write failure."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = None
+    try:
+        with tempfile.NamedTemporaryFile(mode='w', encoding='utf-8', dir=path.parent,
+                                         suffix='.tmp', delete=False) as stream:
+            temporary = Path(stream.name)
+            stream.write(text)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temporary, path)
+    finally:
+        if temporary is not None:
+            temporary.unlink(missing_ok=True)
+
+
 def save_ini(values, lines):
     """Rewrites the edited keys in place, appends missing ones, keeps comments and other keys."""
     written, out = set(), []
@@ -439,7 +456,7 @@ def save_ini(values, lines):
     if not lines:
         out.append('# gow3 settings (in-game menu: Insert / R3+L2)')
     out += [f'{key}={value}' for key, value in values.items() if key not in written]
-    ini_path().write_text('\n'.join(out) + '\n', encoding='utf-8')
+    atomic_write(ini_path(), '\n'.join(out) + '\n')
 
 
 def game_info(folder):
@@ -1749,28 +1766,44 @@ class Launcher:
     def collect(self):
         """Writes settings.json, gow3.ini, mods.json and patches.json."""
         state = self.gather()
-        self.app, self.ini = state['app'], state['ini']
-        CONFIG_DIR.mkdir(parents=True, exist_ok=True)
-        CONFIG_FILE.write_text(json.dumps(self.app, indent=2, ensure_ascii=False), encoding='utf-8')
-        save_ini({key: self.ini[key] for key in INI_DEFAULTS}, self.ini_lines)
+        _disk, lines = load_ini()
+        persisted = {line.split('=', 1)[0].strip() for line in lines
+                     if '=' in line and not line.lstrip().startswith('#')}
+        baseline = getattr(self, 'saved', {'ini': self.ini})['ini']
+        edited = {key: state['ini'][key] for key, var in self.vars.items()
+                  if var.store == 'ini' and
+                  (key not in persisted or state['ini'][key] != baseline.get(key))}
+        try:
+            save_ini(edited, lines)
+            atomic_write(CONFIG_FILE, json.dumps(state['app'], indent=2, ensure_ascii=False))
+            if state['mods']:
+                atomic_write(DATA_DIR / 'mods.json', json.dumps(state['mods'], indent=2))
+            if state['patches']:
+                # Patches of other game versions keep their choice.
+                chosen = load_json(DATA_DIR / 'patches.json', {})
+                shown = set(self.patch_vars)
+                enabled = {k for k in chosen.get('enabled', []) if k not in shown} | set(state['patches']['enabled'])
+                disabled = {k for k in chosen.get('disabled', []) if k not in shown} | set(state['patches']['disabled'])
+                atomic_write(DATA_DIR / 'patches.json', json.dumps(
+                    {'enabled': sorted(enabled), 'disabled': sorted(disabled)}, indent=2))
+        except OSError:
+            self.messagebox.showerror(APP_NAME, _('Could not save all settings. Check write permissions and free disk space, then try again.',
+                                                   'Не удалось сохранить все настройки. Проверьте права записи и свободное место, затем повторите.'))
+            return False
+        self.app = state['app']
         self.ini, self.ini_lines = load_ini()
-        if state['mods']:
-            (DATA_DIR / 'mods.json').write_text(json.dumps(state['mods'], indent=2), encoding='utf-8')
-        if state['patches']:
-            # Patches of other game versions keep their choice.
-            chosen = load_json(DATA_DIR / 'patches.json', {})
-            shown = set(self.patch_vars)
-            enabled = {k for k in chosen.get('enabled', []) if k not in shown} | set(state['patches']['enabled'])
-            disabled = {k for k in chosen.get('disabled', []) if k not in shown} | set(state['patches']['disabled'])
-            (DATA_DIR / 'patches.json').write_text(json.dumps(
-                {'enabled': sorted(enabled), 'disabled': sorted(disabled)}, indent=2), encoding='utf-8')
+        for key, var in self.vars.items():
+            if var.store == 'ini':
+                var.set(self.ini[key] == '1' if key in INI_FLAGS else self.ini[key])
         self.saved = self.gather()
         self.refresh_save_button()
+        return True
 
     def save(self):
         """The Save button: the files, without starting the game. A new launcher language rebuilds
         the window in it."""
-        self.collect()
+        if not self.collect():
+            return
         language = self.app.get('ui_language') or windows_language()
         if language != LANG:
             self.rebuild(language)
@@ -1861,7 +1894,8 @@ class Launcher:
     def play(self):
         if self.process or getattr(self, 'copying_system_files', False):
             return
-        self.collect()
+        if not self.collect():
+            return
         if not game_info(self.app['game_dir']):
             self.messagebox.showerror(APP_NAME, _('Choose the game folder with eboot.bin (CUSA01623).',
                                                   'Выберите папку игры с eboot.bin (CUSA01623).'))
@@ -1977,7 +2011,8 @@ class Launcher:
             path = DATA_DIR / 'patches'
         path = Path(path or DATA_DIR)
         if path.suffix == '.ini':
-            self.collect()
+            if not self.collect():
+                return
         elif not path.exists():
             path.mkdir(parents=True, exist_ok=True)
         if WINDOWS:
@@ -2147,7 +2182,8 @@ class Launcher:
 
     def add_to_steam(self):
         """A non-Steam shortcut with the game's icon, capsules, hero and logo (scripts/steam_shortcut.py)."""
-        self.collect()
+        if not self.collect():
+            return
         game = self.var('game_dir', 'app').get()
         if not game_info(game):
             self.messagebox.showerror(APP_NAME, _('Choose the game folder with eboot.bin (CUSA01623).',
@@ -2175,10 +2211,8 @@ class Launcher:
             self.root.configure(cursor='')
 
     def close(self):
-        try:
-            self.collect()
-        except Exception:  # never keep the window open over a settings problem
-            pass
+        if not self.collect():
+            return
         self.root.destroy()
 
 

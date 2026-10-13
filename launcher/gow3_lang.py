@@ -851,6 +851,7 @@ EXTRA = {
         'Preset': 'Preset',
         'Load': 'Carregar',
         'Save': 'Salvar',
+        'Could not save all settings. Check write permissions and free disk space, then try again.': 'Não foi possível salvar todas as configurações. Confira a permissão de escrita e o espaço livre em disco, depois tente novamente.',
         'Delete': 'Excluir',
         'No patch files for this game version yet.': 'Ainda não há arquivos de patch para esta versão do jogo.',
         '{} trigger': 'gatilho {}',

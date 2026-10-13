@@ -59,6 +59,62 @@ class LauncherOverTemporaryFiles(unittest.TestCase):
 
 
 class SaveButtonTest(LauncherOverTemporaryFiles):
+    def test_failed_save_does_not_close_the_launcher(self):
+        with mock.patch.object(self.app, 'collect', return_value=False), \
+                mock.patch.object(self.root, 'destroy') as destroy:
+            self.app.close()
+        destroy.assert_not_called()
+
+    def test_failed_save_does_not_start_the_game(self):
+        with mock.patch.object(self.app, 'collect', return_value=False), \
+                mock.patch.object(launcher.subprocess, 'Popen') as start:
+            self.app.play()
+        start.assert_not_called()
+
+    def test_partial_save_failure_keeps_pending_state(self):
+        self.app.save()
+        self.app.var('vsync', 'ini').set(False)
+        replace = launcher.os.replace
+        def fail_settings(source, target):
+            if Path(target) == launcher.CONFIG_FILE:
+                raise PermissionError('locked settings')
+            replace(source, target)
+        with mock.patch.object(launcher.os, 'replace', side_effect=fail_settings), \
+                mock.patch.object(self.app.messagebox, 'showerror') as error:
+            self.app.save()
+        error.assert_called_once()
+        self.assertEqual(self.save_state(), 'normal')
+        self.assertFalse(list(self.tmp.rglob('*.tmp')))
+        self.app.save()
+        self.assertEqual(self.save_state(), 'disabled')
+
+    def test_save_preserves_external_changes_and_refreshes_the_controls(self):
+        self.app.save()
+        path = self.tmp / 'gow3.ini'
+        path.write_text(path.read_text(encoding='utf-8').replace('fps_limit=0', 'fps_limit=60') +
+                        'external_runtime_key=keep\n', encoding='utf-8')
+        self.app.var('vsync', 'ini').set(False)
+        self.app.save()
+        values, _lines = launcher.load_ini()
+        self.assertEqual(values['fps_limit'], '60')
+        self.assertEqual(values['external_runtime_key'], 'keep')
+        self.assertEqual(values['vsync'], '0')
+        self.assertEqual(self.app.vars['fps_limit'].get(), '60')
+        self.assertEqual(self.save_state(), 'disabled')
+
+    def test_failed_replace_keeps_files_and_changes_pending(self):
+        self.app.save()
+        path = self.tmp / 'gow3.ini'
+        before = path.read_bytes(), launcher.CONFIG_FILE.read_bytes()
+        self.app.var('vsync', 'ini').set(False)
+        with mock.patch.object(launcher.os, 'replace', side_effect=PermissionError('locked')), \
+                mock.patch.object(self.app.messagebox, 'showerror') as error:
+            self.app.save()
+        error.assert_called_once()
+        self.assertEqual((path.read_bytes(), launcher.CONFIG_FILE.read_bytes()), before)
+        self.assertEqual(self.save_state(), 'normal')
+        self.assertFalse(list(self.tmp.rglob('*.tmp')))
+
     def test_nothing_to_save_after_opening(self):
         self.assertEqual(self.save_state(), 'disabled')
 
@@ -151,11 +207,16 @@ class EverySettingSavesTest(LauncherOverTemporaryFiles):
         if isinstance(var, tk.DoubleVar):
             return round(current + 0.25, 2) if current < 1.5 else 0.25
         if key in self.options:
-            return next(value for value in self.options[key] if value != current)
+            return next((value for value in self.options[key] if value != current), current)
         if str(current).isdigit():
             return str(int(current) + 5)
         return f'{key}-changed'
 
+    def test_all_settings_save_without_detected_gpus(self):
+        with mock.patch.object(launcher, 'list_gpus', return_value=[]):
+            self.app.rebuild(launcher.LANG)
+            self.assertEqual(self.options['gpu_id'], [''])
+            self.test_every_setting_lights_save_persists_and_comes_back()
 
     def change_and_save(self, name, var, value):
         before = var.get()
