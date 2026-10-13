@@ -7,7 +7,7 @@ mostrou o defeito, mas não foi rodada nas condições dos reporters: veja a se�
 na Intel Arc está na PR separada da Intel (`docs/plans/2026-10-12-gpu-corruption-intel.md`
 naquela branch). A seção 9 é a revisão de 2026-10-13 e corrige fatos das seções 1 e 6. **A seção
 10 tem a causa encontrada por kalil03 e a correção candidata (`GOW3_NO_MSAA`), no build de teste
-`windows-v2.1.7-amd-teste1`.**
+`windows-v2.1.7-teste2` (que substitui o `amd-teste1`, apagado, e liga a correção também na Intel).**
 
 Issues: [#65](https://github.com/FelipePrado0/gow3_pc/issues/65) (canônica),
 [#61](https://github.com/FelipePrado0/gow3_pc/issues/61),
@@ -248,7 +248,12 @@ as pistas, e a captura RenderDoc (pista 4) derruba o jogo nas placas dos reporte
 - Pin de subgrupo só nos estágios que o driver lista (`GOW3_SUBGROUP_PIN=allowed` na PR Intel):
   tira o port de fora da especificação na AMD, sem efeito no defeito.
 
-## 7. Como testar (build `windows-v2.1.7-amd-teste1`)
+## 7. Como testar (build `windows-v2.1.7-teste2`)
+
+O `windows-v2.1.7-teste2` (commit `37d8e5b`, 2026-10-13) substitui o `amd-teste1`, apagado: mesma
+correção, agora ligada sozinha também no driver da Intel no Windows, e o launcher mostra a placa e a
+decisão. Sem `.bat`. O pedido de validação foi postado em #65, #28 e nas duplicatas; os passos
+abaixo continuam valendo (3 aberturas bastam; o controle com `GOW3_NO_MSAA=0` é opcional).
 
 O build liga `GOW3_NO_MSAA` sozinho em toda placa AMD com o driver proprietário. Regras: 1080p,
 sem patch de resolução, upscaler desligado, sempre as mesmas cenas (menu principal com o Kratos,
@@ -447,7 +452,7 @@ Resultado dele, abrindo o jogo do zero até a abertura em tempo real e a primeir
 
 A abertura limpa sem o patch bate com o "às vezes abre sem as linhas" dos relatos. Não testado:
 o resto do jogo, FPS, outras resoluções, outras placas, bordas com e sem as 2 amostras. O build
-`windows-v2.1.7-amd-teste1` é para isso (seção 7).
+`windows-v2.1.7-teste2` é para isso (seção 7).
 
 **Resultados do build (2026-10-13, #65).** uviiitor (5 aberturas), Tempus3214,
 eduhhh10zx-hue (RX 6650 XT, várias aberturas), rafaelsilvaiasd-lang (com o save dele) e
