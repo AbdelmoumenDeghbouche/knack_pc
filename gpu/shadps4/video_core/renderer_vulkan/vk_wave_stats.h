@@ -34,6 +34,22 @@ public:
         return pipelines;
     }
 
+    /// Whether the ISA of one more executable of `stages` should be written out: the first
+    /// `limit` of each stage set are.
+    bool ShouldDump(const std::string& stages, std::uint32_t limit) {
+        auto& dumped = dumps[stages];
+        if (dumped >= limit) {
+            return false;
+        }
+        ++dumped;
+        return true;
+    }
+
+    std::uint32_t DumpsOf(const std::string& stages) const {
+        const auto it = dumps.find(stages);
+        return it == dumps.end() ? 0u : it->second;
+    }
+
     /// "{ Compute }@64 x1, { Fragment }@32 x3", sorted by stages then width.
     std::string Summary() const {
         std::string out;
@@ -48,6 +64,7 @@ public:
 
 private:
     std::map<std::pair<std::string, std::uint32_t>, std::uint32_t> counts;
+    std::map<std::string, std::uint32_t> dumps;
     std::uint32_t pipelines = 0;
 };
 

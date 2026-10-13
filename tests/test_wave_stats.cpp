@@ -37,6 +37,16 @@ int main() {
     assert(histogram.EndPipeline(true));
     assert(histogram.Pipelines() == 257u);
 
+    // Disassembly dumps: the first `limit` executables of each stage set, counted separately.
+    WaveSizeHistogram dumps;
+    assert(dumps.ShouldDump("{ Fragment }", 2));
+    assert(dumps.ShouldDump("{ Fragment }", 2));
+    assert(!dumps.ShouldDump("{ Fragment }", 2));
+    assert(dumps.ShouldDump("{ Compute }", 1));
+    assert(!dumps.ShouldDump("{ Compute }", 1));
+    assert(dumps.DumpsOf("{ Fragment }") == 2u);
+    assert(dumps.DumpsOf("{ Vertex }") == 0u);
+
     std::puts("wave-stats-test: ok");
     return 0;
 }

@@ -438,6 +438,8 @@ bool Instance::CreateDevice() {
     if (pipeline_executable_properties) {
         pipeline_executable_features =
             feature_chain.get<vk::PhysicalDevicePipelineExecutablePropertiesFeaturesKHR>();
+        // AMD reports no width for graphics executables; its own extension has the ISA.
+        amd_shader_info = add_extension(VK_AMD_SHADER_INFO_EXTENSION_NAME);
     }
     const bool calibrated_timestamps =
         TRACY_GPU_ENABLED ? add_extension(VK_EXT_CALIBRATED_TIMESTAMPS_EXTENSION_NAME) : false;
