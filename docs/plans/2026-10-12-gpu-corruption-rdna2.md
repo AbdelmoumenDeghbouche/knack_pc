@@ -5,7 +5,9 @@ quatro builds de teste rodados por quem tem a placa. Nenhuma Navi 23 está dispo
 (a máquina de desenvolvimento tem uma GTX 1650; a de teste tem uma RX 6700 XT, Navi 22, que não
 mostrou o defeito, mas não foi rodada nas condições dos reporters: veja a seção 9.1). A corrupção
 na Intel Arc está na PR separada da Intel (`docs/plans/2026-10-12-gpu-corruption-intel.md`
-naquela branch). A seção 9 é a revisão de 2026-10-13 e corrige fatos das seções 1 e 6.
+naquela branch). A seção 9 é a revisão de 2026-10-13 e corrige fatos das seções 1 e 6. **A seção
+10 tem a causa encontrada por kalil03 e a correção candidata (`GOW3_NO_MSAA`), no build de teste
+`windows-v2.1.7-amd-teste1`.**
 
 Issues: [#65](https://github.com/FelipePrado0/gow3_pc/issues/65) (canônica),
 [#61](https://github.com/FelipePrado0/gow3_pc/issues/61),
@@ -25,6 +27,7 @@ Issues: [#65](https://github.com/FelipePrado0/gow3_pc/issues/65) (canônica),
 | Aparência | Faixas escuras de 4 linhas com período de 8: escuras as linhas com `y mod 8` em 0 a 3, intactas as de 4 a 7 (print 1920x1080 da #61: y = 920-923, 928-931, ...). Contínuas na horizontal por dezenas de px, só dentro das pegadas das luzes (pele do Kratos no menu, céu, fogo, brilho do HUD, especulares; nunca nas sombras). Nas linhas intactas o valor é o da área ao redor; na pedra dentro da pegada de uma luz, as linhas escuras ficam com a cor da pedra fora da pegada (falta a contribuição daquela luz). |
 | Resolução | 1080p mostra. Abaixo de 1080p as faixas ficam maiores na tela (o período de 8 linhas é do render). 1800p: somem (FilipiEPTeixeira, 2.1.7). 4K: somem para FilipiEPTeixeira; para wyz-ez sobra um bloco na parte de baixo (seção 9.1). Os patches de resolução também mudam a Video Arena (2,25 / 2,75 / 3,25 / 3,75 GiB) e exigem mais DMEM. |
 | Comportamento | Aleatório por lançamento (quase sempre aparece), estático durante a execução, no mesmo lugar da cena. Num lançamento sem linhas, o defeito das texturas amarelas apareceu no lugar (#70, com a "Texture Corruption Fix" desligada). |
+| Causa | Leitura por shader de um depth D32S8 de 2 amostras (`texelFetch` em `sampler2DMS`) devolve 0 na metade de baixo de muitos tiles de 8x8 no driver AMD do Windows; a profundidade linear sai com blocos no near plane e luz, névoa e bloom herdam as faixas (seção 10). |
 | Em outros builds | Igual no shadPS4 eltutz **e no shadPS4 0.19.0 oficial** (jleandrocampos, 6650 XT, 2026-10-13). Contradição: matheusnovak95 (cuesta4/shadPS4#8, RX 6600) diz que o 0.19.0 oficial não mostra as linhas e roda bem mais devagar; execução única, evidência fraca. O build `KrachDev/shadPS4_GOW3` `v1.0.0-gow3-fix` diz eliminar as linhas numa RX 6600 (seção 9.3, pista 1). |
 
 ## 2. Fatos apurados
@@ -201,6 +204,19 @@ Nenhuma correção: diagnóstico. Nada muda para quem não liga as variáveis.
   do cache (`vk_amd_paths.h`, `vk_instance.cpp`, teste `tests/test_amd_paths.cpp`, alvo
   `amd-paths-test`).
 
+- `GOW3_NO_MSAA` (seção 10, patch de kalil03): as imagens multisample do jogo são criadas e
+  amostradas com 1 amostra; os tamanhos e endereços no guest continuam com a contagem real
+  (`ImageInfo::guest_samples`, `GuestNumSamples()` em `regs_color.h`, `regs_depth.h`,
+  `resource.h`). Ligado por padrão no driver proprietário da AMD; `GOW3_NO_MSAA=0` desliga e
+  `=1` força em qualquer placa. O log diz `GPU: guest multisampling off (...)` ou `on`
+  (`video_core/amdgpu/gow3_msaa.h`, `vk_instance.cpp`; teste `tests/test_no_msaa.cpp`, alvo
+  `no-msaa-test`). **É a única mudança desta PR que altera o render por padrão, e só na AMD.**
+- `GOW3_DIAG_IMAGES=1` (patch de kalil03, exige `GOW3_DRAW_PIPE=0`): durante uma captura de quadro
+  (`GOW3_CAPTURE_TRIGGER`), grava em `GOW3_DIAG_DIR` (padrão `out/diag`, a pasta precisa existir)
+  o alvo de cor de cada passe e as imagens de cada dispatch, em raw
+  (`<seq>_<tag>_<endereço>_<w>x<h>_p<pitch>_b<bytes>_f<formato vk>.raw`). Espera a GPU a cada
+  imagem; só para diagnóstico. Foi assim que o passe das faixas foi encontrado.
+
 ## 6. Pistas restantes
 
 Substituída pela seção 9.3. Da lista original de 2026-10-12: a DCC na cor (pista 1) está quase
@@ -217,145 +233,49 @@ as pistas, e a captura RenderDoc (pista 4) derruba o jogo nas placas dos reporte
 - Pin de subgrupo só nos estágios que o driver lista (`GOW3_SUBGROUP_PIN=allowed` na PR Intel):
   tira o port de fora da especificação na AMD, sem efeito no defeito.
 
-## 7. Como testar (RX 6600 e outras RDNA2 com as linhas)
+## 7. Como testar (build `windows-v2.1.7-amd-teste1`)
 
-Regras para todos os testes:
+O build liga `GOW3_NO_MSAA` sozinho em toda placa AMD com o driver proprietário. Regras: 1080p,
+sem patch de resolução, upscaler desligado, sempre as mesmas cenas (menu principal com o Kratos,
+abertura em tempo real, primeira luta). Não precisa limpar o cache de shaders. O `last_run.log`
+fica na pasta de saves (a "Saves folder" do launcher, por exemplo `Documents\god of war 3 saves`)
+e precisa ter a linha `GPU: guest multisampling off (single-sampled images; GOW3_NO_MSAA=0 keeps
+it)`; sem ela, a execução não conta.
 
-- Sempre a mesma cena: o menu principal, pescoço e ombro do Kratos. Um print por execução, e
-  diga se as linhas apareceram.
-- 1080p nativo, sem patch de resolução (exceto no teste 4), upscaler desligado. Diga se a "Bug
-  Fix - Texture Corruption Fix" está ligada.
-- Abra o jogo por um `teste.bat` ao lado de `God of War III.exe`. Com o build desta PR, o botão
-  PLAY grava o `last_run.log`, **desde que "Close the launcher when the game starts" esteja
-  desmarcado**. Na 2.1.7, ou com a opção ligada, troque o `start` por
-  `"Play God of War III.exe"`. O `last_run.log` fica na **pasta de saves** (a "Saves folder" do
-  launcher, por exemplo `Documents\god of war 3 saves`). Anexe sempre o log da execução: sem a
-  linha de marcador de cada teste, a execução não conta (foi o que aconteceu com o build 4).
-- As variáveis desta PR não precisam de cache de shaders limpo: os tokens que mudam os shaders
-  têm o próprio cache.
+1. **Padrão (correção ligada):** 5 aberturas do zero, um print por abertura das três cenas. Diga
+   em quantas as linhas apareceram e anexe um `last_run.log`.
+2. **Controle (`GOW3_NO_MSAA=0`):** 2 aberturas pelo `teste.bat` abaixo. Linhas de volta confirma
+   que é a mudança que resolve, e não o build.
 
-### 1. As quatro mudanças do build KrachDev (build de teste novo)
+   ```bat
+   @echo off
+   set GOW3_NO_MSAA=0
+   start "" "God of War III.exe"
+   ```
 
-```bat
-@echo off
-set GOW3_LIGHTING_TEST=all
-set GOW3_GPU_LOG=info
-start "" "God of War III.exe"
-```
+3. **Bordas e desempenho:** um print da mesma cena parada com e sem a correção (o jogo perde as
+   2 amostras de profundidade; procurar serrilhado diferente nas bordas dos objetos) e o FPS
+   nos dois casos (F3 ou "Frame stats" do launcher).
+4. **Quem joga mais adiante:** diga se as linhas voltam em alguma fase (a correção só foi testada
+   até a primeira luta) e em 1440p, 1800p ou 4K.
+5. **RDNA2 sem as linhas antes (6700 XT) e RDNA3/RDNA4:** o build também muda o render de vocês.
+   Testes 1 e 3: se algo piorar, `GOW3_NO_MSAA=0` é o caminho de volta.
 
-3 execuções. O log precisa ter `GPU: lighting test on: shading msdepth dref bias`.
-
-- Linhas somem nas 3: uma das quatro mudanças é a causa. Rode então 4 execuções, uma por token
-  (`set GOW3_LIGHTING_TEST=shading`, depois `msdepth`, `dref`, `bias`), e diga qual delas
-  sozinha tira as linhas.
-- Linhas continuam: o build KrachDev não resolve pelo que ele descreve, e as quatro mudanças
-  saem da lista.
-
-### 2. Captura por passe (mesmo build)
-
-```bat
-@echo off
-set GOW3_CAPTURE_DIR=C:\gow3cap
-set GOW3_GPU_LOG=info
-start "" "God of War III.exe"
-```
-
-1. No menu com as linhas, abra **Insert > Diagnostics > Capture frame** uma vez e espere a
-   mensagem `Frame capture: ... passes written`.
-2. Feche o jogo e anexe o `C:\gow3cap\frame_*.txt` (texto, poucos KB) com o `last_run.log` e o
-   print.
-
-A captura diz se algum passe tem `d2`, `d4` ou `mixed-amd` (o jogo usa MSAA ou amostras mistas),
-se algum passe tem `stencil t1` sem nunca ter `c1` (teste de estêncil que o emulador nunca
-limpou) e se algum alvo é menor que os outros (`area ... (depth ...)`). O mesmo arquivo de uma
-placa sem as linhas (NVIDIA, Intel, RDNA2 limpa) é o controle.
-
-### 3. Barreiras completas (mesmo build)
-
-```bat
-@echo off
-set GOW3_FULL_BARRIERS=1
-start "" "God of War III.exe"
-```
-
-3 execuções. O log precisa ter `GPU: full barriers on (GOW3_FULL_BARRIERS=1)`.
-
-- Linhas somem nas 3: falta barreira ou limpeza de cache entre passes no núcleo.
-- Linhas continuam: a sincronização entre passes sai da lista.
-
-### 4. Mapa de resolução (2.1.7 serve, sem build novo)
-
-Um patch de resolução por vez, com a "Texture Corruption Fix" **desligada** (a nota dos patches
-pede isso) e o DMEM que a nota de cada patch exige. 2 execuções em cada linha, um print de cada:
-
-| | Patch | Render | DMEM |
-|---|---|---|---|
-| a | nenhum (controle) | 1920x1080 | padrão |
-| b | Resolution Patch - 720p | 1280x720 | 2048 MB ou mais |
-| c | Resolution Patch - 1440p | 2560x1440 | 3072 MB ou mais |
-| d | Resolution Patch - 1800p | 3200x1800 | 4608 MB ou mais |
-
-Diga em quais aparecem as linhas. O 720p usa a mesma Video Arena (2,25 GiB) que a "Texture
-Corruption Fix": se 720p e 1080p mostram e 1800p não, quem decide é o tamanho do render, não a
-arena. O 1440p (3.686.400 px) fica acima do limite de 2.097.152 px em que o driver aberto da AMD
-troca o jeito de limpar profundidade e estêncil (seção 9.3, pista 3); 1080p (2.073.600 px) fica
-abaixo.
-
-### 5. Dump do quadro final (2.1.7 serve)
-
-```bat
-@echo off
-mkdir C:\gow3dump 2>nul
-set GOW3_DUMP_DIR=C:\gow3dump
-set GOW3_FRAME_DUMP_TRIGGER=C:\gow3dump\go
-start "" "God of War III.exe"
-```
-
-1. Vá até o menu com as linhas.
-2. Abra um segundo Prompt de Comando e rode `type nul > C:\gow3dump\go`. Espere 5 segundos e
-   rode o mesmo comando de novo.
-3. Feche o jogo. Em `C:\gow3dump` ficam `display_000_*.raw`, `display_001_*.raw`,
-   `output_000_*.raw` e `output_001_*.raw` (8 MB cada a 1080p; o tamanho no nome é o que o jogo
-   usa). Zipe a pasta e anexe com o print e o `last_run.log`.
-
-- Linhas no `display_*`: o defeito já está na imagem que o jogo emulado entrega; o presenter
-  (FSR, RCAS, pós, cópia para a tela) sai da lista.
-- `display_*` limpo e `output_*` com linhas: o defeito está no presenter do port.
-- Os dois dumps da mesma execução iguais pixel a pixel: o conteúdo está parado na memória;
-  diferentes: efeito transitório.
-- Quem roda a 4K (wyz-ez): repita em 3 aberturas, um dump por abertura. Se o bloco de baixo
-  começa em lugares diferentes em cada abertura, a posição na memória decide; se começa sempre
-  no mesmo lugar, quem decide é um desenho.
-
-### 6. Caminhos que só a AMD usa (mesmo build; só se o teste 2 mostrar `d2`, `d4` ou `mixed-amd`)
-
-```bat
-@echo off
-set GOW3_AMD_PATHS_OFF=mixed
-start "" "God of War III.exe"
-```
-
-3 execuções; o log precisa ter `GPU: amd paths off: mixed`. Linhas somem = o caminho
-`VK_AMD_mixed_attachment_samples`. Depois, opcional, `set GOW3_AMD_PATHS_OFF=shaderext`
-(3 execuções, log com `GPU: amd paths off: shaderext` e `GPU: fragment barycentrics: ...`):
-linhas somem = código de shader gerado só para a AMD.
-
-### Controle: RDNA2 sem as linhas (por exemplo a RX 6700 XT de teste)
-
-Testes 2 e 5 nas mesmas condições: 1080p, sem patch, upscaler desligado, 5 aberturas no teste 5.
-Mesmos anexos.
+Os testes de diagnóstico da seção 9 (`GOW3_LIGHTING_TEST`, `GOW3_AMD_PATHS_OFF`, barreiras,
+captura por passe) continuam no build, mas só fazem sentido se a correção falhar em alguma placa.
 
 ## 8. Perguntas em aberto
 
-1. `GOW3_LIGHTING_TEST=all` tira as linhas? Qual token sozinho?
-2. A captura por passe no menu mostra MSAA, amostras mistas, teste de estêncil sem clear, ou um
-   alvo menor que os outros? O que muda na captura de uma placa sem as linhas?
-3. `GOW3_FULL_BARRIERS=1` muda alguma coisa (com o marcador no log)?
-4. Em quais resoluções de render as linhas aparecem: 720p e 1440p decidem entre tamanho do
-   render, arena e o limite do clear de profundidade.
-5. No dump a 4K, o bloco de baixo muda de lugar entre aberturas?
-6. O que `user\shaders\wave_dumps` mostra para os pixel shaders da Navi 23: wave32 ou wave64?
-7. As linhas e as texturas amarelas (#70) aparecem juntas em algum lançamento?
+1. A correção some com as linhas em todas as RDNA2 relatadas (6600, 6650 XT, 6750 XT, 6800 XT,
+   6900 XT) e em todas as fases, ou só no começo?
+2. Perder as 2 amostras de profundidade muda bordas ou desempenho de forma visível? Se mudar,
+   vale restringir a correção ao fetch (expandir o depth antes da leitura por shader, ou copiar
+   para uma imagem de 1 amostra só para a leitura) em vez de desligar o MSAA do guest inteiro.
+3. Por que 1800p e 4K não mostravam (ou mostravam menos): o driver desliga a compressão do depth
+   acima de um tamanho, ou muda o layout? Só interessa se a restrição da pergunta 2 for feita.
+4. Os traços nas barras do HUD (#65, #91) vêm do mesmo depth linear ou de outra leitura?
+5. O Steam Deck (RADV) mostra as linhas com `GOW3_NO_MSAA=0`? Decide se é bug do driver do
+   Windows ou do hardware.
 
 ## 9. Revisão de 2026-10-13 (rodada adversarial)
 
@@ -467,3 +387,50 @@ Continuam valendo as refutadas da seção 3 e as eliminações por teste da seç
   `RADV_DEBUG=nodcc,nohiz,nofastclears` bissecta os metadados em minutos; `RADV_DEBUG=img`
   lista DCC e HTILE por imagem.
 - **RX 6700 XT de teste:** rodar nas condições dos reporters antes de contar como controle.
+
+## 10. Causa encontrada (kalil03, 2026-10-13)
+
+Relato em [#65](https://github.com/FelipePrado0/gow3_pc/issues/65#issuecomment-6138650285), RX
+6600, Adrenalin 26.8.1, 1080p nativo, sobre o main `3459726`.
+
+**Mecanismo.** O jogo desenha com depth D32S8 de 2 amostras e cor de 1 fragmento (o "2x MSAA
+depth + 1x colour" que o release KrachDev afirmava sem prova). O passe de profundidade linear (ps
+`782d705bc1c01219`, um triângulo de tela cheia que escreve num R32F) lê esse depth com `texelFetch`
+num `sampler2DMS`. Nessa leitura o driver AMD do Windows devolve 0 na metade de baixo de muitos
+tiles de 8x8 pixels: a profundidade linear sai valendo 0,25 (o near plane) neles, e luz, névoa e
+bloom, que usam essa imagem, herdam as faixas. Por isso as linhas só aparecem em área clara e
+dentro das luzes. O dump por passe (`GOW3_DIAG_IMAGES`) mostrou cerca de 16.100 blocos de 8x4
+errados nessa imagem a 1080p e tudo limpo antes dela. Os blocos que escapam ficam onde o depth varia
+mais (bordas); em área lisa quase todos falham. Tem cara de tile de depth comprimido (compressão
+Z do MSAA) lido pelo TC sem descompressão.
+
+**Como fecha com o que estava medido.** A metade de baixo dos tiles no R32F vira as linhas 0 a 3
+dos prints se há um flip vertical entre essa imagem e a apresentada (1080 = 135 x 8). A decisão
+de comprimir é por imagem e por conteúdo, o que dá aleatório por abertura e estático por
+execução. Era a pista 2 da seção 9.3 (amostras mistas); as outras caem com ela. Ler o depth em
+layout `General` e desligar `VK_AMD_mixed_attachment_samples` não mudaram nada no teste dele, o
+que fecha também `GOW3_AMD_PATHS_OFF=mixed`. O `Unimplemented depth overlap copy` do log do
+Momexdxd é uma cópia envolvendo esse depth multisample; com a correção o caminho some.
+
+**Correção (`GOW3_NO_MSAA`, patch de kalil03 aplicado nesta PR com teste).** As imagens
+multisample do guest são criadas com 1 amostra e o sharp `Color2DMsaa` é tratado como `Color2D`,
+então o shader é gerado com `texture2D` e sem índice de amostra (o tipo entra na especialização
+do shader, `specialization.h`, e `emit_spirv_image.cpp` só emite o índice para `Color2DMsaa`:
+um cache antigo não contamina). Tamanho e endereço no guest continuam com a contagem real
+(`ImageInfo::guest_samples`, `GuestNumSamples()`). Efeitos colaterais conhecidos:
+`aa_config.NumSamples()` vira 1 para shaders com sample coverage; `motion_possible`
+(`vk_pipeline_cache.cpp`, exige depth de 1 amostra) passa a valer nos passes de 2 amostras (só
+importa com o upscaler ligado); `ReinterpretColorAsMsDepth` e `SetBackingSamples` ficam sem uso
+na AMD. NVIDIA, Intel e RADV não mudam.
+
+Resultado dele, abrindo o jogo do zero até a abertura em tempo real e a primeira luta:
+
+| | aberturas com linhas | blocos ruins na profundidade linear |
+|---|---|---|
+| sem o patch, ou `GOW3_NO_MSAA=0` | 10 de 11 | cerca de 16.100 |
+| com o patch (padrão) | 0 de 5 | 30 a 80 (ruído do detector) |
+
+A abertura limpa sem o patch bate com o "às vezes abre sem as linhas" dos relatos. Não testado:
+o resto do jogo, FPS, outras resoluções, outras placas, bordas com e sem as 2 amostras. O build
+`windows-v2.1.7-amd-teste1` é para isso (seção 7).
+
