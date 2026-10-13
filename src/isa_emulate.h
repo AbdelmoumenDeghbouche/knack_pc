@@ -5,7 +5,9 @@
 #ifndef GOW3_ISA_EMULATE_H
 #define GOW3_ISA_EMULATE_H
 #include <stdint.h>
-#include "runtime.h"   /* ABI */
+#ifndef ABI               /* same as runtime.h, which needs sigjmp_buf (_GNU_SOURCE) */
+#define ABI __attribute__((sysv_abi))
+#endif
 
 enum { ISA_MOVBE_LOAD = 1, ISA_MOVBE_STORE, ISA_LZCNT, ISA_TZCNT, ISA_ANDN, ISA_BEXTR, ISA_BLSI, ISA_BLSMSK, ISA_BLSR, ISA_VCVTPH2PS, ISA_VCVTPS2PH };
 enum { ISA_MODE_JMP = 0, ISA_MODE_JMP_RELOCATE, ISA_MODE_INT3, ISA_MODE_UNSUPPORTED };
