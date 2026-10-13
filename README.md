@@ -16,7 +16,8 @@ It is a fork of [Supermedo's Windows port](https://github.com/Supermedo/bloodbor
 [deadinside28's bloodborne_pc](https://github.com/deadinside28/bloodborne_pc) (see
 [Credits](#credits)).
 
-> **No game files are included.** You need a dump from your own PS4 (CUSA01623, version 01.02).
+> **No game files are included.** You need a dump from your own PS4 (tested: CUSA01623 and
+> CUSA01715, versions 01.00 and 01.02).
 > This project is not affiliated with Sony Interactive Entertainment or Santa Monica Studio.
 > God of War is a trademark of Sony Interactive Entertainment.
 
@@ -63,9 +64,10 @@ Progress is tracked (in Portuguese) in [docs/gow3/ROADMAP.md](docs/gow3/ROADMAP.
 **You need**
 - Windows 10 (1903 or newer) or Windows 11, 64-bit.
 - A graphics card with Vulkan 1.3 and an up-to-date driver.
-- Your own copy of God of War III Remastered: **CUSA01623 with the 01.02 update**, as a folder
-  that contains `eboot.bin`, `sce_module` and `sce_sys`. No game files are included in this
-  download.
+- Your own copy of God of War III Remastered, as a folder that contains `eboot.bin`,
+  `sce_module` and `sce_sys`. Tested: **CUSA01623 (US) and CUSA01715 (EU), versions 01.00 and
+  01.02** (full update). Other regions and versions may work but are untested: if you try one,
+  please open an issue with your `user/last_run.log`. No game files are included in this download.
 
 **Steps**
 1. Download `gow3-windows.zip` from the
@@ -107,12 +109,12 @@ Patches and fixes are included and applied automatically: texture fix, skip vide
 
 - Windows 10 (1903 or newer) or Windows 11, 64-bit.
 - A graphics card with Vulkan 1.3 and a current driver.
-- Your copy of the game: CUSA01623 with the 01.02 update applied (the folder with `eboot.bin`,
-  `sce_module` and `sce_sys`).
-- The patches are applied only to the `eboot.bin` they were checked against byte by byte
-  (sha256 `d85c8135d330c3b601bf5dc3f1dd86bd6119fb8a9fce372bed2c9785f9a79299`), and the in-game
-  hooks (cheats, multipliers, health bar) only where the code they change has the expected
-  bytes. Otherwise the game starts without them, and the log and the menu say why.
+- Your copy of the game (the folder with `eboot.bin`, `sce_module` and `sce_sys`). Tested:
+  CUSA01623 and CUSA01715, versions 01.00 and 01.02.
+- The patches and the in-game hooks (cheats, multipliers, health bar) find their sites by
+  signature: the original bytes around each one, wherever a release placed that code
+  (`tools/make_signatures.py`). A site that is not found leaves only that patch or hook off; the
+  game starts without it, and the log and the menu say why.
 - To build from source: [MSYS2](https://www.msys2.org) and [Python 3](https://www.python.org) with Pillow
   (`pip install pillow`, used for the game's icon and cover art).
 

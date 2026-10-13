@@ -17,8 +17,8 @@ menu no jogo).
 [bloodborne_pc de deadinside28](https://github.com/deadinside28/bloodborne_pc) (veja os
 [Créditos](#créditos)).
 
-> **Nenhum arquivo do jogo está incluído.** É preciso um dump do seu próprio PS4 (CUSA01623,
-> versão 01.02). Este projeto não tem relação com a Sony Interactive Entertainment nem com o
+> **Nenhum arquivo do jogo está incluído.** É preciso um dump do seu próprio PS4 (testados:
+> CUSA01623 e CUSA01715, versões 01.00 e 01.02). Este projeto não tem relação com a Sony Interactive Entertainment nem com o
 > Santa Monica Studio. God of War é marca registrada da Sony Interactive Entertainment.
 
 Na máquina de teste (AMD Radeon RX 6700 XT, Ryzen 5 5600X, 32 GB), o jogo roda a 144 FPS de
@@ -64,9 +64,11 @@ O andamento está em
 **Você precisa de**
 - Windows 10 (1903 ou mais novo) ou Windows 11, 64 bits.
 - Uma placa de vídeo com Vulkan 1.3 e driver atualizado.
-- Sua própria cópia de God of War III Remastered: **CUSA01623 com a atualização 01.02**, numa
-  pasta que contenha `eboot.bin`, `sce_module` e `sce_sys`. Nenhum arquivo do jogo vem neste
-  download.
+- Sua própria cópia de God of War III Remastered, numa pasta que contenha `eboot.bin`,
+  `sce_module` e `sce_sys`. Testados: **CUSA01623 (EUA) e CUSA01715 (Europa), versões 01.00 e
+  01.02** (atualização completa). Outras regiões e versões podem funcionar, mas não foram
+  testadas: se usar uma delas, abra uma issue com o seu `user/last_run.log`. Nenhum arquivo do
+  jogo vem neste download.
 
 **Passos**
 1. Baixe o `gow3-windows.zip` na
@@ -108,12 +110,12 @@ com X e 120 FPS vêm ligados. Mude resolução e FPS na **Home** ou em **Perform
 
 - Windows 10 (1903 ou mais novo) ou Windows 11, 64 bits.
 - Placa de vídeo com Vulkan 1.3 e driver atualizado.
-- Sua cópia do jogo: CUSA01623 com a atualização 01.02 aplicada (a pasta com `eboot.bin`,
-  `sce_module` e `sce_sys`).
-- Os patches só são aplicados ao `eboot.bin` com que foram conferidos byte a byte (sha256
-  `d85c8135d330c3b601bf5dc3f1dd86bd6119fb8a9fce372bed2c9785f9a79299`), e os ganchos do menu
-  (trapaças, multiplicadores, barra de vida) só onde o código que eles alteram tem os bytes
-  esperados. Fora isso o jogo abre sem eles, e o log e o menu dizem o motivo.
+- Sua cópia do jogo (a pasta com `eboot.bin`, `sce_module` e `sce_sys`). Testados: CUSA01623 e
+  CUSA01715, versões 01.00 e 01.02.
+- Os patches e os ganchos do menu (trapaças, multiplicadores, barra de vida) acham seus pontos
+  por assinatura: os bytes originais em volta de cada um, onde quer que a versão do jogo tenha
+  colocado esse código (`tools/make_signatures.py`). Um ponto que não é achado deixa só aquele
+  patch ou gancho desligado; o jogo abre sem ele, e o log e o menu dizem o motivo.
 - Para compilar a partir do código: [MSYS2](https://www.msys2.org) e [Python 3](https://www.python.org) com Pillow
   (`pip install pillow`, usado no ícone e na capa do jogo).
 
