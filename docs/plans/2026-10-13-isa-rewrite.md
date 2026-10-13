@@ -108,7 +108,7 @@ def test_cpu_features_mode_reports_this_machine(self):
 
 - [ ] **Passo 7: build do probe e testes**
 
-Run (MSYS2, ver Global Constraints): `ninja -C out/w gow3-probe cpu-check-test && out/w/cpu-check-test.exe`; copie `out/w/gow3-probe.exe` para `out/gow3-probe.exe` (com as DLLs no PATH) e `python -m unittest tests.test_probe tests.test_cpu_check -v` (o `.exe` em `out/` faz o `skipUnless` passar).
+Run (MSYS2, ver Global Constraints): `ninja -C out/w gow3-probe cpu-check-test && out/w/cpu-check-test.exe`; copie `out/w/gow3-probe.exe` para `out/gow3-probe.exe` (com as DLLs no PATH) e `python -m unittest discover -s tests -p "test_probe.py" -v` (o `.exe` em `out/` faz o `skipUnless` passar).
 Expected: `cpu-check-test ok`; `test_cpu_features_mode_reports_this_machine ... ok`.
 
 - [ ] **Passo 8: commit**
@@ -147,7 +147,7 @@ Expected: `cpu-check-test ok`; `test_cpu_features_mode_reports_this_machine ... 
 `tests/test_isa_rewrite.py`, `unittest`, `from paths import ROOT`, `import isa_rewrite`, classe decorada com `@unittest.skipUnless(isa_rewrite.iced_x86, 'pip install iced-x86')`. Bytes em hexadecimal (todos verificados com o decodificador):
 
 ```python
-BLSR_ECX = bytes.fromhex('c4e278f3c9')          # blsr ecx, ecx            (5)
+BLSR_ECX = bytes.fromhex('c4e270f3c9')          # blsr ecx, ecx            (5)
 MOVBE_STORE = bytes.fromhex('0f38f108')          # movbe [rax], ecx         (4)
 BEXTR_RIP = bytes.fromhex('c4e270f7050c000000')  # bextr eax, [rip+0xc], ecx (9)
 LZCNT_AX = bytes.fromhex('66f30fbdc1')           # lzcnt ax, cx             (5)
@@ -200,7 +200,7 @@ def test_non_sites_are_ignored(self):
 
 - [ ] **Passo 2: rodar e ver falhar**
 
-Run: `python -m unittest tests.test_isa_rewrite -v`
+Run: `python -m unittest discover -s tests -p "test_isa_rewrite.py" -v`
 Expected: `ModuleNotFoundError: No module named 'isa_rewrite'` (ou skip se `iced_x86` não estiver no Python do repositório: instale `pip install iced-x86==1.21.0` nesse Python antes de seguir).
 
 - [ ] **Passo 3: implementar `scan_segment`**
@@ -209,7 +209,7 @@ Expected: `ModuleNotFoundError: No module named 'isa_rewrite'` (ou skip se `iced
 
 - [ ] **Passo 4: rodar os testes**
 
-Run: `python -m unittest tests.test_isa_rewrite -v`
+Run: `python -m unittest discover -s tests -p "test_isa_rewrite.py" -v`
 Expected: 8 testes `ok`.
 
 - [ ] **Passo 5: commit**
@@ -276,7 +276,7 @@ def test_fixture_file_is_current(self):
 
 - [ ] **Passo 2: rodar e ver falhar**
 
-Run: `python -m unittest tests.test_isa_rewrite -v`
+Run: `python -m unittest discover -s tests -p "test_isa_rewrite.py" -v`
 Expected: `AttributeError: module 'isa_rewrite' has no attribute 'HEADER'`.
 
 - [ ] **Passo 3: implementar leitura, codificação, resumo e `main`**
@@ -285,7 +285,7 @@ Expected: `AttributeError: module 'isa_rewrite' has no attribute 'HEADER'`.
 
 - [ ] **Passo 4: rodar os testes**
 
-Run: `python -m unittest tests.test_isa_rewrite -v`
+Run: `python -m unittest discover -s tests -p "test_isa_rewrite.py" -v`
 Expected: todos `ok` (14 testes).
 
 - [ ] **Passo 5: commit**
@@ -566,7 +566,7 @@ def test_rewrite_disabled(self):
 
 - [ ] **Passo 2: rodar e ver falhar**
 
-Run: `python -m unittest tests.test_run_isa -v`
+Run: `python -m unittest discover -s tests -p "test_run_isa.py" -v`
 Expected: `AttributeError: module 'run' has no attribute 'parse_cpu_features'`.
 
 - [ ] **Passo 3: implementar**
@@ -575,7 +575,7 @@ Em `main`, depois de resolver `probe`: `features = subprocess.run([str(probe), '
 
 - [ ] **Passo 4: rodar os testes**
 
-Run: `python -m unittest tests.test_run_isa tests.test_isa_rewrite -v`
+Run: `python -m unittest discover -s tests -p "test_run_isa.py" -v`
 Expected: todos `ok`.
 
 - [ ] **Passo 5: commit**
