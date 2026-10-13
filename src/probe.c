@@ -41,6 +41,7 @@ static LinkedModule modules[16];
 static uint64_t module_count;
 static int entered_game;
 static int gpu_enabled;
+static unsigned cpu_missing_sets; /* CPU_SET_* the host lacks; the guest code needs them rewritten */
 int vulkan_smoke(void);
 
 static void fail(const char *message) { fprintf(stderr, "ERROR: %s\n", message); exit(1); }
@@ -542,6 +543,23 @@ void runtime_restart(void) {
 #endif
 }
 
+/* The guest code needs the PS4's instruction sets (#33, #66); GOW3_CPU_CHECK=0 skips this. A
+ * missing fatal set prints STOP and returns 0; the rewritable ones go to cpu_missing_sets, named
+ * in missing. */
+static int cpu_supported(char *missing, size_t size) {
+    missing[0] = 0;
+    const char *check = getenv("GOW3_CPU_CHECK");
+    if (check && !strcmp(check, "0")) return 1;
+    const CpuFeatureWords words = cpu_feature_words();
+    if (cpu_missing_fatal(words, missing, size)) {
+        printf("STOP: this CPU lacks instruction sets the game's code uses: %s "
+               "(Intel Sandy Bridge 2011 or newer, or AMD FX or newer, is needed)\n", missing);
+        return 0;
+    }
+    cpu_missing_sets = cpu_missing_rewritable(words, missing, size);
+    return 1;
+}
+
 int main(int argc, char **argv) {
     setvbuf(stdout, NULL, _IONBF, 0);
 #ifndef _WIN32
@@ -551,6 +569,13 @@ int main(int argc, char **argv) {
     mallopt(M_MMAP_THRESHOLD,32*1024*1024);
 #endif
     if (argc == 2 && !strcmp(argv[1], "--vulkan-only")) return vulkan_smoke();
+    char missing[128];
+    if (argc == 2 && !strcmp(argv[1], "--cpu-features")) {
+        if (!cpu_supported(missing, sizeof missing)) return 20;
+        if (cpu_missing_sets) printf("CPU: missing %s\n", missing);
+        else puts("CPU: complete");
+        return 0;
+    }
 #ifdef _WIN32
     /* The PS4 user range must stay free of host allocations (GPU driver, heaps), and the guest
      * TCB needs one of the 64 TEB TLS slots before DLLs (Vulkan drivers) take them. */
@@ -572,19 +597,11 @@ int main(int argc, char **argv) {
         else { fprintf(stderr, "Unknown option: %s\n", argv[i]); return 1; }
     }
     if (argc < 2) {
-        fprintf(stderr, "Usage: %s boot.bin [--cpu-only] [--strict-imports] [--check-imports] [--content-profile file] [--app0 dir] [--user dir] [--patches file] [--timeout seconds] | --vulkan-only\n", argv[0]);
+        fprintf(stderr, "Usage: %s boot.bin [--cpu-only] [--strict-imports] [--check-imports] [--content-profile file] [--app0 dir] [--user dir] [--patches file] [--timeout seconds] | --vulkan-only | --cpu-features\n", argv[0]);
         return 1;
     }
-    /* The guest code needs the PS4's instruction sets (#33, #66); GOW3_CPU_CHECK=0 skips this. */
-    const char *cpu_check = getenv("GOW3_CPU_CHECK");
-    if (!cpu_check || strcmp(cpu_check, "0")) {
-        char missing[128];
-        if (cpu_missing_features(cpu_feature_words(), missing, sizeof missing)) {
-            printf("STOP: this CPU lacks instruction sets the game's code uses: %s "
-                   "(Intel Haswell 2013 or newer, or AMD Ryzen or newer, is needed)\n", missing);
-            return 20;
-        }
-    }
+    if (!cpu_supported(missing, sizeof missing)) return 20;
+    if (cpu_missing_sets) printf("CPU: missing %s\n", missing);
     if (content_profile) {
         FILE *profile=fopen(content_profile,"rb");
         unsigned char data[28];

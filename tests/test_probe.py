@@ -3,10 +3,12 @@ from paths import ROOT
 from pathlib import Path
 import struct
 import subprocess
+import sys
 import tempfile
 import unittest
 
 EXE = ROOT / 'out/gow3-probe'
+HOST_EXE = ROOT / ('out/gow3-probe' + ('.exe' if sys.platform == 'win32' else ''))
 
 
 def package(code, relocs=(), names=(), capabilities=None):
@@ -150,6 +152,14 @@ class LoaderTests(unittest.TestCase):
         r = self.run_image(package(b'\xc3',capabilities=2))
         self.assertEqual(r.returncode,1)
         self.assertIn('unknown runtime capabilities',r.stderr)
+
+
+@unittest.skipUnless(HOST_EXE.exists(), 'build native probe first')
+class CpuFeaturesTests(unittest.TestCase):
+    def test_cpu_features_mode_reports_this_machine(self):
+        result = subprocess.run([str(HOST_EXE.resolve()), '--cpu-features'], capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0)
+        self.assertRegex(result.stdout, r'^CPU: (complete|missing [A-Z0-9., ]+)\n$')
 
 
 if __name__ == '__main__':
