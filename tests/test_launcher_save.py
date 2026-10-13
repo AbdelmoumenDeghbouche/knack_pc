@@ -64,6 +64,19 @@ class SaveButtonTest(unittest.TestCase):
         self.assertTrue(launcher.CONFIG_FILE.is_file())
         self.assertEqual(self.save_state(), 'disabled')
 
+    def test_saving_a_new_launcher_language_rebuilds_the_window_in_it(self):
+        self.app.var('vsync', 'ini').set(False)
+        self.app.append('line one\n')
+        self.app.show('graphics')
+        self.app.var('ui_language', 'app').set('ru')
+        self.app.save()
+        self.assertEqual(launcher.LANG, 'ru')
+        self.assertEqual(str(self.app.play_button['text']), 'ИГРАТЬ')
+        self.assertFalse(self.app.var('vsync', 'ini').get())  # the settings stay
+        self.assertEqual(self.app.current_page, 'graphics')
+        self.assertIn('line one', self.app.log.get('1.0', 'end'))
+        self.assertEqual(self.save_state(), 'disabled')
+
     def test_nothing_is_written_before_saving(self):
         self.app.var('vsync', 'ini').set(False)
         self.save_state()

@@ -632,6 +632,7 @@ class Launcher:
         self.banner_source = self.banner_image = None
         self.ui_calls = queue.Queue()  # work for the Tk thread from helper threads
         self.mod_order, self.mod_vars, self.patch_vars = [], {}, {}
+        self.pending_update = None  # (version, url, page) once offered
         root.title(f'{APP_NAME} (PC)')
         if sys.platform == 'win32':
             try:  # the taskbar shows this window's icon, not Python's
@@ -735,8 +736,9 @@ class Launcher:
         ttk = self.ttk
         s = ttk.Style(self.root)
         s.theme_use('clam')
-        self.check_images()
-        s.element_create('Bb.indicator', 'image', self.check_off, ('selected', self.check_on), sticky='')
+        if not hasattr(self, 'check_on'):  # once: a rebuilt window keeps the element and its images
+            self.check_images()
+            s.element_create('Bb.indicator', 'image', self.check_off, ('selected', self.check_on), sticky='')
         s.layout('TCheckbutton', [('Checkbutton.padding', {'sticky': 'nswe', 'children': [
             ('Bb.indicator', {'side': 'left', 'sticky': ''}),
             ('Checkbutton.focus', {'side': 'left', 'sticky': 'w', 'children': [
@@ -1664,8 +1666,37 @@ class Launcher:
         self.refresh_save_button()
 
     def save(self):
-        """The Save button: the files, without starting the game."""
+        """The Save button: the files, without starting the game. A new launcher language rebuilds
+        the window in it."""
         self.collect()
+        language = self.app.get('ui_language') or windows_language()
+        if language != LANG:
+            self.rebuild(language)
+
+    def rebuild(self, language):
+        """The window again in another language: every setting stays in its variable; the page,
+        the log, the running game and a pending update offer come back."""
+        global LANG
+        LANG = language
+        log, page, update = self.log.get('1.0', 'end-1c'), self.current_page, self.pending_update
+        for var in self.vars.values():  # the old widgets' value labels and links
+            for modes, name in var.trace_info():
+                var.trace_remove(modes, name)
+        for child in self.root.winfo_children():
+            child.destroy()
+        self.style()
+        self.build()
+        self.link_sharpening()
+        self.set_log(log)
+        if self.process:
+            self.play_button.configure(text=heading_text(_('RUNNING')), state='disabled')
+        if update:
+            self.offer_update(*update)
+        self.show(page)
+        self.refresh_lists()
+        self.refresh_game_patches()
+        self.saved = self.gather()
+        self.refresh_save_button()
 
     def refresh_save_button(self):
         """Save is only active while the window differs from the files (gather() against the last save)."""
@@ -1810,6 +1841,7 @@ class Launcher:
             fill='x', pady=(4, 0))
         box.pack(fill='x', padx=(22, 18), pady=(0, 14), before=self.side_note)
         self.update_box = box
+        self.pending_update = (version, url, page)
         if not self.process:
             self.status.configure(text=text, fg=TEXT)
 
