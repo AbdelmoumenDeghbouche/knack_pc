@@ -5,6 +5,7 @@
 #include "video_core/renderer_vulkan/ui_composition.h"
 #include "gow3_toggles.h"
 #include "video_core/renderer_vulkan/vk_frame_capture.h"
+#include "video_core/renderer_vulkan/vk_pass_census.h"
 #include "common/debug.h"
 #include "core/debug_state.h"
 #include "core/emulator_settings.h"
@@ -2705,6 +2706,9 @@ RenderState Rasterizer::BeginRendering(const GraphicsPipeline* pipeline) {
 
 RenderState Rasterizer::BeginRenderingFull(const GraphicsPipeline* pipeline) {
     attachment_feedback_loop = false;
+    // gow3: frame analyzer census of this pass (sample counts and path, stencil, clears).
+    const bool census_on = FrameCapture::Active();
+    PassCensus::State census;
     using VulkanUpscalerTarget = TemporalUpscaler::Target;
     VulkanUpscalerTarget redirect{};
     bool color_redirected = false, depth_redirected = false;
@@ -2884,6 +2888,18 @@ RenderState Rasterizer::BeginRenderingFull(const GraphicsPipeline* pipeline) {
                                     ? vk::ImageLayout::eDepthReadOnlyStencilAttachmentOptimal
                                 : has_stencil ? vk::ImageLayout::eDepthStencilReadOnlyOptimal
                                               : vk::ImageLayout::eDepthReadOnlyOptimal;
+        if (census_on) {
+            census.depth_samples = u8(regs.depth_buffer.NumSamples());
+            census.stencil_test = regs.depth_control.stencil_enable;
+            census.stencil_write = stencil_write;
+            census.stencil_clear = is_stencil_clear;
+            census.depth_clear = !is_depth_clear ? PassCensus::DepthClear::None
+                                 : texture_cache.IsMetaCleared(htile_address, slice)
+                                     ? PassCensus::DepthClear::Htile
+                                     : PassCensus::DepthClear::Register;
+            census.depth_layout = vk::to_string(new_layout);
+            census.depth_size = {image.info.size.width, image.info.size.height};
+        }
         if (!reduced) needs_barrier |= runtime.Transit(&image, new_layout,
                                          vk::PipelineStageFlagBits2::eEarlyFragmentTests |
                                              vk::PipelineStageFlagBits2::eLateFragmentTests,
@@ -2999,16 +3015,26 @@ RenderState Rasterizer::BeginRenderingFull(const GraphicsPipeline* pipeline) {
         state.height = proxy.height;
         target_scale = {float(size.width) / 1920.0f, float(size.height) / 1080.0f};
     }
-    if (FrameCapture::Active()) {
+    if (census_on) {
         std::array<const VideoCore::ImageInfo*, AmdGpu::NUM_COLOR_BUFFERS> colors{};
         for (u32 cb = 0; cb < state.num_color_attachments; ++cb) {
             if (cb_descs[cb].first) {
                 colors[cb] = &texture_cache.GetImage(cb_descs[cb].first).info;
+                census.color_samples.push_back(u8(regs.color_buffers[cb].NumSamples()));
             }
         }
         const auto* depth =
             db_desc.first ? &texture_cache.GetImage(db_desc.first).info : nullptr;
-        FrameCapture::BeginPass(colors.data(), state.num_color_attachments, depth);
+        census.raster_samples = u8(key.num_samples);
+        census.path = PassCensus::ResolveSamplePath(
+            census.color_samples, census.depth_samples, depth != nullptr,
+            instance.IsMixedAnySamplesSupported(), instance.IsMixedDepthSamplesSupported());
+        census.sample_shading =
+            regs.ps_input_addr.persp_sample_ena || regs.ps_input_addr.linear_sample_ena;
+        census.feedback_loop = attachment_feedback_loop;
+        census.area = {state.width, state.height};
+        FrameCapture::BeginPass(colors.data(), state.num_color_attachments, depth,
+                                PassCensus::Format(census));
     }
     // gow3: object motion vector attachment of G-buffer pipelines.
     if (key.motion_vectors) {
