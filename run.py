@@ -212,6 +212,12 @@ def main():
               + ('' if engine_fps > 60 or graphics['engine_fps'] == '60' else
                  ' (the frame rate patch was not found in this eboot.bin)'), flush=True)
         env['GOW3_DERIVED'] = ','.join(derived)
+        # The guest memory pool is committed in full at start: a resolution patch above 1080p
+        # can need more than 16 GB of RAM, and the game then stays black.
+        import guest_memory
+        if warning := guest_memory.memory_warning(env.get('GOW3_DMEM_MB'), guest_memory.physical_memory_mb(),
+                                                  env.get('GOW3_STREAM_MEMORY', 'cached')):
+            print(warning, flush=True)
 
         # The in-game restart starts this script again once this process is gone.
         # GPU caches (shaders, pipelines) beside the saves; read before main(), so set here.
