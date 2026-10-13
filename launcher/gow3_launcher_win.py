@@ -117,9 +117,27 @@ def find_tool(name):
 
 
 def parse_gpu_list(text):
-    """(index, name, type) per line of `gow3-gpu-capabilities --list`; other lines are skipped."""
+    """One tuple per line of `gow3-gpu-capabilities --list`: index, name, type and, from the tools
+    that print them, the game's multisampling default on that driver ('off' or 'on') and '1' on
+    the GPU the game picks without GOW3_GPU_ID. Other lines are skipped."""
     rows = [line.split('\t') for line in text.splitlines()]
-    return [tuple(row) for row in rows if len(row) == 3 and row[0].isdigit()]
+    return [tuple(row) for row in rows if len(row) >= 3 and row[0].isdigit()]
+
+
+def chosen_gpu(gpus, gpu_id):
+    """The row of parse_gpu_list the game will run on: the Graphics card setting when it is in the
+    list, else the GPU the tool marks as the game's pick; None when neither is known."""
+    chosen = [row for row in gpus if row[0] == str(gpu_id)]
+    return (chosen or [row for row in gpus if len(row) > 4 and row[4] == '1'] or [None])[0]
+
+
+def no_msaa_options(gpus, gpu_id):
+    """NO_MSAA with Automatic naming the chosen card and the game's decision for it."""
+    row = chosen_gpu(gpus, gpu_id)
+    if row is None or len(row) < 4 or row[3] not in ('off', 'on'):
+        return list(NO_MSAA)
+    label = _('Automatic ({}: off)' if row[3] == 'off' else 'Automatic ({}: on)').format(row[1])
+    return [('', (label,))] + NO_MSAA[1:]
 
 
 def list_gpus():
@@ -335,8 +353,13 @@ DRAW_PIPE = [('', ('Auto (8+ threads)', 'Авто (8+ потоков)')), ('1', 
              ('0', ('Off (more stable)', 'Выключен (стабильнее)'))]
 READBACKS = [('', ('Relaxed (default)', 'Relaxed (по умолчанию)')), ('0', ('Off', 'Выключены')),
              ('2', ('Precise',))]
-# GOW3_NO_MSAA (video_core/amdgpu/gow3_msaa.h): '' leaves the game's own default (off on AMD's driver).
-NO_MSAA = [('', ("Auto (off on AMD's Windows driver)",)), ('1', ('Off (fixes black lines)',)), ('0', ('On',))]
+# GOW3_NO_MSAA: '' leaves the game's own default, off on AMD's and Intel's Windows drivers
+# (video_core/amdgpu/gow3_msaa_default.h); no_msaa_options names the chosen card in Automatic.
+NO_MSAA = [('', ('Automatic',)), ('1', ('Off (fixes black lines)',)), ('0', ('On',))]
+NO_MSAA_HINT = ("The game's 2-sample depth buffer, read as a texture by its lighting. AMD's and Intel's Windows "
+                'drivers read it wrong and the lighting shows black lines, so Automatic turns multisampling off '
+                'on those cards (Radeon, Arc) and keeps it on elsewhere (NVIDIA). Off and On force the choice on '
+                'any card.')
 STREAM_MEMORY = [('cached', ('System RAM (cached, default)',)),
                  ('host', ('System RAM (uncached)',)),
                  ('device', ('GPU memory (previous behavior)',))]
@@ -1261,8 +1284,9 @@ class Launcher:
         self.check(f, 'parallel_warmup', 'app', _('Fast shader cache loading (parallel)'),
                    _('Loading screen only: builds the cached pipelines on several CPU threads.'))
         self.section(f, _('GPU data'))
-        gpus = [('', ('Automatic',))] + [(index, (name,)) for index, name, _kind in list_gpus()]
-        self.row(f, _('Graphics card'), self.choice(f, 'gpu_id', 'app', gpus),
+        gpus = list_gpus()
+        cards = [('', ('Automatic',))] + [(row[0], (row[1],)) for row in gpus]
+        self.row(f, _('Graphics card'), self.choice(f, 'gpu_id', 'app', cards),
                  _('The GPU the game runs on. Choose your dedicated card if the game uses the integrated one.'),
                  restart=True)
         self.row(f, _('Stream buffer memory'), self.choice(f, 'stream_memory', 'app', STREAM_MEMORY),
@@ -1278,10 +1302,15 @@ class Launcher:
         self.row(f, _('GPU readbacks', 'Чтение данных GPU'), self.choice(f, 'readbacks', 'app', READBACKS),
                  _('How exactly data the GPU writes is copied back for the game.',
                    'Насколько точно данные, записанные GPU, возвращаются игре.'))
-        self.row(f, _('Game multisampling'), self.choice(f, 'no_msaa', 'app', NO_MSAA),
-                 _("The game's 2-sample depth buffer, read as a texture by its lighting. Some drivers read it "
-                   "wrong and lighting shows black lines: Auto turns it off on AMD's Windows driver; choose Off "
-                   'for Intel Arc or if the lines persist.'), restart=True)
+        card = self.var('gpu_id', 'app')
+        box = self.choice(f, 'no_msaa', 'app', no_msaa_options(gpus, card.get()))
+        self.row(f, _('Game multisampling'), box, _(NO_MSAA_HINT), restart=True)
+
+        def relabel(*_args):  # Automatic names the card the game will run on
+            index = max(box.current(), 0)
+            box['values'] = [_(*text) for _value, text in no_msaa_options(gpus, card.get())]
+            box.current(index)
+        card.trace_add('write', relabel)
 
     def build_game(self):
         f = self.scrolled_page('game', _('Game', 'Игра'), _('Your game dump, saves and language.'))

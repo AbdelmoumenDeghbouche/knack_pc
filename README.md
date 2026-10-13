@@ -211,12 +211,16 @@ when using `Play God of War III.exe` or `--play`. Choose GPU memory to restore t
 allocation behavior. For direct launches without the launcher, `GOW3_STREAM_MEMORY` accepts
 `cached`, `host` or `device`; the launcher's saved choice takes precedence when using it.
 
-On **Performance → GPU data → Game multisampling**, **Auto** lets the game decide: it creates
-the game's multisampled images with a single sample on AMD's Windows driver, where reading
-the 2-sample depth buffer as a texture produced black lines in the lighting, and keeps them
-multisampled elsewhere. Choose **Off** if the lines appear on another card (Intel Arc) and
-**On** to keep multisampling on AMD. Off and On set `GOW3_NO_MSAA=1` or `0`; Auto passes an
-inherited `GOW3_NO_MSAA` through. Applies on the next game launch.
+On **Performance → GPU data → Game multisampling**, **Automatic** lets the game decide by the
+graphics card it runs on: it creates the game's multisampled images with a single sample on
+AMD's and Intel's Windows drivers, where reading the 2-sample depth buffer as a texture
+produced black lines in the lighting (Radeon RX 6600 family, Arc), and keeps them multisampled
+elsewhere (NVIDIA). The label names the card and the decision, for example "Automatic (Intel(R)
+Arc(TM) A750 Graphics: off)", and follows the **Graphics card** choice. The rule covers every
+GPU on those two drivers, integrated ones included; the game's log line `GPU: guest
+multisampling off` or `on` is what was applied. Choose **Off** if the lines appear on another
+card and **On** to keep multisampling anyway. Off and On set `GOW3_NO_MSAA=1` or `0`; Automatic
+passes an inherited `GOW3_NO_MSAA` through. Applies on the next game launch.
 
 ### Importing shadPS4 saves
 

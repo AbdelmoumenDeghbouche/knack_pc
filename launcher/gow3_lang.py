@@ -746,10 +746,11 @@ WINDOWS_LANGUAGES = {0x19: 'ru', 0x01: 'ar', 0x0a: 'es', 0x16: 'pt', 0x0c: 'fr',
 EXTRA = {
     'pt': {
         'Game multisampling': 'Multisampling do jogo',
-        "Auto (off on AMD's Windows driver)": 'Automático (desligado no driver AMD do Windows)',
+        'Automatic ({}: off)': 'Automático ({}: desligado)',
+        'Automatic ({}: on)': 'Automático ({}: ligado)',
         'Off (fixes black lines)': 'Desligado (corrige as linhas pretas)',
-        "The game's 2-sample depth buffer, read as a texture by its lighting. Some drivers read it wrong and lighting shows black lines: Auto turns it off on AMD's Windows driver; choose Off for Intel Arc or if the lines persist.":
-            'O buffer de profundidade de 2 amostras do jogo, lido como textura pela iluminação. Alguns drivers o leem errado e a iluminação mostra linhas pretas: Automático desliga no driver AMD do Windows; escolha Desligado nas Intel Arc ou se as linhas continuarem.',
+        "The game's 2-sample depth buffer, read as a texture by its lighting. AMD's and Intel's Windows drivers read it wrong and the lighting shows black lines, so Automatic turns multisampling off on those cards (Radeon, Arc) and keeps it on elsewhere (NVIDIA). Off and On force the choice on any card.":
+            'O buffer de profundidade de 2 amostras do jogo, lido como textura pela iluminação. Os drivers da AMD e da Intel no Windows o leem errado e a iluminação mostra linhas pretas, então Automático desliga o multisampling nessas placas (Radeon, Arc) e o mantém nas demais (NVIDIA). Desligado e Ligado forçam a escolha em qualquer placa.',
         'Display': 'Tela',
         'How the game appears on your screen.': 'Como o jogo aparece na sua tela.',
         'Display mode': 'Modo de exibição',

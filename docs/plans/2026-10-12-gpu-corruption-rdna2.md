@@ -207,14 +207,25 @@ Nenhuma correção: diagnóstico. Nada muda para quem não liga as variáveis.
 - `GOW3_NO_MSAA` (seção 10, patch de kalil03): as imagens multisample do jogo são criadas e
   amostradas com 1 amostra; os tamanhos e endereços no guest continuam com a contagem real
   (`ImageInfo::guest_samples`, `GuestNumSamples()` em `regs_color.h`, `regs_depth.h`,
-  `resource.h`). Ligado por padrão no driver proprietário da AMD; `GOW3_NO_MSAA=0` desliga e
-  `=1` força em qualquer placa. O log diz `GPU: guest multisampling off (...)` ou `on`
-  (`video_core/amdgpu/gow3_msaa.h`, `vk_instance.cpp`; teste `tests/test_no_msaa.cpp`, alvo
-  `no-msaa-test`). **É a única mudança desta PR que altera o render por padrão, e só na AMD.**
-  No launcher: Performance > GPU data > "Multisampling do jogo" (Automático / Desligado /
-  Ligado; chave `no_msaa` em `settings.json`, vazia por padrão). Automático não exporta a
-  variável, então o jogo decide; Desligado exporta `GOW3_NO_MSAA=1` e serve às Intel Arc, onde
-  o padrão não liga (teste `tests/test_launcher_no_msaa.py`).
+  `resource.h`). Ligado por padrão nos drivers proprietários da AMD e da Intel no Windows
+  (`VK_DRIVER_ID_AMD_PROPRIETARY`, `VK_DRIVER_ID_INTEL_PROPRIETARY_WINDOWS`; a regra fica em
+  `video_core/amdgpu/gow3_msaa_default.h`, em C, compartilhada com `gow3-gpu-capabilities`);
+  `GOW3_NO_MSAA=0` desliga e `=1` força em qualquer placa. O log diz `GPU: guest multisampling
+  off (...)` ou `on` (`gow3_msaa.h`, `vk_instance.cpp`; teste `tests/test_no_msaa.cpp`, alvo
+  `no-msaa-test`, que também cobre a tabela da regra). **É a única mudança desta PR que altera o
+  render por padrão, e só nos drivers da AMD e da Intel no Windows.**
+  No launcher: Performance > GPU data > "Multisampling do jogo" (chave `no_msaa` em
+  `settings.json`, vazia por padrão). `gow3-gpu-capabilities --list` passou a imprimir, por GPU,
+  o padrão do multisampling nesse driver (`off`/`on`) e qual GPU o jogo escolhe sem
+  `GOW3_GPU_ID`; Automático mostra a placa que vai rodar e a decisão, por exemplo "Automático
+  (Intel(R) Arc(TM) A750 Graphics: desligado)", acompanha a escolha em "Placa de vídeo" na mesma
+  sessão e não exporta a variável (o jogo decide pela mesma regra); Desligado e Ligado exportam
+  `GOW3_NO_MSAA=1` ou `0` em qualquer placa (testes `tests/test_launcher_no_msaa.py`,
+  `tests/test_launcher_controls.py`). Ressalvas: a regra vale para toda GPU nos drivers da AMD
+  e da Intel no Windows, integradas incluídas (UHD e Iris Xe sem relato ainda); em notebooks
+  híbridos a preferência de GPU por aplicativo do Windows pode ordenar as GPUs de forma diferente
+  para a ferramenta e para o jogo, e aí o que vale é a linha `GPU: guest multisampling ...` do
+  log.
 - `GOW3_DIAG_IMAGES=1` (patch de kalil03, exige `GOW3_DRAW_PIPE=0`): durante uma captura de quadro
   (`GOW3_CAPTURE_TRIGGER`), grava em `GOW3_DIAG_DIR` (padrão `out/diag`, a pasta precisa existir)
   o alvo de cor de cada passe e as imagens de cada dispatch, em raw
@@ -425,7 +436,7 @@ um cache antigo não contamina). Tamanho e endereço no guest continuam com a co
 `aa_config.NumSamples()` vira 1 para shaders com sample coverage; `motion_possible`
 (`vk_pipeline_cache.cpp`, exige depth de 1 amostra) passa a valer nos passes de 2 amostras (só
 importa com o upscaler ligado); `ReinterpretColorAsMsDepth` e `SetBackingSamples` ficam sem uso
-na AMD. NVIDIA, Intel e RADV não mudam.
+nos drivers da AMD e da Intel no Windows. NVIDIA, RADV, AMDVLK, ANV e MoltenVK não mudam.
 
 Resultado dele, abrindo o jogo do zero até a abertura em tempo real e a primeira luta:
 
@@ -443,11 +454,13 @@ eduhhh10zx-hue (RX 6650 XT, várias aberturas), rafaelsilvaiasd-lang (com o save
 FilipiEPTeixeira: linhas sumiram. Nenhum relato de volta das linhas, de bordas piores ou de FPS
 até agora; o controle com `GOW3_NO_MSAA=0` ninguém reportou.
 
-**Intel Arc (#28).** ZeroTwoMiu, Arc A750 (driver 101.9034): com o padrão (`guest
-multisampling on`) a corrupção continua; com `GOW3_NO_MSAA=1` pelo `.bat` o menu e o jogo
-ficam corretos. Hussein798o, Arc 140V: os dois logs dele dizem `guest multisampling on`, ou
-seja, nunca rodou com `=1` (o `.bat` do release era o de controle). A opção "Multisampling do
-jogo" do launcher (seção 5) existe para esse caso; ligar por padrão também no driver
-proprietário da Intel fica para a investigação da #28 (a HD 630 tem outra causa,
-`VK_EXT_vertex_input_dynamic_state`).
+**Intel Arc (#28).** Com o build `windows-v2.1.7-amd-teste1` e `GOW3_NO_MSAA=1` por um `.bat`:
+ZeroTwoMiu (Arc A750, driver 101.9034), yisus230291, Hussein798o (Arc 140V; os logs anteriores
+dele diziam `guest multisampling on`, o `.bat` do release era o de controle),
+silvajeangomes2026-spec (MSI Claw 8 AI+, Arc 140V) e skinnersweet24 (Arc B580): menu e jogo
+corretos; com o padrão (`guest multisampling on`) a corrupção continuava. Por isso o padrão
+passou a desligar o multisampling também no driver proprietário da Intel no Windows
+(`gow3_msaa_default.h`), e o launcher mostra a placa e a decisão em "Multisampling do jogo"
+(seção 5), sem `.bat`. A HD 630 tem outra causa (`VK_EXT_vertex_input_dynamic_state`, PR
+Intel).
 
