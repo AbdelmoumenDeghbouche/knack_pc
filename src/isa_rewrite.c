@@ -269,3 +269,55 @@ IsaReport isa_rewrite_apply(IsaTable *t, unsigned char *image, unsigned char *st
     }
     return report;
 }
+
+/* ---- int3 trap, stub lookup, report ---- */
+
+int isa_rewrite_trap(IsaTable *t, uintptr_t address, IsaRegs *regs, uintptr_t *next_rip) {
+    if (!t || !t->image || address < (uintptr_t)t->image) return 0;
+    uint64_t offset = address - (uintptr_t)t->image;
+    uint32_t lo = 0, hi = t->count;
+    while (lo < hi) {
+        uint32_t mid = lo + (hi - lo) / 2;
+        if (t->sites[mid].offset < offset) lo = mid + 1;
+        else hi = mid;
+    }
+    if (lo == t->count || t->sites[lo].offset != offset) return 0;
+    if (t->sites[lo].mode != ISA_MODE_INT3 || *(const unsigned char *)address != 0xcc) return 0;
+    isa_emulate(&t->sites[lo], regs);
+    t->hits[lo]++;
+    *next_rip = address + 4;
+    return 1;
+}
+
+int isa_rewrite_site_of_stub(const IsaTable *t, uintptr_t rip) {
+    if (!t || !t->stubs || rip < (uintptr_t)t->stubs) return -1;
+    uintptr_t at = rip - (uintptr_t)t->stubs;
+    return at < isa_stub_area_size(t) ? (int)(at / ISA_STUB_BYTES) : -1;
+}
+
+const char *isa_kind_name(uint8_t kind) {
+    static const char *const names[] = {"?",     "movbe", "movbe",  "lzcnt", "tzcnt",     "andn",
+                                        "bextr", "blsi",  "blsmsk", "blsr",  "vcvtph2ps", "vcvtps2ph"};
+    return kind < sizeof names / sizeof names[0] ? names[kind] : "?";
+}
+
+/* Report order: more hits first, then lower offset. */
+static int ranks_before(const IsaTable *t, uint32_t a, uint32_t b) {
+    return t->hits[a] > t->hits[b] || (t->hits[a] == t->hits[b] && t->sites[a].offset < t->sites[b].offset);
+}
+
+void isa_rewrite_report(const IsaTable *t, FILE *out) {
+    fprintf(out, "ISA: most executed sites:\n");
+    int64_t prev = -1;   /* last printed site; each pass takes the best one ranked after it */
+    for (int line = 0; line < 10; line++) {
+        int64_t best = -1;
+        for (uint32_t i = 0; i < t->count; i++) {
+            if (t->hits[i] == 0 || (prev >= 0 && !ranks_before(t, (uint32_t)prev, i))) continue;
+            if (best < 0 || ranks_before(t, i, (uint32_t)best)) best = i;
+        }
+        if (best < 0) return;
+        fprintf(out, "  0x%llx %s %llu\n", (unsigned long long)t->sites[best].offset,
+                isa_kind_name(t->sites[best].kind), (unsigned long long)t->hits[best]);
+        prev = best;
+    }
+}

@@ -1,5 +1,5 @@
 /* isa_rewrite (src/isa_rewrite.c): the generated stubs run real patched code in an RWX region. */
-#define _DEFAULT_SOURCE   /* MAP_ANONYMOUS under -std=c11 */
+#define _GNU_SOURCE   /* MAP_ANONYMOUS and REG_RIP under -std=c11 */
 #include <assert.h>
 #include <immintrin.h>
 #include <stdio.h>
@@ -8,7 +8,9 @@
 #ifdef _WIN32
 #include <windows.h>
 #else
+#include <signal.h>
 #include <sys/mman.h>
+#include <ucontext.h>
 #endif
 #include "isa_rewrite.h"
 
@@ -240,6 +242,116 @@ static void test_table_load_fixture(const char *path) {
     assert(isa_site_set(&t->sites[1]) == CPU_SET_MOVBE);
 }
 
+/* The probe's int3 handler (Task 7) in miniature: registers in, isa_rewrite_trap, registers out. */
+static IsaTable *trap_table;
+
+#ifdef _WIN32
+static LONG WINAPI trap_handler(EXCEPTION_POINTERS *info) {
+    if (info->ExceptionRecord->ExceptionCode != EXCEPTION_BREAKPOINT) return EXCEPTION_CONTINUE_SEARCH;
+    CONTEXT *c = info->ContextRecord;
+    DWORD64 *gpr[16] = {&c->Rax, &c->Rcx, &c->Rdx, &c->Rbx, &c->Rsp, &c->Rbp, &c->Rsi, &c->Rdi,
+                        &c->R8,  &c->R9,  &c->R10, &c->R11, &c->R12, &c->R13, &c->R14, &c->R15};
+    IsaRegs regs;
+    for (int i = 0; i < 16; i++) regs.gpr[i] = *gpr[i];
+    regs.rflags = c->EFlags;
+    uintptr_t rip;
+    if (!isa_rewrite_trap(trap_table, (uintptr_t)info->ExceptionRecord->ExceptionAddress, &regs, &rip))
+        return EXCEPTION_CONTINUE_SEARCH;
+    for (int i = 0; i < 16; i++) *gpr[i] = regs.gpr[i];
+    c->EFlags = (DWORD)regs.rflags;
+    c->Rip = rip;
+    return EXCEPTION_CONTINUE_EXECUTION;
+}
+
+static void install_trap_handler(void) { assert(AddVectoredExceptionHandler(1, trap_handler) != NULL); }
+#else
+static void trap_handler(int sig, siginfo_t *info, void *context) {
+    (void)sig;
+    (void)info;
+    ucontext_t *uc = context;
+    greg_t *g = uc->uc_mcontext.gregs;
+    static const int index[16] = {REG_RAX, REG_RCX, REG_RDX, REG_RBX, REG_RSP, REG_RBP, REG_RSI, REG_RDI,
+                                  REG_R8,  REG_R9,  REG_R10, REG_R11, REG_R12, REG_R13, REG_R14, REG_R15};
+    IsaRegs regs;
+    for (int i = 0; i < 16; i++) regs.gpr[i] = (uint64_t)g[index[i]];
+    regs.rflags = (uint64_t)g[REG_EFL];
+    uintptr_t rip;
+    if (!isa_rewrite_trap(trap_table, (uintptr_t)g[REG_RIP] - 1, &regs, &rip)) abort();
+    for (int i = 0; i < 16; i++) g[index[i]] = (greg_t)regs.gpr[i];
+    g[REG_EFL] = (greg_t)regs.rflags;
+    g[REG_RIP] = (greg_t)rip;
+}
+
+static void install_trap_handler(void) {
+    struct sigaction sa;
+    memset(&sa, 0, sizeof sa);
+    sa.sa_sigaction = trap_handler;
+    sa.sa_flags = SA_SIGINFO;
+    sigemptyset(&sa.sa_mask);
+    assert(sigaction(SIGTRAP, &sa, NULL) == 0);
+}
+#endif
+
+static void test_int3_site_via_handler(void) {
+    reset_region();
+    IsaTable *t = snippet_table();
+    isa_rewrite_apply(t, image, stubs, 0xffffffffu);
+    assert(image[S4] == 0xcc);
+    trap_table = t;
+    install_trap_handler();
+    Snippet s4 = (Snippet)(void *)(image + S4);
+    assert(s4(0x1000, NULL) == 19 && _lzcnt_u32(0x1000) == 19);
+    assert(t->hits[4] == 1);
+}
+
+static void test_trap_unknown_address(void) {
+    reset_region();
+    IsaTable *t = snippet_table();
+    isa_rewrite_apply(t, image, stubs, 0xffffffffu);
+    IsaRegs regs, before;
+    for (int i = 0; i < 16; i++) regs.gpr[i] = 0x1111111111111111ull * (uint64_t)(i + 1);
+    regs.rflags = 0x202;
+    before = regs;
+    uintptr_t rip = 0x1234;
+    assert(isa_rewrite_trap(t, (uintptr_t)image + 0x3ff, &regs, &rip) == 0);
+    assert(memcmp(&regs, &before, sizeof regs) == 0 && rip == 0x1234);
+    assert(isa_rewrite_trap(NULL, (uintptr_t)image + S4, &regs, &rip) == 0);
+}
+
+static void test_site_of_stub(void) {
+    reset_region();
+    IsaTable *t = snippet_table();
+    isa_rewrite_apply(t, image, stubs, 0xffffffffu);
+    assert(isa_rewrite_site_of_stub(t, (uintptr_t)stubs + 256 + 10) == 1);
+    assert(isa_rewrite_site_of_stub(t, (uintptr_t)stubs - 1) == -1);
+    assert(isa_rewrite_site_of_stub(t, (uintptr_t)stubs + t->count * 256) == -1);
+}
+
+static void test_report_top_sites(void) {
+    static const uint8_t kinds[4] = {ISA_BLSR, ISA_MOVBE_LOAD, ISA_LZCNT, ISA_BEXTR};
+    IsaSite sites[4];
+    memset(sites, 0, sizeof sites);
+    for (int i = 0; i < 4; i++) {
+        sites[i].offset = 0x10 * (uint64_t)(i + 1);
+        sites[i].kind = kinds[i];
+    }
+    uint64_t hits[4] = {5, 0, 7, 1};
+    IsaTable t;
+    memset(&t, 0, sizeof t);
+    t.sites = sites;
+    t.hits = hits;
+    t.count = 4;
+    FILE *f = tmpfile();
+    assert(f != NULL);
+    isa_rewrite_report(&t, f);
+    rewind(f);
+    char text[256];
+    size_t n = fread(text, 1, sizeof text - 1, f);
+    text[n] = 0;
+    fclose(f);
+    assert(strcmp(text, "ISA: most executed sites:\n  0x30 lzcnt 7\n  0x10 blsr 5\n  0x40 bextr 1\n") == 0);
+}
+
 int main(int argc, char **argv) {
     if (argc != 2) {
         fprintf(stderr, "usage: isa-stub-test tests/data/isa_fixture.bin\n");
@@ -271,6 +383,10 @@ int main(int argc, char **argv) {
     test_unsupported_blocks_apply();
     test_largest_stub_fits();
     test_table_load_fixture(argv[1]);
+    test_int3_site_via_handler();
+    test_trap_unknown_address();
+    test_site_of_stub();
+    test_report_top_sites();
     puts("isa-stub-test ok");
     return 0;
 }
