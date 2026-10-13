@@ -77,7 +77,9 @@ def site_of(ins, kind, original):
         if ins.is_ip_rel_memory_operand:
             mem_flags, disp = 1, ins.ip_rel_memory_address
         else:
-            base, index, disp = register_number(ins.memory_base), register_number(ins.memory_index), ins.memory_displacement
+            base, index = register_number(ins.memory_base), register_number(ins.memory_index)
+            disp = ins.memory_displacement  # iced reports it as u64; the table stores int64
+            disp -= (1 << 64) if disp >= 1 << 63 else 0
     mode = MODE_UNSUPPORTED if unsupported else MODE_JMP if ins.len >= 5 else MODE_INT3
     return Site(ins.ip, ins.len, kind, width, mode, *regs, mem_slot, base, index, scale, mem_flags, disp, original, b'')
 
@@ -99,7 +101,7 @@ def scan_segment(code, address):
         if ins.flow_control in (FlowControl.UNCONDITIONAL_BRANCH, FlowControl.CONDITIONAL_BRANCH, FlowControl.CALL) \
                 and ins.op0_kind == OpKind.NEAR_BRANCH64:
             targets.add(ins.near_branch_target)
-        if pending and is_plain(ins, end):
+        if pending is not None and is_plain(ins, end):
             candidates.append((pending, ins.ip, code[ins.ip - address:ins.next_ip - address]))
         pending = None
         kind = kind_of(ins)

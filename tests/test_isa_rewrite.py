@@ -53,6 +53,15 @@ class ScanSegmentTests(unittest.TestCase):
             self.assertEqual(s.mode, isa_rewrite.MODE_UNSUPPORTED, why)
         self.assertEqual(isa_rewrite.scan_segment(bytes.fromhex('c4e2791310') + RET, 0)[0].kind, isa_rewrite.KIND_VCVTPH2PS)
 
+    def test_negative_displacement_is_signed(self):
+        s, = isa_rewrite.scan_segment(bytes.fromhex('0f38f048f8'), 0)   # movbe ecx, [rax-8]
+        self.assertEqual((s.kind, s.disp, s.base, s.mem_slot), (isa_rewrite.KIND_MOVBE_LOAD, -8, 0, 2))
+
+    def test_sib_memory_operand(self):
+        s, = isa_rewrite.scan_segment(bytes.fromhex('c4e2e0f2449108'), 0)   # andn rax, rbx, [rcx+rdx*4+8]
+        self.assertEqual((s.kind, s.width, s.dst, s.src1, s.src2, s.mem_slot), (isa_rewrite.KIND_ANDN, 64, 0, 3, isa_rewrite.NO_REG, 2))
+        self.assertEqual((s.base, s.index, s.scale, s.mem_flags, s.disp), (1, 2, 4, 0, 8))
+
     def test_non_sites_are_ignored(self):
         self.assertEqual(isa_rewrite.scan_segment(MOV_FS + RET, 0), [])
 
