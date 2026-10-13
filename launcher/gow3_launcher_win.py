@@ -579,6 +579,36 @@ RESOLUTION_CHOICES = [('native', ('Native (1080p)',)), ('480p', ('480p',)), ('72
 ENGINE_FPS_CHOICES = [('60', ('60 (original)',)), ('120', ('120',)), ('240', ('240',))]
 
 
+def window_icon(root, tk, game_icon, own_icon, ico_file):
+    """The launcher window's icon: the game's (icon0.png) when the game is set, else the port's own.
+    Windows gets an .ico made with Pillow (ico_file); without Pillow, Tk reads the PNG itself.
+    Returns the PhotoImage the caller must keep alive, or None.
+    Tk 9 applies the -default forms only to toplevels created later (the window itself kept Tk's
+    feather in the title bar and the taskbar), so the window gets the icon by itself first."""
+    if WINDOWS:
+        try:
+            from PIL import Image
+            ico_file.parent.mkdir(parents=True, exist_ok=True)
+            with Image.open(game_icon) as image:
+                image.convert('RGBA').save(ico_file, sizes=[(16, 16), (32, 32), (48, 48), (64, 64), (256, 256)])
+            root.iconbitmap(str(ico_file))
+            root.iconbitmap(default=str(ico_file))
+            return None
+        except (ImportError, OSError, tk.TclError):
+            pass
+    for icon in ((game_icon, own_icon) if WINDOWS else (own_icon, game_icon)):
+        try:
+            photo = tk.PhotoImage(file=str(icon))
+            if photo.width() > 128:
+                photo = photo.subsample(photo.width() // 64)
+            root.iconphoto(False, photo)
+            root.iconphoto(True, photo)
+            return photo
+        except (tk.TclError, OSError):
+            continue
+    return None
+
+
 class Launcher:
     def __init__(self, root, tk, ttk, filedialog, messagebox):
         self.tk, self.ttk, self.filedialog, self.messagebox = tk, ttk, filedialog, messagebox
@@ -659,27 +689,8 @@ class Launcher:
 
     def set_icon(self):
         game_icon = Path(self.meta_dir() or '.') / 'sce_sys' / 'icon0.png'
-        if WINDOWS:
-            try:
-                from PIL import Image
-                ico = CONFIG_DIR / 'game_icon.ico'
-                CONFIG_DIR.mkdir(parents=True, exist_ok=True)
-                with Image.open(game_icon) as image:
-                    image.convert('RGBA').save(ico, sizes=[(16, 16), (32, 32), (48, 48), (64, 64), (256, 256)])
-                self.root.iconbitmap(default=str(ico))
-                return
-            except (ImportError, OSError, self.tk.TclError):
-                pass
-        own_icon = PORT_DIR / 'launcher' / 'gow3.png'
-        for icon in ((game_icon, own_icon) if WINDOWS else (own_icon, game_icon)):
-            try:
-                self.icon = self.tk.PhotoImage(file=str(icon))
-                if self.icon.width() > 128:
-                    self.icon = self.icon.subsample(self.icon.width() // 64)
-                self.root.iconphoto(True, self.icon)
-                return
-            except (self.tk.TclError, OSError):
-                continue
+        self.icon = window_icon(self.root, self.tk, game_icon, PORT_DIR / 'launcher' / 'gow3.png',
+                                CONFIG_DIR / 'game_icon.ico')
 
     # ---- look --------------------------------------------------------------------------------
     def check_images(self):
