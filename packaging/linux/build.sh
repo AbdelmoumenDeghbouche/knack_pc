@@ -2,7 +2,7 @@
 # Builds dist/gow3-x86_64.AppImage from the Linux build (run `bash build.sh` in the repo root first).
 # Libraries are bundled with their dependencies, except the ones that must come from the host
 # (glibc, Vulkan loader and drivers, X11/Wayland, GL). The Tk launcher is frozen with PyInstaller, so
-# players need no Python. Needs: ldd, patchelf, curl (appimagetool), python-pyinstaller, tk, pillow.
+# players need no Python. Needs: ldd, patchelf, curl (appimagetool), python-pyinstaller, tk, pillow, iced-x86.
 set -euo pipefail
 cd -- "$(dirname -- "$0")/../.."
 [[ -f out/gow3-probe && -f out/gpu/libgow3gpu.so ]] || { echo 'Build first: bash build.sh' >&2; exit 1; }
@@ -31,6 +31,7 @@ for module in argparse base64 collections hashlib json re shutil struct tempfile
               urllib.request iced_x86; do
     hidden+=(--hidden-import "$module")
 done
+python3 -c 'import iced_x86' || { echo 'Need iced-x86: pip install iced-x86==1.21.0' >&2; exit 1; }
 python3 -m PyInstaller --noconfirm --clean --log-level WARN --windowed --name gow3-launcher \
     --distpath out/pyi-dist --workpath out/pyi-work --specpath out/pyi-work \
     --paths "$PWD/scripts" "${hidden[@]}" "$PWD/launcher/gow3_launcher_win.py"

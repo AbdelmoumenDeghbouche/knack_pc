@@ -120,7 +120,7 @@ Radeon RX 7800 XT (RADV) numa sessão Wayland.
 **Compilar e rodar**
 ```
 bash build.sh
-bash packaging/linux/build.sh   # precisa de PyInstaller, Tk e Pillow para Python, mais patchelf e curl
+bash packaging/linux/build.sh   # precisa de PyInstaller, Tk, Pillow e iced-x86 para Python, mais patchelf e curl
 ./dist/gow3-x86_64.AppImage
 ```
 Escolha a pasta do jogo no launcher. `--play` inicia o jogo com as opções salvas e sem janela. A
@@ -161,7 +161,8 @@ partir do código: `GOW3_GAME_DIR=/caminho/para/CUSA01623 python3 run.py` depois
   colocado esse código (`tools/make_signatures.py`). Um ponto que não é achado deixa só aquele
   patch ou gancho desligado; o jogo abre sem ele, e o log e o menu dizem o motivo.
 - Para compilar a partir do código: [MSYS2](https://www.msys2.org) e [Python 3](https://www.python.org) com Pillow
-  (`pip install pillow`, usado no ícone e na capa do jogo).
+  (`pip install pillow`, usado no ícone e na capa do jogo); em CPU sem MOVBE, BMI1 ou LZCNT, também
+  iced-x86 (`pip install iced-x86`, usado na reescrita de instruções).
 
 ## Compilar a partir do código
 

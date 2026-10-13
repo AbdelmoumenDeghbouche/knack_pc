@@ -119,7 +119,7 @@ with a Radeon RX 7800 XT (RADV) in a Wayland session.
 **Build and run**
 ```
 bash build.sh
-bash packaging/linux/build.sh   # needs PyInstaller, Tk and Pillow for Python, plus patchelf and curl
+bash packaging/linux/build.sh   # needs PyInstaller, Tk, Pillow and iced-x86 for Python, plus patchelf and curl
 ./dist/gow3-x86_64.AppImage
 ```
 Choose the game folder in the launcher. `--play` starts the game with the saved options and no
@@ -160,7 +160,8 @@ window. From a source tree: `GOW3_GAME_DIR=/path/to/CUSA01623 python3 run.py` af
   (`tools/make_signatures.py`). A site that is not found leaves only that patch or hook off; the
   game starts without it, and the log and the menu say why.
 - To build from source: [MSYS2](https://www.msys2.org) and [Python 3](https://www.python.org) with Pillow
-  (`pip install pillow`, used for the game's icon and cover art).
+  (`pip install pillow`, used for the game's icon and cover art); on a CPU without MOVBE, BMI1 or LZCNT
+  also iced-x86 (`pip install iced-x86`, used for the instruction rewrite).
 
 ## Building from source
 
