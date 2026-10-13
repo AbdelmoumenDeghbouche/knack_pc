@@ -105,6 +105,42 @@ Patches and fixes are included and applied automatically: texture fix, skip vide
 - Black screen at start: **Advanced → Clear shader cache**, then start again.
 - The game does not open: check the **Log** page, or send `user\last_run.log` with your report.
 
+## Linux (AppImage, experimental)
+
+The Linux build runs the same native runtime and the same launcher. It was tested on Arch Linux
+with a Radeon RX 7800 XT (RADV) in a Wayland session.
+
+**You need:** a Vulkan 1.3 driver and your own dump of the game (CUSA01623, version 01.02).
+
+**Build and run**
+```
+bash build.sh
+bash packaging/linux/build.sh   # needs PyInstaller, Tk and Pillow for Python, plus patchelf and curl
+./dist/gow3-x86_64.AppImage
+```
+Choose the game folder in the launcher. `--play` starts the game with the saved options and no
+window. From a source tree: `GOW3_GAME_DIR=/path/to/CUSA01623 python3 run.py` after `bash build.sh`.
+
+- **Files:** saves, settings, shader cache and the log are in `~/.local/share/gow3`; the launcher's
+  own settings in `~/.config/gow3-launcher`.
+- **Update folder:** if the update was dumped apart from the game, choose it under **Game → Update
+  folder**. It is laid over the game folder without changing either.
+- **Advanced → Linux:** window system (automatic, Wayland or X11), GameMode and MangoHud. Only the
+  tools installed on the system can be turned on.
+- **Steam:** **Advanced → Add to Steam** adds "God of War III Remastered" as a non-Steam game, with
+  the icon, the vertical and horizontal capsules, the library background and the logo made from the
+  dump's pictures. Close Steam first (it rewrites its shortcuts when it exits). The button is also in
+  the Windows launcher (not tested there yet).
+- **Menu entry:** the AppImage writes `~/.local/share/applications/gow3.desktop` when it starts, so
+  the launcher and the game window show their icon in the dock; **Advanced → Linux** turns it off and
+  removes the entry.
+- **Icon:** the AppImage, the launcher and the game window use `packaging/linux/gow3.png` when that
+  file exists at build time, and `launcher/gow3.png` otherwise.
+- **Patches:** the same patch file serves the full 01.02 update (`eboot.bin` sha256 `6e72330e…`) and
+  the European title (CUSA01715): the patches and cheats find their sites by signature.
+- **Graphics (experimental):** the temporal upscalers (FSR 3.1, FSR 4, TAA, DLSS) are off by default;
+  the switch is at the top of that page.
+
 ## Requirements
 
 - Windows 10 (1903 or newer) or Windows 11, 64-bit.

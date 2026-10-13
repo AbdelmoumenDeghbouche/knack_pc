@@ -101,6 +101,25 @@ def patch_names(names, options, texture_fix_available=True):
     return names
 
 
+def restrict_to_available(names, available):
+    """names without the patches this XML lacks. A missing frame rate patch is replaced by the
+    highest one it has below the requested rate (the 240 FPS patch of the first XML has no
+    counterpart in the second)."""
+    kept = [n for n in names if n in available]
+    for name in names:
+        if name in available:
+            continue
+        print(f'Patches: {name} is not available for this game build: skipped', flush=True)
+        if name.startswith(f'{FPS_PREFIX} - '):
+            wanted = int(name.split(' - ')[1].split()[0])
+            lower = [int(n.split(' - ')[1].split()[0]) for n in available if n.startswith(f'{FPS_PREFIX} - ')
+                     and int(n.split(' - ')[1].split()[0]) <= wanted]
+            if lower:
+                kept.append(f'{FPS_PREFIX} - {max(lower)} FPS')
+                print(f'Patches: using {kept[-1]} instead', flush=True)
+    return kept
+
+
 def applied_engine_fps(names):
     """The engine rate the applied patch list gives: 60 without a frame rate patch."""
     return max((int(n.split(' - ')[1].split()[0]) for n in names if n.startswith(f'{FPS_PREFIX} - ')), default=60)

@@ -175,12 +175,12 @@ endif()
 target_link_libraries(gow3gpu PRIVATE ffx-vulkan::portable ffx-vulkan::fsr4-v07-vulkan)
 target_link_libraries(gow3gpu PUBLIC Vulkan::Headers fmt::fmt Boost::headers magic_enum::magic_enum
     tsl::robin_map GPUOpen::VulkanMemoryAllocator PkgConfig::XXHASH PkgConfig::SDL3 PkgConfig::FFMPEG miniz::miniz Zydis::Zydis sirit)
+target_include_directories(gow3gpu PRIVATE third_party/xbyak)
 if (WIN32)
     # Guest code is entered with the System V ABI; NOMINMAX/WIN32_LEAN_AND_MEAN keep
     # <windows.h> out of the way of std::min/max and the Vulkan/SDL headers.
     target_compile_definitions(gow3gpu PUBLIC NOMINMAX WIN32_LEAN_AND_MEAN)
     target_compile_options(gow3gpu PRIVATE -include ${CMAKE_CURRENT_SOURCE_DIR}/shim/gow3_win_compat.h)
-    target_include_directories(gow3gpu PRIVATE third_party/xbyak)
     target_link_libraries(gow3gpu PUBLIC Vulkan::Vulkan ws2_32 bcrypt ntdll synchronization winmm pdh)
 else()
     target_link_libraries(gow3gpu PUBLIC PkgConfig::X11)

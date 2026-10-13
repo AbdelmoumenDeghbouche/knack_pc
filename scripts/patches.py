@@ -6,6 +6,7 @@ image places eboot vaddr 0 at image offset 0. Only literal writes are supported
 The built-in file's lines carry signatures (Pattern/At) that find each site in any build.
 """
 import argparse
+import hashlib
 import json
 import os
 import re
@@ -189,12 +190,17 @@ def game_profile_for(game):
     """The profile of a game folder, by title ID or by the title in its param.sfo."""
     values=game_sfo(game) if game else {}
     return game_profile(values.get('TITLE_ID'),values.get('TITLE'))
+_SHA_CACHE={}
 
 
 def eboot_sha256(game):
-    import hashlib
     try:
-        return hashlib.sha256((Path(game)/'eboot.bin').read_bytes()).hexdigest()
+        path=Path(game)/'eboot.bin'
+        stat=path.stat()
+        key=(str(path),stat.st_mtime_ns,stat.st_size)
+        if key not in _SHA_CACHE:
+            _SHA_CACHE[key]=hashlib.sha256(path.read_bytes()).hexdigest()
+        return _SHA_CACHE[key]
     except (OSError, TypeError):
         return None
 
@@ -210,6 +216,11 @@ def patch_status(out):
         return json.loads((Path(out)/'patch_status.json').read_text())
     except (OSError, ValueError):
         return None
+
+
+def available_patches(xml, app_version):
+    """Names of the patches the XML has for this app version."""
+    return {m.get('Name') for m in ET.parse(xml).getroot().iter('Metadata') if m.get('AppVer')==app_version}
 
 
 # God of War III notes: the texture fix and the resolution patches both resize the video arena;
@@ -249,7 +260,8 @@ def external_patches(directory, app_version, exclude, ids):
     found=[]
     directory=Path(directory)
     for path in sorted(directory.glob('*.xml')) if directory.is_dir() else []:
-        if path.resolve()==Path(exclude).resolve(): continue  # the built-in file (patches/ in a checkout)
+        if path.resolve()==Path(exclude).resolve() or path.resolve() in {g[1].resolve() for g in GAMES}:
+            continue  # built-in files (patches/ in a checkout) are not also offered as external
         try:
             root=ET.parse(path).getroot()
         except ET.ParseError as error:
