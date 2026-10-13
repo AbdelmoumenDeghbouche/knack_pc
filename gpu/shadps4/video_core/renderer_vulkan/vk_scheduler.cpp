@@ -59,7 +59,12 @@ Scheduler::~Scheduler() {
 bool Scheduler::FullBarriers() {
     static const bool enabled = [] {
         const char* env = std::getenv("GOW3_FULL_BARRIERS");
-        return env && env[0] == '1';
+        const bool on = env && env[0] == '1';
+        if (on) {
+            // In last_run.log whatever the GPU log level, so a tester's log shows the mode.
+            std::printf("GPU: full barriers on (GOW3_FULL_BARRIERS=1)\n");
+        }
+        return on;
     }();
     return enabled;
 }
