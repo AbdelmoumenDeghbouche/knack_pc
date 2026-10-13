@@ -671,6 +671,8 @@ class Launcher:
         self.refresh_lists()  # the Game page's lists now, so the first visit does not count as a change
         self.refresh_game_patches()
         self.saved = self.gather()
+        if self.var('upscaler', 'ini').get() not in ('fsr3', 'taa', 'off'):
+            self.var('upscaler', 'ini').set('fsr3')  # fsr4, dlss: no longer offered; a change for Save to write
         root.protocol('WM_DELETE_WINDOW', self.close)
         root.after(100, self.drain_output)
         root.after(500, self.watch_changes)
@@ -1053,7 +1055,6 @@ class Launcher:
             upscaler.set(value)
             fsr1.set(spatial == '1')
         self.upscale_mode.trace_add('write', mode_changed)
-        mode_changed()  # an upscaler this launcher no longer offers becomes FSR 3.1 in gow3.ini
         self.row(f, _('Upscaler', 'Апскейлер'), self.choice(f, None, None, UPSCALERS, var=self.upscale_mode),
                  _("FSR 3.1 and TAA: temporal, with the game's own motion vectors, at the preset's render scale. "
                    'FSR 1: spatial, enlarges the Render resolution (Performance) to the window.',

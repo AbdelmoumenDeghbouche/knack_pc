@@ -21,6 +21,8 @@ except ImportError:  # pragma: no cover
 @unittest.skipUnless(sys.platform == 'win32' and tk, 'needs Windows and Tk')
 class LauncherOverTemporaryFiles(unittest.TestCase):
     """A real launcher window over a temporary settings folder: the user's files are never touched."""
+    INI = None  # gow3.ini the launcher opens over, when a test needs one
+
     def setUp(self):
         self.tmp = Path(tempfile.mkdtemp())
         self.saved = (launcher.CONFIG_DIR, launcher.CONFIG_FILE, launcher.DATA_DIR, launcher.LANG,
@@ -31,6 +33,8 @@ class LauncherOverTemporaryFiles(unittest.TestCase):
         launcher.DATA_DIR.mkdir()
         launcher.LANG = 'en'
         os.environ['GOW3_CONFIG'] = str(self.tmp / 'gow3.ini')
+        if self.INI:
+            (self.tmp / 'gow3.ini').write_text(self.INI, encoding='utf-8')
         self.root = tk.Tk()
         self.app = launcher.Launcher(self.root, tk, ttk, filedialog, messagebox)
         self.root.update()
@@ -90,6 +94,32 @@ class SaveButtonTest(LauncherOverTemporaryFiles):
         self.save_state()
         self.assertFalse((self.tmp / 'gow3.ini').exists())
 
+
+class OldUpscalerIniTest(LauncherOverTemporaryFiles):
+    """gow3.ini names an upscaler the launcher no longer offers (fsr4, dlss): shown as FSR 3.1,
+    written only by Save (or by playing and closing); FSR 1 on top of it is the user's and stays."""
+    INI = 'upscaler=fsr4\nfsr1=1\n'
+
+    def test_fsr3_is_a_change_to_save(self):
+        self.assertEqual(self.app.upscale_mode.get(), 'fsr3')
+        self.assertEqual(self.app.var('upscaler', 'ini').get(), 'fsr3')
+        self.assertEqual(self.save_state(), 'normal')
+        self.app.save()
+        lines = (self.tmp / 'gow3.ini').read_text(encoding='utf-8').splitlines()
+        self.assertIn('upscaler=fsr3', lines)
+        self.assertIn('fsr1=1', lines)
+
+
+class TemporalWithFsr1IniTest(LauncherOverTemporaryFiles):
+    """The in-game menu allows FSR 1 under a temporal upscaler: opening the launcher keeps it."""
+    INI = 'upscaler=taa\nfsr1=1\n'
+
+    def test_opening_changes_nothing(self):
+        self.assertEqual(self.app.upscale_mode.get(), 'taa')
+        self.assertTrue(self.app.var('fsr1', 'ini').get())
+        self.assertEqual(self.save_state(), 'disabled')
+        self.app.save()
+        self.assertIn('fsr1=1', (self.tmp / 'gow3.ini').read_text(encoding='utf-8').splitlines())
 
 
 @unittest.skipUnless(sys.platform == 'win32' and tk, 'needs Windows and Tk')
