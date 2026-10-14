@@ -40,6 +40,8 @@ Progress is tracked (in Portuguese) in [docs/gow3/ROADMAP.md](docs/gow3/ROADMAP.
 - Audio: music, voices and effects (ATRAC9 and MP3).
 - Controller (DualSense, Xbox and others, through SDL3) and keyboard at the same time, both
   remappable.
+- **In-game button icons** (opt-in, off by default): the PlayStation button icons in the game can
+  show your controller's, Xbox or Nintendo ones (Controls page).
 - Saving and loading: the save list is shown on screen, as on the PS4. Autosave works too. The
   launcher backs the saves up before every start.
 - Patches: render resolution of 480p, 720p, 1440p, 1800p or 4K, corrupted texture fix and skip
@@ -281,6 +283,13 @@ Defaults; change them on the launcher's **Controls** page.
 On a controller without a touchpad (Xbox and others), View opens the pause menu (the right
 touchpad click) and L1 + View opens photo mode (the left click). On a DualSense the touchpad
 works as on the PS4, and Share/Create works like View.
+
+**In-game button icons** (off by default) are chosen on the Controls page, under *In-game button
+icons*: *Match my controller*, *Xbox* or *Nintendo*. They replace the PlayStation icons in the
+tutorial, move-list and quick-time prompts; the pause-menu controller drawing stays a DualShock 4.
+The launcher writes a patched copy of two game files into the port's data folder and never changes
+your game folder. A new controller is picked up after a restart. Without the launcher, set
+`GOW3_GLYPH_STYLE` to `auto`, `xbox` or `nintendo` before starting `run.py`.
 
 In the menu: L1/R1 or Q/E switch tabs. In the save list: arrows or the d-pad choose, Enter or
 Cross confirm, Esc or Circle cancel.

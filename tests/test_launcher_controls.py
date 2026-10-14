@@ -97,10 +97,32 @@ class ControlMapTest(unittest.TestCase):
         self.assertEqual(launcher.game_environment({**settings, 'parallel_warmup': False})['GOW3_PARALLEL_WARMUP'], '0')
         self.assertEqual(launcher.game_environment({**settings, 'background_warmup': False})['GOW3_BACKGROUND_WARMUP'], '0')
 
+    def test_glyph_style_is_off_by_default(self):
+        self.assertEqual(launcher.APP_DEFAULTS['glyph_style'], 'off')
+        self.assertNotIn('GOW3_GLYPH_STYLE', launcher.game_environment({**launcher.APP_DEFAULTS}))
+
+    def test_glyph_style_choices_reach_the_game(self):
+        for style in ('auto', 'xbox', 'nintendo'):
+            env = launcher.game_environment({**launcher.APP_DEFAULTS, 'glyph_style': style})
+            self.assertEqual(env['GOW3_GLYPH_STYLE'], style)
+
+    def test_unknown_glyph_style_is_off(self):
+        for style in ('playstation', 'XBOX', 7, None, ''):
+            env = launcher.game_environment({**launcher.APP_DEFAULTS, 'glyph_style': style})
+            self.assertNotIn('GOW3_GLYPH_STYLE', env)
+
+    def test_inherited_glyph_style_is_dropped_when_off(self):
+        from unittest import mock
+
+        with mock.patch.dict(launcher.os.environ, {'GOW3_GLYPH_STYLE': 'xbox'}):
+            self.assertNotIn('GOW3_GLYPH_STYLE', launcher.game_environment({**launcher.APP_DEFAULTS}))
+            self.assertEqual(launcher.game_environment({**launcher.APP_DEFAULTS, 'glyph_style': 'nintendo'})
+                             ['GOW3_GLYPH_STYLE'], 'nintendo')
+
     def test_settings_keys_kept(self):
         # The redesign hides some options (player name) but keeps every saved setting working.
         for key in ('game_dir', 'user_dir', 'mods_dir', 'patches_dir', 'language', 'player_name', 'hdr',
-                    'draw_pipe', 'readbacks', 'background_warmup', 'parallel_warmup', 'controls', 'pad_style'):
+                    'draw_pipe', 'readbacks', 'background_warmup', 'parallel_warmup', 'controls', 'pad_style', 'glyph_style'):
             self.assertIn(key, launcher.APP_DEFAULTS)
         env = launcher.game_environment({**launcher.APP_DEFAULTS, 'player_name': ' Kratos '})
         self.assertEqual(env['GOW3_USER_NAME'], 'Kratos')
