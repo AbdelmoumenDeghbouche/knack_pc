@@ -1,6 +1,10 @@
-# God of War III Remastered for PC
+# God of War III Remastered for PC 
 
-**English** | [Português (Brasil)](README.pt-BR.md)
+<div align="center">
+  <a href="https://ko-fi.com/S7O428PBCC" target="_blank"><img src="https://ko-fi.com/img/githubbutton_sm.svg" alt="ko-fi"></a>
+</div>
+
+**English** | [Português (Brasil)](README.pt-BR.md) | [Español](README.es.md)
 
 A PC port of **God of War III Remastered** (PlayStation 4) for Windows 10 and 11.
 
@@ -22,8 +26,7 @@ It is a fork of [Supermedo's Windows port](https://github.com/Supermedo/bloodbor
 > God of War is a trademark of Sony Interactive Entertainment.
 
 On the test machine (AMD Radeon RX 6700 XT, Ryzen 5 5600X, 32 GB) the game runs at 144 FPS on
-average (55 to 240) at 1080p with the 240 FPS engine frame rate, and at 108 FPS on average at 4K
-with FSR 1.
+average (55 to 240) at 1080p with the 240 FPS engine frame rate.
 
 **Tested and playable from start to finish** at native 1080p with the 240 FPS engine frame
 rate. At other render resolutions some textures look broken; a fix is in progress.
@@ -36,6 +39,8 @@ Progress is tracked (in Portuguese) in [docs/gow3/ROADMAP.md](docs/gow3/ROADMAP.
 - Audio: music, voices and effects (ATRAC9 and MP3).
 - Controller (DualSense, Xbox and others, through SDL3) and keyboard at the same time, both
   remappable.
+- **In-game button icons** (opt-in, off by default): the PlayStation button icons in the game can
+  show your controller's, Xbox or Nintendo ones (Game page, Controls).
 - Saving and loading: the save list is shown on screen, as on the PS4. Autosave works too. The
   launcher backs the saves up before every start.
 - Patches: render resolution of 480p, 720p, 1440p, 1800p or 4K, corrupted texture fix and skip
@@ -50,8 +55,7 @@ Progress is tracked (in Portuguese) in [docs/gow3/ROADMAP.md](docs/gow3/ROADMAP.
   - **Game:** cheats (infinite health, magic, item meter, Rage of Sparta, max red orbs);
     multipliers from 0.1x to 100x for red, green (health), blue (magic) and gold (Rage of
     Sparta) orbs and for damage dealt and taken; an enemy health bar.
-  - **Image:** display mode (windowed, borderless, fullscreen), VSync, FSR 1 upscaling and
-    RCAS sharpening.
+  - **Image:** display mode (windowed, borderless, fullscreen), VSync and RCAS sharpening.
   - **Performance:** frame rate limit (30 to unlimited), frames queued, background shader
     compiling; render resolution, engine frame rate and GPU readback options apply with one
     "Apply and restart" button.
@@ -104,7 +108,7 @@ Patches and fixes are included and applied automatically: texture fix, skip vide
 **If something goes wrong**
 - Black screen at start: **Advanced → Clear shader cache**, then start again.
 - The game closes with "cannot create ... guest memory (error 1450)": Windows ran out of virtual memory to allocate the guest pool. Increase the page file: press **Win + R**, type `SystemPropertiesAdvanced`, go to **Performance** Settings → **Advanced** → **Virtual memory** Change, uncheck automatic management, select drive **C:**, set a custom size (e.g. 16384 MB initial, 24576 MB maximum), click **Set**, **OK**, and restart your PC.
-- The game does not open: check the **Log** page, or send `user\last_run.log` with your report.
+- The game does not open: check **Advanced → Log**, or send `user\last_run.log` with your report.
 
 ## Linux (AppImage, experimental)
 
@@ -116,7 +120,7 @@ with a Radeon RX 7800 XT (RADV) in a Wayland session.
 **Build and run**
 ```
 bash build.sh
-bash packaging/linux/build.sh   # needs PyInstaller, Tk and Pillow for Python, plus patchelf and curl
+bash packaging/linux/build.sh   # needs PyInstaller, Tk, Pillow and iced-x86 for Python, plus patchelf and curl
 ./dist/gow3-x86_64.AppImage
 ```
 Choose the game folder in the launcher. `--play` starts the game with the saved options and no
@@ -139,12 +143,16 @@ window. From a source tree: `GOW3_GAME_DIR=/path/to/CUSA01623 python3 run.py` af
   file exists at build time, and `launcher/gow3.png` otherwise.
 - **Patches:** the same patch file serves the full 01.02 update (`eboot.bin` sha256 `6e72330e…`) and
   the European title (CUSA01715): the patches and cheats find their sites by signature.
-- **Graphics (experimental):** the temporal upscalers (FSR 3.1, FSR 4, TAA, DLSS) are off by default;
-  the switch is at the top of that page.
+- **Graphics:** the temporal upscalers (FSR 3.1, FSR 4, TAA, DLSS) are temporarily removed while a
+  better implementation is worked on.
 
 ## Requirements
 
 - Windows 10 (1903 or newer) or Windows 11, 64-bit.
+- A 64-bit processor with AVX: Intel Sandy Bridge (2011) or newer, AMD FX or newer. On CPUs without
+  MOVBE, BMI1 or LZCNT (Sandy/Ivy Bridge, AMD FX) the loader rewrites the game's instructions that
+  use them to emulated stubs and logs an `ISA:` line; performance on those CPUs has not been
+  measured yet. Older CPUs stop at start with a `STOP: this CPU lacks` line in the log.
 - A graphics card with Vulkan 1.3 and a current driver.
 - Your copy of the game (the folder with `eboot.bin`, `sce_module` and `sce_sys`). Tested:
   CUSA01623 and CUSA01715, versions 01.00 and 01.02.
@@ -153,7 +161,8 @@ window. From a source tree: `GOW3_GAME_DIR=/path/to/CUSA01623 python3 run.py` af
   (`tools/make_signatures.py`). A site that is not found leaves only that patch or hook off; the
   game starts without it, and the log and the menu say why.
 - To build from source: [MSYS2](https://www.msys2.org) and [Python 3](https://www.python.org) with Pillow
-  (`pip install pillow`, used for the game's icon and cover art).
+  (`pip install pillow`, used for the game's icon and cover art); on a CPU without MOVBE, BMI1 or LZCNT
+  also iced-x86 (`pip install iced-x86`, used for the instruction rewrite).
 
 ## Building from source
 
@@ -203,9 +212,55 @@ when using `Play God of War III.exe` or `--play`. Choose GPU memory to restore t
 allocation behavior. For direct launches without the launcher, `GOW3_STREAM_MEMORY` accepts
 `cached`, `host` or `device`; the launcher's saved choice takes precedence when using it.
 
+On **Performance → GPU data → Game multisampling**, **Automatic** lets the game decide by the
+graphics card it runs on: it creates the game's multisampled images with a single sample on
+AMD's and Intel's Windows drivers, where reading the 2-sample depth buffer as a texture
+produced black lines in the lighting (Radeon RX 6600 family, Arc), and keeps them multisampled
+elsewhere (NVIDIA). The label names the card and the decision, for example "Automatic (Intel(R)
+Arc(TM) A750 Graphics: off)", and follows the **Graphics card** choice. The rule covers every
+GPU on those two drivers, integrated ones included; the game's log line `GPU: guest
+multisampling off` or `on` is what was applied. Choose **Off** if the lines appear on another
+card and **On** to keep multisampling anyway. Off and On set `GOW3_NO_MSAA=1` or `0`; Automatic
+passes an inherited `GOW3_NO_MSAA` through. Applies on the next game launch.
+
+### Importing shadPS4 saves
+
+Only **shadPS4 saves for God of War III Remastered** are compatible. RPCS3 saves are
+from the PS3 game and will not work. Use the same title ID (this example uses `CUSA01623`).
+
+1. Close the game and shadPS4. Back up both save folders.
+2. Find the source in shadPS4's data folder: `user\savedata\1\CUSA01623\` in older
+   versions, or `home\<user-id>\savedata\CUSA01623\` in newer versions.
+3. The destination is **`user\savedata\1\CUSA01623\` next to `God of War III.exe`**.
+   Example: `C:\Games\gow3-windows\user\savedata\1\CUSA01623\`. With a custom
+   **Saves folder** in the launcher, use `<custom folder>\savedata\1\CUSA01623\`.
+4. Copy each slot folder there, keeping its name and game files. Do not nest another
+   `CUSA01623` folder. Exclude the slot's internal `sce_sys` folder from the game data.
+5. Beside each slot, create `<slot name>.sce_sys` if it does not exist. You can copy
+   shadPS4's `sce_sys\icon0.png` there. **Do not rename `param.sfo` to `param.bin`**:
+   the formats differ. Preserve any existing port `param.bin`. Without one, the slot
+   appears by folder name; saving again in the port writes its metadata and refreshes
+   the displayed information.
+6. Start the port and select **Load Game**. Completed saves can be imported too.
+
+The port's save dialog displays at most **32 entries**. If the imported slot is missing
+from a long list, test it with a separate **Saves folder** containing just that slot
+under `savedata\1\CUSA01623\`, with its sibling metadata folder. Keep the original saves
+and restore the previous Saves folder setting after testing.
+
+### Third-party overlays (Windows)
+
+The game process is **`bin\gow3-probe.exe`**, not `God of War III.exe` (source builds
+use `out\gow3-probe.exe`). Add that executable to RTSS and enable Afterburner's on-screen
+display. In the ReShade installer, select that same executable and the **Vulkan** API.
+
+If the overlay still does not appear, report the port and overlay versions, the last
+working port version, and attach `user\last_run.log`. These checks do not confirm a fix
+for every overlay configuration.
+
 ### Keyboard controls
 
-Defaults; change them on the launcher's **Controls** page.
+Defaults; change them in the launcher's **Game** page, **Controls** section.
 
 | Key | Button |
 |---|---|
@@ -227,6 +282,13 @@ Defaults; change them on the launcher's **Controls** page.
 On a controller without a touchpad (Xbox and others), View opens the pause menu (the right
 touchpad click) and L1 + View opens photo mode (the left click). On a DualSense the touchpad
 works as on the PS4, and Share/Create works like View.
+
+**In-game button icons** (off by default) are chosen in the launcher's Game page, Controls section, under
+*In-game button icons*: *Match my controller*, *Xbox* or *Nintendo*. They replace the PlayStation icons in the
+tutorial, move-list and quick-time prompts; the pause-menu controller drawing stays a DualShock 4.
+The launcher writes a patched copy of two game files into the port's data folder and never changes
+your game folder. A new controller is picked up after a restart. Without the launcher, set
+`GOW3_GLYPH_STYLE` to `auto`, `xbox` or `nintendo` before starting `run.py`.
 
 In the menu: L1/R1 or Q/E switch tabs. In the save list: arrows or the d-pad choose, Enter or
 Cross confirm, Esc or Circle cancel.

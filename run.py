@@ -55,19 +55,38 @@ def no_console():
     return 0 if ctypes.windll.kernel32.GetConsoleWindow() else subprocess.CREATE_NO_WINDOW
 
 
-def run_script(name, *args, capture=False):
+def parse_cpu_features(output):
+    """Instruction sets `gow3-probe --cpu-features` reports missing ([] when complete)."""
+    for line in output.splitlines():
+        if line.startswith('CPU: missing '):
+            return [name.strip() for name in line[len('CPU: missing '):].split(',') if name.strip()]
+    return []
+
+
+def isa_rewrite_wanted(missing, env):
+    """GOW3_ISA_REWRITE=1 forces the ISA rewrite table, 0 disables it; otherwise the CPU decides."""
+    policy = env.get('GOW3_ISA_REWRITE')
+    if policy in ('0', '1'):
+        return policy == '1'
+    return bool(missing)
+
+
+def run_script(name, *args, capture=False, check=True):
     # Inside the packaged launcher executable (PyInstaller) the executable runs scripts itself.
     script = ['--script'] if getattr(sys, 'frozen', False) else []
     command = [sys.executable, *script, str(PORT / 'scripts' / name), *map(str, args)]
+    env = {**os.environ, 'PYTHONIOENCODING': 'utf-8'}
     if capture:
         result = subprocess.run(command, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, text=True,
-                                creationflags=no_console())
+                                encoding='utf-8', env=env, creationflags=no_console())
+        if not check:
+            return result.returncode, result.stdout
         if result.returncode:
             sys.exit(result.returncode)
         return result.stdout
     # stdin given: the output handles are passed explicitly (a windowed launcher child would
     # get none otherwise).
-    result = subprocess.run(command, stdin=subprocess.DEVNULL, creationflags=no_console())
+    result = subprocess.run(command, stdin=subprocess.DEVNULL, env=env, creationflags=no_console())
     if result.returncode:
         sys.exit(result.returncode)
     return None
@@ -95,6 +114,35 @@ def find_executable(name):
     return None
 
 
+def glyph_mounts(env, probe, game, out):
+    """(probe arguments, style) of the controller glyphs: patched copies of the WADs that hold the
+    game's button icons, mounted over them (scripts/glyphs.py). Opt-in: unless GOW3_GLYPH_STYLE is
+    auto, xbox or nintendo nothing is asked, drawn or mounted, and old copies are removed. The
+    game folder is never written."""
+    choice = env.get('GOW3_GLYPH_STYLE', 'off')
+    if choice not in ('auto', 'xbox', 'nintendo'):
+        shutil.rmtree(Path(out) / 'glyphs', ignore_errors=True)
+        return [], None
+    try:
+        import glyphs
+        pad = ''
+        if choice == 'auto':
+            pad = subprocess.run([str(probe), '--gamepad'], stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                                 text=True, timeout=15, creationflags=no_console()).stdout
+        style, faces, name = glyphs.resolve(choice, pad)
+        mounts = glyphs.build(game, out, style, faces, env.get('GOW3_PAD_MAP', ''))
+    except Exception as error:  # noqa: BLE001  (icons only: whatever fails, the game still starts)
+        print(f'Glyphs: {error}; the game keeps its own button icons', flush=True)
+        return [], None
+    if not mounts:
+        print('Glyphs: no Xbox or Nintendo controller, the game keeps its own button icons' if style == 'playstation'
+              else 'Glyphs: no button icons found in this game folder', flush=True)
+        return [], None
+    print(f'Glyphs: {style}{f" ({name})" if name else ""}, on copies in {Path(out) / "glyphs"}; game files untouched',
+          flush=True)
+    return [part for guest, path in mounts.items() for part in ('--mount', f'{guest}={path}')], style
+
+
 def main():
     args = sys.argv[1:]
     if len(args) >= 2 and args[0] == '--after':
@@ -114,6 +162,10 @@ def main():
     derived = []
     sys.path.insert(0, str(PORT / 'scripts'))
     import graphics_options
+    try:
+        import discord_presence
+    except Exception:
+        discord_presence = None
     graphics, reverted = graphics_options.prepare(env['GOW3_CONFIG'], out / 'graphics_state.json')
     if reverted:
         print('Graphics: the last restart never reached the game; previous options restored', flush=True)
@@ -129,6 +181,14 @@ def main():
         clang64 = Path(env.get('MSYS2_ROOT', r'C:\msys64')) / 'clang64' / 'bin'
         if clang64.is_dir():
             env['PATH'] = f'{clang64}{os.pathsep}{env.get("PATH", "")}'
+    # Instruction sets this CPU lacks (MOVBE, BMI1, LZCNT): the ISA rewrite covers them; exit 20
+    # is a set nothing covers.
+    features = subprocess.run([str(probe), '--cpu-features'], stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                              text=True, creationflags=no_console())
+    if features.returncode == 20:
+        print(features.stdout, end='', flush=True)
+        sys.exit(20)
+    missing = parse_cpu_features(features.stdout)
 
     game = Path(env.get('GOW3_GAME_DIR', PORT.parent / 'CUSA01623'))
     if not (game / 'eboot.bin').is_file():
@@ -152,6 +212,14 @@ def main():
         run_script('prepare.py', game, '--out', out)
         run_script('link_libc.py', game, '--out', out)
         run_script('link_modules.py', game, '--out', out)
+        # A failed rewrite prints its reason and the game starts without the table.
+        isa_args = []
+        if isa_rewrite_wanted(missing, env):
+            code, output = run_script('isa_rewrite.py', out / 'boot-linked.bin', '--out', out,
+                                      capture=True, check=False)
+            print(output, end='', flush=True)
+            if code == 0:
+                isa_args = ['--isa-rewrite', str(out / 'isa-rewrite.bin')]
         run_script('content_profile.py', game, '--out', out, '--sku', env.get('GOW3_CONTENT_SKU', 'full'))
 
         import patches
@@ -210,7 +278,17 @@ def main():
         print(f'Engine frame rate: {engine_fps} FPS'
               + ('' if engine_fps > 60 or graphics['engine_fps'] == '60' else
                  ' (the frame rate patch was not found in this eboot.bin)'), flush=True)
+        glyph_args, glyph_style = glyph_mounts(env, probe, game, out)
+        if glyph_style:  # the in-game menu names the buttons the same way
+            env['GOW3_GLYPHS'] = glyph_style
+            derived.append('GOW3_GLYPHS')
         env['GOW3_DERIVED'] = ','.join(derived)
+        # The guest memory pool is committed in full at start: a resolution patch above 1080p
+        # can need more than 16 GB of RAM, and the game then closes when the page file cannot grow.
+        import guest_memory
+        if warning := guest_memory.memory_warning(env.get('GOW3_DMEM_MB'), guest_memory.physical_memory_mb(),
+                                                  env.get('GOW3_STREAM_MEMORY', 'cached')):
+            print(warning, flush=True)
 
         # The in-game restart starts this script again once this process is gone.
         # GPU caches (shaders, pipelines) beside the saves; read before main(), so set here.
@@ -232,9 +310,14 @@ def main():
         command = [*launch_prefix(env), str(probe), str(out / 'boot-linked.bin'), '--content-profile', str(out / 'content.bin'),
                    '--patches', str(out / 'patches.bin'), '--app0', str(game),
                    '--user', str(user_dir),
-                   '--timeout', env.get('GOW3_TIMEOUT', '0'), *args]
+                   '--timeout', env.get('GOW3_TIMEOUT', '0'), *isa_args, *glyph_args, *args]
         # No stdin: an inherited pipe (shells such as Git Bash) cost the game its console output.
-        return subprocess.run(command, stdin=subprocess.DEVNULL, creationflags=no_console()).returncode
+        presence = discord_presence.Presence() if discord_presence else None
+        try:
+            return subprocess.run(command, stdin=subprocess.DEVNULL, creationflags=no_console()).returncode
+        finally:
+            if presence:
+                presence.close()
     finally:
         if mod_view:
             shutil.rmtree(mod_view, ignore_errors=True)
