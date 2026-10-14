@@ -749,10 +749,6 @@ WINDOWS_LANGUAGES = {0x19: 'ru', 0x01: 'ar', 0x0a: 'es', 0x16: 'pt', 0x0c: 'fr',
 # need every language updated at once). Portuguese (the port's own language) and Spanish: the
 # other languages fall back to English for them until someone who speaks them contributes.
 EXTRA = {
-    'es': {
-        'Show Discord Rich Presence': 'Mostrar Discord Rich Presence',
-        'Shows only the game name and the time played on your Discord profile.': 'Muestra en tu perfil de Discord solo el nombre del juego y el tiempo jugado.',
-    },
     'pt': {
         'Show Discord Rich Presence': 'Mostrar Discord Rich Presence',
         'Shows only the game name and the time played on your Discord profile.': 'Mostra no seu perfil do Discord apenas o nome do jogo e o tempo jogado.',
@@ -914,6 +910,8 @@ EXTRA = {
             'O jogo parou ao ler os próprios arquivos: o dump do jogo pode estar incompleto. Extraia o pkg de novo e confira se a pasta do jogo tem cerca de 40 GB.',
     },
     'es': {
+        'Show Discord Rich Presence': 'Mostrar Discord Rich Presence',
+        'Shows only the game name and the time played on your Discord profile.': 'Muestra en tu perfil de Discord solo el nombre del juego y el tiempo jugado.',
         'Game multisampling': 'Multisampling del juego',
         'Automatic ({}: off)': 'Automático ({}: desactivado)',
         'Automatic ({}: on)': 'Automático ({}: activado)',

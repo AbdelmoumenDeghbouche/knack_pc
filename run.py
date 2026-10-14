@@ -312,9 +312,14 @@ def main():
                    '--user', str(user_dir),
                    '--timeout', env.get('GOW3_TIMEOUT', '0'), *isa_args, *glyph_args, *args]
         # No stdin: an inherited pipe (shells such as Git Bash) cost the game its console output.
-        presence = discord_presence.Presence() if discord_presence else None
+        process = subprocess.Popen(command, stdin=subprocess.DEVNULL, creationflags=no_console())
+        presence = None
         try:
-            return subprocess.run(command, stdin=subprocess.DEVNULL, creationflags=no_console()).returncode
+            try:
+                presence = discord_presence.Presence(pid=process.pid) if discord_presence else None
+            except (OSError, RuntimeError):
+                print('Discord presence unavailable; the game will continue', flush=True)
+            return process.wait()
         finally:
             if presence:
                 presence.close()

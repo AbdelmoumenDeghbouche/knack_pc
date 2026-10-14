@@ -7,13 +7,14 @@ import threading
 import time
 import uuid
 
-# Do not change this, its the Client ID to show the RPC in discord please :)
-CLIENT_ID = '1559731151793561680'
+CLIENT_ID = '1560048868677132431'
 RETRY_SECONDS = 15
 JOIN_SECONDS = 3
+POLL_SECONDS = 0.1
+READ_SECONDS = 5
 WINDOWS = sys.platform == 'win32'
 HEADER = struct.Struct('<II')
-HANDSHAKE, FRAME, CLOSE = 0, 1, 2
+HANDSHAKE, FRAME, CLOSE, PING, PONG = range(5)
 
 
 def pack(opcode, payload):
@@ -21,20 +22,43 @@ def pack(opcode, payload):
     return HEADER.pack(opcode, len(body)) + body
 
 
-def read_exact(transport, size):
-    data = b''
+def read_exact(transport, size, stop=None, timeout=READ_SECONDS):
+    deadline = time.monotonic() + timeout if timeout is not None else None
+    data = bytearray()
     while len(data) < size:
-        chunk = transport.read(size - len(data))
+        if stop is not None and stop.is_set():
+            raise ConnectionAbortedError('Discord presence stopped')
+        if deadline is not None and time.monotonic() >= deadline:
+            raise TimeoutError('Discord response timed out')
+        try:
+            chunk = transport.read(size - len(data))
+        except TimeoutError:
+            continue
         if not chunk:
             raise ConnectionError('Discord closed the connection')
-        data += chunk
-    return data
+        data.extend(chunk)
+    return bytes(data)
 
 
-def read_frame(transport):
-    opcode, length = HEADER.unpack(read_exact(transport, HEADER.size))
-    body = read_exact(transport, length) if length else b''
-    return opcode, json.loads(body) if body else {}
+def read_frame(transport, stop=None, timeout=READ_SECONDS):
+    while True:
+        opcode, length = HEADER.unpack(read_exact(transport, HEADER.size, stop, timeout))
+        if length > 1024 * 1024:
+            raise ValueError('Discord frame is too large')
+        body = read_exact(transport, length, stop) if length else b''
+        if opcode == PING:
+            transport.write(HEADER.pack(PONG, length) + body)
+            continue
+        if opcode == PONG:
+            continue
+        if opcode == CLOSE:
+            raise ConnectionError('Discord closed the connection')
+        if opcode != FRAME:
+            raise ValueError('Unexpected Discord opcode')
+        data = json.loads(body) if body else {}
+        if not isinstance(data, dict):
+            raise ValueError('Discord frame must contain an object')
+        return opcode, data
 
 
 def activity(started):
@@ -50,13 +74,36 @@ def set_activity(pid, value=None):
 
 class PipeTransport:
     def __init__(self, path):
+        import ctypes
+        import msvcrt
+
         self.handle = open(path, 'r+b', buffering=0)
+        self.kernel32 = ctypes.WinDLL('kernel32', use_last_error=True)
+        self.pipe = ctypes.c_void_p(msvcrt.get_osfhandle(self.handle.fileno()))
+        # Nonblocking writes also prevent a stalled Discord client from holding up shutdown.
+        mode = ctypes.c_uint32(1)  # PIPE_NOWAIT | PIPE_READMODE_BYTE
+        if not self.kernel32.SetNamedPipeHandleState(self.pipe, ctypes.byref(mode), None, None):
+            error = ctypes.WinError(ctypes.get_last_error())
+            self.handle.close()
+            raise error
 
     def write(self, data):
-        self.handle.write(data)
+        if self.handle.write(data) != len(data):
+            raise ConnectionError('Discord pipe could not accept the frame')
 
     def read(self, size):
-        return self.handle.read(size)
+        import ctypes
+
+        deadline = time.monotonic() + POLL_SECONDS
+        available = ctypes.c_uint32()
+        while True:
+            if not self.kernel32.PeekNamedPipe(self.pipe, None, 0, None, ctypes.byref(available), None):
+                raise ctypes.WinError(ctypes.get_last_error())
+            if available.value:
+                return self.handle.read(min(size, available.value))
+            if time.monotonic() >= deadline:
+                raise TimeoutError
+            time.sleep(0.01)
 
     def close(self):
         self.handle.close()
@@ -65,7 +112,7 @@ class PipeTransport:
 class SocketTransport:
     def __init__(self, path):
         self.sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-        self.sock.settimeout(5)
+        self.sock.settimeout(POLL_SECONDS)
         try:
             self.sock.connect(path)
         except OSError:
@@ -94,9 +141,11 @@ def candidates():
     return paths
 
 
-def open_transport():
+def open_transport(stop=None):
     kind = PipeTransport if WINDOWS else SocketTransport
     for path in candidates():
+        if stop is not None and stop.is_set():
+            break
         try:
             return kind(path)
         except OSError:
@@ -104,27 +153,27 @@ def open_transport():
     return None
 
 
-def handshake(transport, client_id):
+def handshake(transport, client_id, stop=None):
     transport.write(pack(HANDSHAKE, {'v': 1, 'client_id': str(client_id)}))
-    opcode, data = read_frame(transport)
+    opcode, data = read_frame(transport, stop)
     if opcode != FRAME or data.get('evt') != 'READY':
         raise ConnectionError('Discord rejected the handshake')
 
 
-def send_activity(transport, value):
-    transport.write(set_activity(os.getpid(), value))
-    _, data = read_frame(transport)
+def send_activity(transport, value, pid, stop=None):
+    transport.write(set_activity(pid, value))
+    _, data = read_frame(transport, stop)
     if data.get('evt') == 'ERROR':
         raise ConnectionError('Discord rejected the activity')
 
 
 class Presence:
-    def __init__(self, client_id=None):
+    def __init__(self, client_id=None, pid=None):
         self.transport = None
         self.thread = None
         self.stop = threading.Event()
-        self.lock = threading.Lock()
         self.started = time.time()
+        self.pid = os.getpid() if pid is None else pid
         self.client_id = client_id or os.environ.get('GOW3_DISCORD_ID') or CLIENT_ID
         if not self.client_id or os.environ.get('GOW3_DISCORD') == '0':
             return
@@ -133,42 +182,40 @@ class Presence:
 
     def run(self):
         while not self.stop.is_set():
-            if self.connect():
-                return
+            self.connect()
             self.stop.wait(RETRY_SECONDS)
 
     def connect(self):
-        transport = open_transport()
+        transport = open_transport(self.stop)
         if transport is None:
-            return False
+            return
+        self.transport = transport
+        published = False
         try:
-            handshake(transport, self.client_id)
-            send_activity(transport, activity(self.started))
+            handshake(transport, self.client_id, self.stop)
+            send_activity(transport, activity(self.started), self.pid, self.stop)
+            published = True
+            while not self.stop.is_set():
+                _, data = read_frame(transport, self.stop, timeout=None)
+                if data.get('evt') == 'ERROR':
+                    raise ConnectionError('Discord rejected the activity')
         except (OSError, ValueError):
-            transport.close()
-            return False
-        with self.lock:
-            if self.stop.is_set():
-                transport.close()
-            else:
-                self.transport = transport
-        return True
+            pass
+        finally:
+            try:
+                if published and self.stop.is_set():
+                    transport.write(set_activity(self.pid))
+                    transport.write(pack(CLOSE, {}))
+            except OSError:
+                pass
+            finally:
+                self.transport = None
+                try:
+                    transport.close()
+                except OSError:
+                    pass
 
     def close(self):
         self.stop.set()
         if self.thread:
             self.thread.join(JOIN_SECONDS)
-        with self.lock:
-            transport, self.transport = self.transport, None
-        if not transport:
-            return
-        try:
-            transport.write(set_activity(os.getpid()))
-            transport.write(pack(CLOSE, {}))
-        except OSError:
-            pass
-        finally:
-            try:
-                transport.close()
-            except OSError:
-                pass
