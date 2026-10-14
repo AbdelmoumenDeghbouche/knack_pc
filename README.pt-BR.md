@@ -4,7 +4,7 @@
   <a href="https://ko-fi.com/S7O428PBCC" target="_blank"><img src="https://ko-fi.com/img/githubbutton_sm.svg" alt="ko-fi"></a>
 </div>
 
-[English](README.md) | **Português (Brasil)**
+[English](README.md) | **Português (Brasil)** | [Español](README.es.md)
 
 Port para PC de **God of War III Remastered** (PlayStation 4) para Windows 10 e 11.
 
