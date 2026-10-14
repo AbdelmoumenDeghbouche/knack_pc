@@ -143,7 +143,7 @@ def no_msaa_options(gpus, gpu_id):
 
 def list_gpus():
     """The Vulkan GPUs in the order the game numbers them, or [] when the tool cannot tell."""
-    tool = find_tool('gow3-gpu-capabilities.exe')
+    tool = find_tool('gow3-gpu-capabilities' + ('.exe' if WINDOWS else ''))
     if not tool:
         return []
     try:
