@@ -33,6 +33,14 @@ class GuestMemoryTest(unittest.TestCase):
     def test_enough_ram_is_silent(self):
         self.assertIsNone(guest_memory.memory_warning('11200', 32000, 'host'))
 
+    def test_default_patches_are_silent_on_8_gb(self):
+        # The texture fix (on by default) and the 480p/720p patches ask for 5056 + 2048 MiB.
+        self.assertIsNone(guest_memory.memory_warning(None, 8000, 'cached'))
+        self.assertIsNone(guest_memory.memory_warning('7104', 8000, 'cached'))
+
+    def test_1440p_warns_on_8_gb(self):
+        self.assertIn('9152 MiB', guest_memory.memory_warning('8128', 8000, 'cached'))
+
     def test_unknown_ram_is_silent(self):
         self.assertIsNone(guest_memory.memory_warning('11200', None))
 

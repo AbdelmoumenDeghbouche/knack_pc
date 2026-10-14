@@ -13,6 +13,9 @@ import sys
 
 DMEM_RETAIL_MB = 5056  # runtime_memory.c pool_size_bytes default
 FLEX_SPAN_MB = 1024    # runtime_memory.c FLEX_SPAN
+# The texture fix (on by default) and the 480p/720p patches ask for DMEM + 2048 MB: games that
+# run at those sizes are not warned, only the resolution patches above 1080p.
+DMEM_DEFAULT_MB = DMEM_RETAIL_MB + 2048
 # The probe's own memory besides the pool. Measured on one PC (RTX 5070, 16 GB, 4K): about
 # 2 GiB with stream buffers in GPU memory, more with them in system RAM (cached/host).
 HEADROOM_MB = {'device': 2048, 'cached': 4096, 'host': 4096}
@@ -50,9 +53,9 @@ def physical_memory_mb():
 
 def memory_warning(dmem_mb, physical_mb, stream_memory='cached'):
     """A warning when the pool and the probe's headroom need more than the installed RAM."""
-    if physical_mb is None:
-        return None
     pool = pool_mb(dmem_mb)
+    if physical_mb is None or pool <= DMEM_DEFAULT_MB + FLEX_SPAN_MB:
+        return None
     stream = stream_memory if stream_memory in HEADROOM_MB else 'cached'
     needed = pool + HEADROOM_MB[stream]
     if needed <= physical_mb:
