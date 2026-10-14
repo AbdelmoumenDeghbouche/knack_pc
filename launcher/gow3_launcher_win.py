@@ -705,7 +705,9 @@ def game_environment(s):
     env = dict(os.environ)
     env['GOW3_GAME_DIR'] = s['game_dir']
     env.pop('GOW3_PATCH_DIR', None)
-    env['GOW3_EXPERIMENTAL_UPSCALER'] = '1' if s.get('experimental_upscaler') else '0'
+    # Temporal upscaling is parked (build_graphics): a switch saved on by 2.1.8 has no control left to
+    # turn it off, so it is ignored until the upscaler section comes back.
+    env['GOW3_EXPERIMENTAL_UPSCALER'] = '0'
     if s.get('update_dir'):
         env['GOW3_PATCH_DIR'] = s['update_dir']
     if not WINDOWS:
