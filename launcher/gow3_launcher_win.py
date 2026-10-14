@@ -1138,7 +1138,7 @@ class Launcher:
         """The cover art of the selected dump (sce_sys/pic1.png) under the title."""
         tk, c = self.tk, self.banner
         c.delete('all')
-        w, h = max(c.winfo_width(), 400), int(c['height'])
+        w, h, bar = max(c.winfo_width(), 400), int(c['height']), self.px(44)
         folder = self.meta_dir()
         info = game_info(folder)
         art = Path(folder or '.') / 'sce_sys' / 'pic1.png'
@@ -1153,16 +1153,15 @@ class Launcher:
                 self.banner_size, self.banner_scaled = w, self.scaled_art(art, w)
             # The logo sits in the upper half of the cover: show that part.
             c.create_image(w // 2, int(h * 0.62), image=self.banner_scaled)
-            for i, stipple in enumerate(('gray12', 'gray25', 'gray50', 'gray75')):
-                c.create_rectangle(0, h - 120 + i * 24, w, h - 96 + i * 24, fill=PANEL, outline='', stipple=stipple)
-            c.create_rectangle(0, h - 24, w, h, fill=PANEL, outline='')
+            # A solid strip under the art: the title id and version sit in it, not over the picture.
+            c.create_rectangle(0, h - bar, w, h, fill=PANEL, outline='')
         else:
             c.create_text(30, h - 74, text=heading_text(APP_NAME.upper(), every_language=True), anchor='w', fill=TEXT,
                           font=heading_font(32, every_language=True))
         if info:
             title_id = game_profile_of(folder)[0]
             sub = _('{} · version {}', '{} · версия {}').format(title_id or '?', info[1])
-            c.create_text(33, h - 30, text=sub, anchor='w', fill=ACCENT_HI, font=(UI_FONT, 11, 'bold'))
+            c.create_text(33, h - bar // 2, text=sub, anchor='w', fill=ACCENT_HI, font=(UI_FONT, 11, 'bold'))
         else:
             c.create_text(w // 2, h // 2 - 40, text=_('Choose your game folder to play.'),
                           fill=TEXT, font=(UI_FONT, 12))
