@@ -904,6 +904,16 @@ EXTRA = {
         'Original (default)': 'Original (padrão)',
         'Match my controller': 'Igual ao meu controle',
         "Replaces the PlayStation button icons inside the game with the ones of your controller. Works on a copy of two game files in the port's data folder (about 70 MB); your game folder is never changed. Applied when the game starts.": 'Troca os ícones de botões PlayStation dentro do jogo pelos do seu controle. Funciona com uma cópia de dois arquivos do jogo na pasta de dados do port (cerca de 70 MB); a pasta do jogo nunca é alterada. Aplicado quando o jogo inicia.',
+        'Textures': 'Texturas',
+        'Anisotropic filtering': 'Filtro anisotrópico',
+        'Game default': 'Padrão do jogo',
+        'Sharper floors and walls seen at an angle, at little cost on most graphics cards.': 'Chão e paredes vistos de lado ficam mais nítidos, com pouco custo na maioria das placas de vídeo.',
+        'Screenshots': 'Capturas de tela',
+        'Open the screenshots folder': 'Abrir a pasta das capturas',
+        'F12 in the game': 'F12 no jogo',
+        "Saves the game's image, without the overlay, as a PNG in the screenshots folder of the saves.": 'Salva a imagem do jogo, sem o overlay, em PNG na pasta screenshots dos saves.',
+        'Vibration': 'Vibração',
+        "Strength of the gamepad's vibration; 0% turns it off.": 'Força da vibração do controle; 0% desliga.',
         'Windows could not reserve the memory the game needs. Close other programs, or let the Windows page file grow (for example 16384 MB initial, 32768 MB maximum), and start again.':
             'O Windows não conseguiu reservar a memória que o jogo precisa. Feche outros programas, ou deixe o arquivo de paginação do Windows crescer (por exemplo 16384 MB inicial, 32768 MB máximo), e inicie de novo.',
         'The game stopped while reading its files: the game dump may be incomplete. Extract the pkg again and check that the game folder is about 40 GB.':
@@ -1119,6 +1129,18 @@ EXTRA = {
             'Windows no pudo reservar la memoria que necesita el juego. Cierra otros programas, o deja que el archivo de paginación de Windows crezca (por ejemplo 16384 MB inicial, 32768 MB máximo), y vuelve a iniciarlo.',
         'The game stopped while reading its files: the game dump may be incomplete. Extract the pkg again and check that the game folder is about 40 GB.':
             'El juego se detuvo al leer sus archivos: el dump del juego puede estar incompleto. Extrae el pkg de nuevo y comprueba que la carpeta del juego ocupa unos 40 GB.',
+        'Textures': 'Texturas',
+        'Anisotropic filtering': 'Filtrado anisotrópico',
+        'Game default': 'Predeterminado del juego',
+        'Sharper floors and walls seen at an angle, at little cost on most graphics cards.':
+            'Suelos y paredes vistos en ángulo se ven más nítidos, con poco coste en la mayoría de las tarjetas gráficas.',
+        'Screenshots': 'Capturas de pantalla',
+        'Open the screenshots folder': 'Abrir la carpeta de capturas',
+        'F12 in the game': 'F12 en el juego',
+        "Saves the game's image, without the overlay, as a PNG in the screenshots folder of the saves.":
+            'Guarda la imagen del juego, sin el overlay, como PNG en la carpeta screenshots de las partidas.',
+        'Vibration': 'Vibración',
+        "Strength of the gamepad's vibration; 0% turns it off.": 'Fuerza de la vibración del mando; 0% la desactiva.',
     },
 }
 
