@@ -124,6 +124,9 @@ A corrupção gráfica no Steam Deck/RADV é um problema conhecido do AppImage 2
   Steam, com o ícone, as capas vertical e horizontal, o fundo da biblioteca e o logotipo feitos a
   partir das imagens do dump. Feche a Steam antes (ela reescreve os atalhos quando fecha). O botão
   também está no launcher do Windows (ainda sem teste lá).
+- **Steam Deck / SteamOS (Gaming Mode):** se a Steam tentar executar o AppImage com Proton, abra
+  **Propriedades → Compatibilidade** do atalho e selecione **Steam Linux Runtime** no lugar de Proton.
+  O AppImage é um aplicativo nativo de Linux.
 - **Entrada no menu:** o AppImage grava `~/.local/share/applications/gow3.desktop` ao iniciar, para o
   launcher e a janela do jogo mostrarem o ícone no dock; **Avançado → Linux** desliga e remove a entrada.
   Quando outra ferramenta (Gear Lever, AppImageLauncher…) já criou uma entrada que inicia o mesmo
