@@ -1,7 +1,7 @@
 # God of War III Remastered for PC 
 
 <div align="center">
-  <a href="https://ko-fi.com/S7O428PBCC" target="_blank"><img src="https://ko-fi.com/img/githubbutton_sm.svg" alt="ko-fi"></a>
+  <a href="https://trendshift.io/repositories/299469?utm_source=trendshift-badge&amp;utm_medium=badge&amp;utm_campaign=badge-trendshift-299469" target="_blank" rel="noopener noreferrer"><img src="https://trendshift.io/api/badge/trendshift/repositories/299469/daily?language=C%2B%2B" alt="FelipePrado0%2Fgow3_pc | Trendshift" width="250" height="55"/></a>
 </div>
 
 **English** | [Português (Brasil)](https://github.com/FelipePrado0/gow3_pc/blob/main/README.pt-BR.md) | [Español](https://github.com/FelipePrado0/gow3_pc/blob/main/README.es.md)
@@ -16,21 +16,29 @@ A PC port of **God of War III Remastered** (PlayStation 4) for Windows 10/11 and
 
 ## Contents
 
-- [Download and play](#download-and-play)
-- [Linux (AppImage, experimental)](#linux-appimage-experimental)
-- [What works](#what-works)
-- [Feature availability](#feature-availability)
-- [Settings](#settings)
-- [Keyboard controls](#keyboard-controls)
-- [Importing shadPS4 saves](#importing-shadps4-saves)
-- [Third-party overlays (Windows)](#third-party-overlays-windows)
-- [Troubleshooting](#troubleshooting)
-- [Performance and compatibility](#performance-and-compatibility)
-- [Building from source](#building-from-source)
-- [Tests](#tests)
-- [How it works](#how-it-works)
-- [Credits](#credits)
-- [License](#license)
+- [God of War III Remastered for PC](#god-of-war-iii-remastered-for-pc)
+  - [Contents](#contents)
+  - [Download and play](#download-and-play)
+  - [Linux (AppImage, experimental)](#linux-appimage-experimental)
+  - [What works](#what-works)
+  - [Feature availability](#feature-availability)
+  - [Settings](#settings)
+  - [Keyboard controls](#keyboard-controls)
+  - [Importing shadPS4 saves](#importing-shadps4-saves)
+  - [Third-party overlays (Windows)](#third-party-overlays-windows)
+  - [Troubleshooting](#troubleshooting)
+  - [Performance and compatibility](#performance-and-compatibility)
+  - [Building from source](#building-from-source)
+    - [Windows](#windows)
+    - [Linux (Ubuntu 24.04)](#linux-ubuntu-2404)
+  - [Tests](#tests)
+    - [Python](#python)
+    - [Windows C++ tests (MSYS2 CLANG64)](#windows-c-tests-msys2-clang64)
+    - [Linux C/C++ tests](#linux-cc-tests)
+    - [Checks using a prepared game](#checks-using-a-prepared-game)
+  - [How it works](#how-it-works)
+  - [Credits](#credits)
+  - [License](#license)
 
 ## Download and play
 

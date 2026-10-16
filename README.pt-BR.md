@@ -1,7 +1,7 @@
 # God of War III Remastered for PC 
 
 <div align="center">
-  <a href="https://ko-fi.com/S7O428PBCC" target="_blank"><img src="https://ko-fi.com/img/githubbutton_sm.svg" alt="ko-fi"></a>
+  <a href="https://trendshift.io/repositories/299469?utm_source=trendshift-badge&amp;utm_medium=badge&amp;utm_campaign=badge-trendshift-299469" target="_blank" rel="noopener noreferrer"><img src="https://trendshift.io/api/badge/trendshift/repositories/299469/daily?language=C%2B%2B" alt="FelipePrado0%2Fgow3_pc | Trendshift" width="250" height="55"/></a>
 </div>
 
 [English](https://github.com/FelipePrado0/gow3_pc/blob/main/README.md) | **Português (Brasil)** | [Español](https://github.com/FelipePrado0/gow3_pc/blob/main/README.es.md)
@@ -15,21 +15,29 @@ Port para PC de **God of War III Remastered** (PlayStation 4) para Windows 10/11
 
 ## Sumário
 
-- [Baixar e jogar](#baixar-e-jogar)
-- [Linux (AppImage, experimental)](#linux-appimage-experimental)
-- [O que funciona](#o-que-funciona)
-- [Disponibilidade dos recursos](#disponibilidade-dos-recursos)
-- [Configurações](#configurações)
-- [Teclado](#teclado)
-- [Importar saves do shadPS4](#importar-saves-do-shadps4)
-- [Overlays externos (Windows)](#overlays-externos-windows)
-- [Solução de problemas](#solução-de-problemas)
-- [Desempenho e compatibilidade](#desempenho-e-compatibilidade)
-- [Compilar a partir do código](#compilar-a-partir-do-código)
-- [Testes](#testes)
-- [Como funciona](#como-funciona)
-- [Créditos](#créditos)
-- [Licença](#licença)
+- [God of War III Remastered for PC](#god-of-war-iii-remastered-for-pc)
+  - [Sumário](#sumário)
+  - [Baixar e jogar](#baixar-e-jogar)
+  - [Linux (AppImage, experimental)](#linux-appimage-experimental)
+  - [O que funciona](#o-que-funciona)
+  - [Disponibilidade dos recursos](#disponibilidade-dos-recursos)
+  - [Configurações](#configurações)
+  - [Teclado](#teclado)
+  - [Importar saves do shadPS4](#importar-saves-do-shadps4)
+  - [Overlays externos (Windows)](#overlays-externos-windows)
+  - [Solução de problemas](#solução-de-problemas)
+  - [Desempenho e compatibilidade](#desempenho-e-compatibilidade)
+  - [Compilar a partir do código](#compilar-a-partir-do-código)
+    - [Windows](#windows)
+    - [Linux (Ubuntu 24.04)](#linux-ubuntu-2404)
+  - [Testes](#testes)
+    - [Python](#python)
+    - [Testes C++ no Windows (MSYS2 CLANG64)](#testes-c-no-windows-msys2-clang64)
+    - [Testes C/C++ no Linux](#testes-cc-no-linux)
+    - [Verificações com o jogo preparado](#verificações-com-o-jogo-preparado)
+  - [Como funciona](#como-funciona)
+  - [Créditos](#créditos)
+  - [Licença](#licença)
 
 ## Baixar e jogar
 
