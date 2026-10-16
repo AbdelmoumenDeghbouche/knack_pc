@@ -452,9 +452,15 @@ void PerformanceTab() {
     }
     ImGui::SeparatorText("Applied on restart");
     if (BeginRows("##restart")) {
-        static const char* const resolution_labels[] = {"Native (1080p)", "480p", "720p", "1440p", "1800p", "4K"};
-        ChoiceRow("Render resolution", s.render_resolution, resolution_labels, nullptr, int(G::Resolutions.size()),
-                  "The resolution the game draws at. Higher is sharper and slower.");
+        // The built-in sizes, then those of the enabled mods' patch files (ultrawide, for one).
+        static const char* const builtin_labels[] = {"Native (1080p)", "480p", "720p", "1440p", "1800p", "4K"};
+        const std::vector<std::string> resolution_names = G::ResolutionNames();
+        std::vector<const char*> resolution_labels;
+        for (std::size_t i = 0; i < resolution_names.size(); ++i) {
+            resolution_labels.push_back(i < G::Resolutions.size() ? builtin_labels[i] : resolution_names[i].c_str());
+        }
+        ChoiceRow("Render resolution", s.render_resolution, resolution_labels.data(), nullptr,
+                  int(resolution_labels.size()), "The resolution the game draws at. Higher is sharper and slower.");
         static const char* const engine_labels[] = {"60 (original)", "120", "240"};
         ChoiceRow("Engine frame rate", s.engine_fps, engine_labels, G::EngineFps.data(), int(G::EngineFps.size()),
                   "The highest frame rate the game itself runs at.");

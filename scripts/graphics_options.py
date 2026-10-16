@@ -51,10 +51,16 @@ def write_keys(path, updates):
     path.write_text('\n'.join(out) + '\n', encoding='utf-8')
 
 
-def startup_options(ini):
-    """The startup options, normalized; unknown values fall back to the defaults."""
+def resolutions(extra=()):
+    """The render resolutions: the built-in ones and those the enabled mods' patch files add."""
+    return RESOLUTIONS + tuple(e for e in extra if e not in RESOLUTIONS)
+
+
+def startup_options(ini, extra=()):
+    """The startup options, normalized; unknown values fall back to the defaults. `extra`: the
+    resolutions of the enabled mods (a mod that is off leaves its resolution out: native)."""
     options = {key: ini.get(key, value) for key, value in DEFAULTS.items()}
-    if options['render_resolution'] not in RESOLUTIONS:
+    if options['render_resolution'] not in resolutions(extra):
         options['render_resolution'] = 'native'
     if options['engine_fps'] not in {str(f) for f in ENGINE_FPS}:
         options['engine_fps'] = '120'
@@ -63,7 +69,7 @@ def startup_options(ini):
     return options
 
 
-def prepare(config, state_path):
+def prepare(config, state_path, extra=()):
     """(options, reverted): the startup options of this launch, restoring the last confirmed
     ones when the previous launch after a restart never confirmed its own."""
     ini = read_ini(config)
@@ -72,11 +78,11 @@ def prepare(config, state_path):
         state = json.loads(Path(state_path).read_text(encoding='utf-8'))
     except (OSError, ValueError):
         pass
-    options = startup_options(ini)
+    options = startup_options(ini, extra)
     reverted = False
     if ini.get('restart_unconfirmed') == '1':
         if state.get('attempt') and state.get('last_good'):
-            options = startup_options(state['last_good'])
+            options = startup_options(state['last_good'], extra)
             write_keys(config, {**options, 'restart_unconfirmed': '0'})
             state['attempt'] = False
             reverted = True

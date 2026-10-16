@@ -68,6 +68,28 @@ class GraphicsOptionsTest(unittest.TestCase):
         self.assertEqual(g.patch_names(['Resolution Patch - 4K', 'Skip Any Video With X Button'], native),
                          ['Bug Fix - Texture Corruption Fix', 'Skip Any Video With X Button'])
 
+    def test_resolutions_of_enabled_mods(self):
+        # A mod's "Resolution Patch - <size>" is a render resolution only while its mod is on.
+        self.assertEqual(g.resolutions(), g.RESOLUTIONS)
+        self.assertEqual(g.resolutions(['3440x1440', '4K']), g.RESOLUTIONS + ('3440x1440',))
+        ini = {'render_resolution': '3440x1440', 'engine_fps': '60'}
+        self.assertEqual(g.startup_options(ini)['render_resolution'], 'native')
+        options = g.startup_options(ini, ['3440x1440'])
+        self.assertEqual(options['render_resolution'], '3440x1440')
+        self.assertEqual(g.patch_names(['Bug Fix - Texture Corruption Fix'], options), ['Resolution Patch - 3440x1440'])
+
+    def test_a_confirmed_mod_resolution_is_restored_while_its_mod_is_on(self):
+        with tempfile.TemporaryDirectory() as folder:
+            ini, state = Path(folder) / 'gow3.ini', Path(folder) / 'state.json'
+            g.write_keys(ini, {'render_resolution': '3440x1440', 'engine_fps': '60'})
+            tried, _ = g.prepare(ini, state, ['3440x1440'])
+            self.assertEqual(tried['render_resolution'], '3440x1440')
+            g.write_keys(ini, {'render_resolution': '4K', 'restart_unconfirmed': '1'})
+            self.assertEqual(g.prepare(ini, state, ['3440x1440'])[0]['render_resolution'], '4K')  # attempt
+            options, reverted = g.prepare(ini, state, ['3440x1440'])  # the restart never confirmed
+            self.assertTrue(reverted)
+            self.assertEqual(options['render_resolution'], '3440x1440')
+
     def test_applied_engine_fps(self):
         # The engine runs above 60 only with a frame rate patch in the applied list.
         self.assertEqual(g.applied_engine_fps(['Skip Any Video With X Button', 'Frame Rate Patch - 240 FPS']), 240)

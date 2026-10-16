@@ -4,8 +4,12 @@
 // apply through "Apply and restart". The launcher reads and writes the same keys.
 #pragma once
 
+#include <algorithm>
 #include <array>
+#include <cstdlib>
+#include <string>
 #include <string_view>
+#include <vector>
 
 namespace Gow3Graphics {
 
@@ -21,6 +25,19 @@ inline constexpr std::array<int, 5> FpsLimits = {30, 60, 120, 240, 0};
 /// Game patch suffixes ("Resolution Patch - <name>"); "native" is no resolution patch.
 inline constexpr std::array<std::string_view, 6> Resolutions = {"native", "480p", "720p",
                                                                 "1440p", "1800p", "4K"};
+/// The resolutions to choose from: the built-in ones, then those of the enabled mods' patch files
+/// (GOW3_EXTRA_RESOLUTIONS, ";"-separated sizes such as "3440x1440"; run.py sets it at every start).
+inline std::vector<std::string> ResolutionNames() {
+    std::vector<std::string> names(Resolutions.begin(), Resolutions.end());
+    const char* extra = std::getenv("GOW3_EXTRA_RESOLUTIONS");
+    for (std::string_view rest = extra ? extra : ""; !rest.empty();) {
+        const std::size_t end = rest.find(';');
+        const std::string_view name = rest.substr(0, end);
+        if (!name.empty() && std::find(names.begin(), names.end(), name) == names.end()) names.emplace_back(name);
+        rest = end == std::string_view::npos ? std::string_view() : rest.substr(end + 1);
+    }
+    return names;
+}
 /// Engine frame rate ceilings: 60 is the game's own, 120 and 240 are frame rate patches.
 inline constexpr std::array<int, 3> EngineFps = {60, 120, 240};
 
@@ -39,9 +56,11 @@ inline int ParseDisplayMode(std::string_view text) {
 inline int ParseFpsLimit(int value) {
     return IndexOf(FpsLimits, value, -1) >= 0 ? value : 0;
 }
-/// Index into Resolutions; unknown text is native.
+/// Index into ResolutionNames(); unknown text is native.
 inline int ParseResolution(std::string_view text) {
-    return IndexOf(Resolutions, text, 0);
+    const std::vector<std::string> names = ResolutionNames();
+    const auto found = std::find(names.begin(), names.end(), text);
+    return found == names.end() ? 0 : int(found - names.begin());
 }
 /// A listed ceiling, else 120 (the default patch).
 inline int ParseEngineFps(int value) {

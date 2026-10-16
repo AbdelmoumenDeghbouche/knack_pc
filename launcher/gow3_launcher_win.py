@@ -1047,20 +1047,47 @@ class Launcher:
         return self.vars[key]
 
     def choice(self, parent, key, store, options, width=30, var=None):
-        """A combobox over (value, (english, russian)) pairs, kept in sync with its variable."""
+        """A combobox over (value, (english, russian)) pairs, kept in sync with its variable.
+        `options` can be a function returning the pairs: it is asked again each time the list opens."""
         var = var if var is not None else self.var(key, store)
-        values = [v for v, _t in options]
-        box = self.ttk.Combobox(parent, values=[_(*text) for _v, text in options], state='readonly', width=width)
-        if var.get() not in values:
-            var.set(values[0])
+        pairs = options if callable(options) else (lambda: options)
+
+        def values():
+            return [v for v, _t in pairs()]
+
+        def reload():
+            box.configure(values=[_(*text) for _v, text in pairs()])
+        box = self.ttk.Combobox(parent, values=[_(*text) for _v, text in pairs()], state='readonly', width=width,
+                                postcommand=reload)
+        if var.get() not in values():
+            var.set(values()[0])
 
         def show(*_args):
-            current = var.get()
-            box.current(values.index(current) if current in values else 0)
+            reload()  # the list may have changed since it was last opened
+            current, known = var.get(), values()
+            box.current(known.index(current) if current in known else 0)
         show()
-        box.bind('<<ComboboxSelected>>', lambda _e: var.set(values[box.current()]))
+        box.bind('<<ComboboxSelected>>', lambda _e: var.set(values()[box.current()]))
         var.trace_add('write', show)
         return box
+
+    def mod_resolutions(self):
+        """(size, (label,)) of the render resolutions the enabled mods add: the "Resolution Patch - <size>"
+        entries of their patch files (a mod is on when its box is ticked on the Mods page, else as saved)."""
+        from graphics_options import RESOLUTIONS
+        from mods import patch_files, selected
+        from patches import resolution_names
+        if not self.var('mods_enabled', 'app').get():
+            return []
+        root = Path(self.var('mods_dir', 'app').get() or DATA_DIR / 'mods')
+        names = ([n for n in self.mod_order if self.mod_vars.get(n) is None or self.mod_vars[n].get()]
+                 if getattr(self, 'mod_vars', None) else selected(root, DATA_DIR / 'mods.json'))
+        files = [f for n in names for f in patch_files(root / n)]
+        return [(size, (size + ' (mod)',)) for size in resolution_names(files) if size not in RESOLUTIONS]
+
+    def resolution_options(self):
+        """The render resolutions to choose from: the built-in ones and those of the enabled mods."""
+        return RESOLUTION_CHOICES + self.mod_resolutions()
 
     def next_row(self, parent):
         return parent.grid_size()[1]
@@ -1224,7 +1251,7 @@ class Launcher:
             row=0, column=0, columnspan=4, sticky='w')
         tk.Frame(quick, bg=LINE, height=1).grid(row=1, column=0, columnspan=4, sticky='we', pady=(2, 6))
         items = ((_('Display mode'), 'display_mode', DISPLAY_MODES), (_('Frame rate limit'), 'fps_limit', FPS_LIMITS),
-                 (_('Render resolution'), 'render_resolution', RESOLUTION_CHOICES),
+                 (_('Render resolution'), 'render_resolution', self.resolution_options),
                  (_('Engine frame rate'), 'engine_fps', ENGINE_FPS_CHOICES))
         for index, (title, key, options) in enumerate(items):
             r, c = 2 + index // 2, (index % 2) * 2
@@ -1336,7 +1363,7 @@ class Launcher:
                  _('1 is the lowest input latency; more can raise FPS when the graphics card is the limit.'))
         self.row(f, _('Engine frame rate'), self.choice(f, 'engine_fps', 'ini', ENGINE_FPS_CHOICES),
                  _('The highest frame rate the game itself runs at (a game patch).'), restart=True)
-        self.row(f, _('Render resolution'), self.choice(f, 'render_resolution', 'ini', RESOLUTION_CHOICES),
+        self.row(f, _('Render resolution'), self.choice(f, 'render_resolution', 'ini', self.resolution_options),
                  _('The size the game draws at; higher is sharper and slower. A resolution patch replaces the '
                    'texture fix and reserves the memory it needs.'), restart=True)
         self.section(f, _('Shaders'))
@@ -1753,7 +1780,7 @@ class Launcher:
         self.store_game_patches()
         title_id, _profile = game_profile_of(self.meta_dir())
         names = self.app.get('game_patches', {}).get(title_id) or []
-        resolution = dict((v, t[0]) for v, t in RESOLUTION_CHOICES).get(self.var('render_resolution', 'ini').get(), '?')
+        resolution = dict((v, t[0]) for v, t in self.resolution_options()).get(self.var('render_resolution', 'ini').get(), '?')
         from patches import game_patchable, patch_status
         if not game_patchable(self.meta_dir()):
             return _('{} · 60 FPS engine · no patches for this game').format(resolution)
@@ -1768,7 +1795,7 @@ class Launcher:
         if not hasattr(self, 'patches_frame'):
             return
         tk, ttk = self.tk, self.ttk
-        from mods import discover
+        from mods import discover, patch_files
         from patches import external_patches
         for holder in (self.mods_frame, self.patches_frame):
             for widget in holder.winfo_children():
@@ -1791,8 +1818,9 @@ class Launcher:
             self.mod_vars[name] = var
             ttk.Button(line, text='▲', width=3, command=lambda i=index: self.move_mod(i, -1)).pack(side='left')
             ttk.Button(line, text='▼', width=3, command=lambda i=index: self.move_mod(i, 1)).pack(side='left', padx=(2, 10))
-            ttk.Checkbutton(line, text=f'{index + 1}.  {name}', variable=var,
-                            command=self.refresh_conflicts).pack(side='left')
+            has_patches = bool(patch_files(root / name))
+            ttk.Checkbutton(line, text=f'{index + 1}.  {name}' + (_('   (game patches)') if has_patches else ''),
+                            variable=var, command=self.refresh_conflicts).pack(side='left')
         if len(self.mod_order) > 1:
             ttk.Label(self.mods_frame, text=_('Lower in the list loads later and wins conflicts.',
                                               'Ниже в списке — загружается позже и перекрывает.'),

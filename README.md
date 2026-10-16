@@ -143,6 +143,12 @@ Steam Deck/RADV rendering corruption is a known issue in the published 2.2.0 App
 - Patches: render resolution of 480p, 720p, 1440p, 1800p or 4K, corrupted texture fix and skip
   videos with the X button (community); engine frame rate of 120 FPS (kvicken) or 240 FPS
   (adapted by Felipe Prado).
+- **Ultrawide mod (beta):** mods can now carry game patches. The optional [Ultrawide mod](extras/mods/Ultrawide)
+  adds 21:9, 32:9 and 16:10 render resolutions (3440x1440 tested) with a wider field of view instead of a zoomed-in
+  picture; cutscenes keep their 16:9 borders (see [docs/ultrawide.md](docs/ultrawide.md)).
+  **How to install a mod:** put its `.zip` (do not unzip it) in the `mods` folder next to `God of War III.exe`;
+  the game unpacks it by itself. The Ultrawide mod and a one-click installer for 2.2.0 are explained in
+  [extras/mods/Ultrawide](extras/mods/Ultrawide/README.md).
 - **Background shader compilation:** saved pipelines load and compile in the background while
   you play. Stutters, missing effects during compilation and temporary FPS drops can still occur;
   startup time depends on the cache, graphics driver and CPU.
