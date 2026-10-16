@@ -18,6 +18,7 @@ import os
 from pathlib import Path
 import queue
 import re
+import shlex
 import runpy
 import shutil
 import stat
@@ -33,10 +34,10 @@ import webbrowser
 import zipfile
 
 WINDOWS = sys.platform == 'win32'
+import ctypes  # GDI on Windows, fontconfig elsewhere
 # Windows without a cursor of their own show the X root window's, which XWayland leaves blank.
 ARROW = '' if WINDOWS else 'left_ptr'
 if WINDOWS:
-    import ctypes
     # AMD hybrid laptops: this layer hides the NVIDIA GPU from Vulkan and the game stays black (#263).
     os.environ.setdefault('VK_LOADER_LAYERS_DISABLE', 'VK_LAYER_AMD_switchable_graphics')
 FROZEN = getattr(sys, 'frozen', False)
@@ -243,12 +244,18 @@ def windows_language():
 
 
 def register_font(path):
-    """Makes a font file available to this process (nothing else sees it). False when the file is missing or
-    GDI refuses it: the launcher then keeps its standard fonts."""
-    if not WINDOWS:
+    """Makes a font file available to this process (nothing else sees it): GDI on Windows, fontconfig (which Tk
+    uses) elsewhere. False when the file is missing or the system refuses it: the launcher then keeps its
+    standard fonts."""
+    if not path.is_file():
         return False
     try:
-        return path.is_file() and bool(ctypes.windll.gdi32.AddFontResourceExW(str(path), FR_PRIVATE, 0))
+        if WINDOWS:
+            return bool(ctypes.windll.gdi32.AddFontResourceExW(str(path), FR_PRIVATE, 0))
+        fontconfig = ctypes.CDLL('libfontconfig.so.1')
+        fontconfig.FcConfigAppFontAddFile.argtypes = [ctypes.c_void_p, ctypes.c_char_p]
+        fontconfig.FcConfigAppFontAddFile.restype = ctypes.c_int
+        return bool(fontconfig.FcConfigAppFontAddFile(None, os.fsencode(path)))
     except (AttributeError, OSError):
         return False
 
@@ -659,11 +666,56 @@ def desktop_entry(command, icon, marker=False):
             + (DESKTOP_MARKER + '\n' if marker else ''))
 
 
-def integrate_desktop(enabled, appimage, icon_source, data_dir, home=None):
+def other_desktop_entries(applications, appimage):
+    """Menu entries, other than ours, that start this very AppImage: another tool (Gear Lever,
+    AppImageLauncher, appimaged) has integrated it. The program is the first word of Exec or
+    TryExec, after any `env NAME=value` prefix and the quotes."""
+    here = os.path.realpath(appimage)
+    found = []
+    try:
+        entries = sorted(Path(applications).glob('*.desktop'))
+    except OSError:
+        return found
+    for entry in entries:
+        if entry.name == 'gow3.desktop':
+            continue
+        try:
+            lines = entry.read_text(encoding='utf-8', errors='replace').splitlines()
+        except OSError:
+            continue
+        for line in lines:
+            key, _, value = line.partition('=')
+            if key not in ('Exec', 'TryExec'):
+                continue
+            try:
+                words = shlex.split(value)
+                while words and (words[0] == 'env' or re.match(r'[A-Za-z_][A-Za-z0-9_]*=', words[0])):
+                    words.pop(0)
+                # A file that another program left broken (a NUL byte in a path) is ignored, not fatal.
+                matches = bool(words) and os.path.realpath(words[0]) == here
+            except (OSError, ValueError):
+                continue
+            if matches:
+                found.append(entry)
+                break
+    return found
+
+
+def integrated_by_other_tool(applications, appimage, environment=None):
+    """True when another tool (Gear Lever sets DESKTOPINTEGRATION, AppImageLauncher and appimaged leave an
+    entry) already put this AppImage in the menu: an entry of ours would be a duplicate."""
+    return bool((environment if environment is not None else os.environ).get('DESKTOPINTEGRATION')
+                or (appimage and other_desktop_entries(applications, appimage)))
+
+
+def integrate_desktop(enabled, appimage, icon_source, data_dir, home=None, environment=None):
     """AppImage on Linux: the menu entry the desktop matches the windows (application id gow3) to,
     which is what shows their icon in the dock. The entry is ours while it carries the marker; one
-    without it was written by hand (the Desktop shortcut button) and is left alone."""
-    entry = Path(home or Path.home()) / '.local' / 'share' / 'applications' / 'gow3.desktop'
+    without it was written by hand (the Desktop shortcut button) and is left alone. When another
+    tool already integrated this AppImage (an entry that starts it, or DESKTOPINTEGRATION in the
+    environment, which Gear Lever sets), ours would be a duplicate: it is not made, and removed."""
+    applications = Path(home or Path.home()) / '.local' / 'share' / 'applications'
+    entry = applications / 'gow3.desktop'
     try:
         ours = entry.is_file() and DESKTOP_MARKER in entry.read_text(encoding='utf-8', errors='replace')
         if not enabled:
@@ -671,6 +723,10 @@ def integrate_desktop(enabled, appimage, icon_source, data_dir, home=None):
                 entry.unlink()
             return None
         if not appimage or (entry.is_file() and not ours):
+            return None
+        if integrated_by_other_tool(applications, appimage, environment):
+            if ours:
+                entry.unlink()
             return None
         icon = Path(data_dir) / 'gow3.png'
         icon.parent.mkdir(parents=True, exist_ok=True)
@@ -681,8 +737,37 @@ def integrate_desktop(enabled, appimage, icon_source, data_dir, home=None):
         if not entry.is_file() or entry.read_text(encoding='utf-8') != text:
             entry.write_text(text, encoding='utf-8')
         return entry
-    except OSError:
+    except (OSError, ValueError):  # runs before the window opens: it must never stop the launcher
         return None
+
+
+def write_linux_shortcut(command, appimage, icon_source, desktop, home=None, environment=None):
+    """The shortcut button: the desktop entry on the desktop folder (when it exists) and in the applications
+    menu, except in the menu when another tool already integrated this AppImage (a second entry would
+    show the game twice). Returns the files written."""
+    home = Path(home or Path.home())
+    icon_dir = home / '.local' / 'share' / 'icons'
+    icon = icon_dir / 'gow3.png'
+    try:
+        icon_dir.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(icon_source, icon)
+    except OSError:
+        icon = 'gow3'
+    entry = desktop_entry(command, icon)
+    applications = home / '.local' / 'share' / 'applications'
+    folders = [] if integrated_by_other_tool(applications, appimage, environment) else [applications]
+    folders.append(Path(desktop))
+    created = []
+    for folder in folders:
+        if not folder.is_dir() and folder != folders[0]:  # the first one is the point of the click
+            continue
+        folder.mkdir(parents=True, exist_ok=True)
+        # In the applications menu the file is named after the window's application id.
+        target = folder / ('gow3.desktop' if folder == applications else 'God of War III.desktop')
+        target.write_text(entry, encoding='utf-8')
+        target.chmod(0o755)
+        created.append(str(target))
+    return created
 
 
 def steam_icon(game):
@@ -2205,32 +2290,14 @@ class Launcher:
     def linux_shortcut(self):
         launcher = os.environ.get('APPIMAGE') or (sys.executable if FROZEN else '')
         command = f'"{launcher}"' if launcher else f'python3 "{Path(__file__).resolve()}"'
-        icon_dir = Path.home() / '.local' / 'share' / 'icons'
-        icon = icon_dir / 'gow3.png'
-        try:
-            icon_dir.mkdir(parents=True, exist_ok=True)
-            shutil.copyfile(PORT_DIR / 'launcher' / 'gow3.png', icon)
-        except OSError:
-            icon = 'gow3'
-        entry = desktop_entry(command, icon)
-        folders = [Path.home() / '.local' / 'share' / 'applications']
         try:
             desktop = subprocess.run(['xdg-user-dir', 'DESKTOP'], capture_output=True, text=True,
                                      env=host_environment()).stdout.strip()
         except OSError:
             desktop = ''
-        folders.append(Path(desktop) if desktop else Path.home() / 'Desktop')
-        created = []
         try:
-            for folder in folders:
-                if not folder.is_dir() and folder != folders[0]:
-                    continue
-                folder.mkdir(parents=True, exist_ok=True)
-                # In the applications menu the file is named after the window's application id.
-                target = folder / ('gow3.desktop' if folder == folders[0] else 'God of War III.desktop')
-                target.write_text(entry, encoding='utf-8')
-                target.chmod(0o755)
-                created.append(str(target))
+            created = write_linux_shortcut(command, launcher, PORT_DIR / 'launcher' / 'gow3.png',
+                                           Path(desktop) if desktop else Path.home() / 'Desktop')
         except OSError as error:
             self.messagebox.showerror(APP_NAME, str(error))
             return
