@@ -31,6 +31,7 @@ class LauncherArtworkTest(unittest.TestCase):
         app.banner.winfo_width.return_value = 640
         app.banner.__getitem__.return_value = 240
         app.px = lambda value: value
+        app.font = lambda family, points, *style: (family, points, *style)
         app.banner_source = None
         app.scaled_art = mock.Mock()
         return app
