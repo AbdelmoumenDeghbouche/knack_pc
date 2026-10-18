@@ -923,15 +923,15 @@ EXTRA = {
         'Graphics card': 'Placa de vídeo',
         'The GPU the game runs on. Choose your dedicated card if the game uses the integrated one.':
             'A GPU em que o jogo roda. Escolha a placa dedicada se o jogo estiver usando a integrada.',
-        'Fast screen effects (Rage of Sparta, weapons)': 'Efeitos de tela rápidos (Rage of Sparta, armas)',
-        'Keeps powers and weapon effects at full FPS. Switch it off if a screen effect (blur, distortion, the color change of a power) looks stretched, shifted or wrong.':
-            'Mantém os efeitos de poderes e armas no FPS máximo. Desative se um efeito de tela (desfoque, distorção, a mudança de cor de um poder) parecer esticado, deslocado ou errado.',
-        'Your own dump of the game (eboot.bin, sce_module, sce_sys): God of War III Remastered, any region and version.':
-            'O seu próprio dump do jogo (eboot.bin, sce_module, sce_sys): God of War III Remastered, de qualquer região e versão.',
+        'Fast screen effects': 'Efeitos de tela rápidos',
+        'Keeps screen effects at full FPS. Switch it off if a screen effect (blur, distortion, a color change) looks stretched, shifted or wrong.':
+            'Mantém os efeitos de tela no FPS máximo. Desative se um efeito de tela (desfoque, distorção, uma mudança de cor) parecer esticado, deslocado ou errado.',
+        'Your own dump of the game (eboot.bin, sce_module, sce_sys): WipEout Omega Collection, with or without its update.':
+            'O seu próprio dump do jogo (eboot.bin, sce_module, sce_sys): WipEout Omega Collection, com ou sem a atualização.',
         'L1 + Touchpad right': 'L1 + Touchpad direito',
         "Keys use SDL names: letters, digits, Space, Return, Tab, Left Shift, Left Ctrl, Left Alt, Backspace, Up, Down, Left, Right, F1 to F12. A name the game does not know keeps the default (the log says which). L2/R2 on the gamepad stay on the triggers. Touchpad right opens the game's pause menu; Touchpad left (photo mode) is L1 + Touchpad right on the gamepad. Insert and R3+L2 always open the port's menu. Applied when the game starts.":
             'As teclas usam os nomes do SDL: letras, números, Space, Return, Tab, Left Shift, Left Ctrl, Left Alt, Backspace, Up, Down, Left, Right, F1 a F12. Um nome que o jogo não conhece mantém o padrão (o registro diz qual). L2/R2 no controle ficam nos gatilhos. Touchpad direito abre o menu de pausa do jogo; Touchpad esquerdo (modo foto) é L1 + Touchpad direito no controle. Insert e R3+L2 sempre abrem o menu do port. Vale quando o jogo inicia.',
-        '{} · 60 FPS engine · no patches for this game': '{} · motor a 60 FPS · sem patches para este jogo',
+        '{} · 60 FPS · no patches for this game': '{} · 60 FPS · sem patches para este jogo',
         '{} not found in this eboot.bin at the last start (see Log)': '{} não encontrados neste eboot.bin na última inicialização (veja o Registro)',
         '   (game patches)': '   (patches do jogo)',
         # Button names (PS_BUTTON_NAMES, PAD_STYLES).
@@ -1361,8 +1361,8 @@ EXTRA['es'].update({
         'Cruceta derecha',
     'D-pad up':
         'Cruceta arriba',
-    'Fast screen effects (Rage of Sparta, weapons)':
-        'Efectos de pantalla rápidos (Rage of Sparta, armas)',
+    'Fast screen effects':
+        'Efectos de pantalla rápidos',
     'Fixes corrupted textures in the game by increasing the Video Arena size, allowing the game to use more video memory for textures and effects. Requires setting DMEM to 2048 MB or more, or the game crashes. Enable either this patch or one resolution patch, never both.':
         'Corrige las texturas corruptas del juego aumentando el tamaño del Video Arena, para que el juego use más memoria de vídeo en texturas y efectos. Requiere DMEM de 2048 MB o más, o el juego se cierra. Activa este parche o un parche de resolución, nunca los dos.',
     'Fixes the black screen at startup with the FPS counter running: the frame pacing index starts at 2 instead of 0, so the second frame no longer waits for a flip that only it can trigger.':
@@ -1373,8 +1373,8 @@ EXTRA['es'].update({
         'Escala de la interfaz',
     'Graphics card':
         'Tarjeta gráfica',
-    'Keeps powers and weapon effects at full FPS. Switch it off if a screen effect (blur, distortion, the color change of a power) looks stretched, shifted or wrong.':
-        'Mantiene los poderes y los efectos de las armas a FPS completos. Desactívalo si un efecto de pantalla (desenfoque, distorsión, el cambio de color de un poder) se ve estirado, desplazado o mal.',
+    'Keeps screen effects at full FPS. Switch it off if a screen effect (blur, distortion, a color change) looks stretched, shifted or wrong.':
+        'Mantiene los efectos de pantalla a FPS completos. Desactívalo si un efecto de pantalla (desenfoque, distorsión, un cambio de color) se ve estirado, desplazado o mal.',
     'L1 + Touchpad right':
         'L1 + touchpad derecho',
     'LS (left stick click)':
@@ -1401,12 +1401,12 @@ EXTRA['es'].update({
         'Triángulo',
     'Xbox button':
         'Botón Xbox',
-    'Your own dump of the game (eboot.bin, sce_module, sce_sys): God of War III Remastered, any region and version.':
-        'Tu propio volcado del juego (eboot.bin, sce_module, sce_sys): God of War III Remastered, cualquier región y versión.',
+    'Your own dump of the game (eboot.bin, sce_module, sce_sys): WipEout Omega Collection, with or without its update.':
+        'Tu propio volcado del juego (eboot.bin, sce_module, sce_sys): WipEout Omega Collection, con o sin su actualización.',
     '{} not found in this eboot.bin at the last start (see Log)':
         '{} no se encontró en este eboot.bin en el último inicio (ver Registro)',
-    '{} · 60 FPS engine · no patches for this game':
-        '{} · motor a 60 FPS · sin parches para este juego',
+    '{} · 60 FPS · no patches for this game':
+        '{} · 60 FPS · sin parches para este juego',
     'Native · 1920 × 1080 · 16:9':
         'Nativa · 1920 × 1080 · 16:9',
 })

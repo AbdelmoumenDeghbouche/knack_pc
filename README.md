@@ -5,8 +5,8 @@ style of [bbport](https://github.com/deadinside28/bloodborne_pc): the game's ori
 code runs directly on the PC's processor, a runtime replaces the PS4 system libraries, and the
 graphics are translated to Vulkan by the shadPS4 video core. There is no CPU emulator.
 
-> **Status: early development. The game does not start yet.** There is nothing to download and
-> play. See [Progress](#progress).
+> **Status: early development. Menus and races (HD and 2048) play at about 60 FPS.** There
+> is no packaged release yet: build it from source. See [Progress](#progress).
 
 > **No game files are included.** You need your own copy of the game, dumped from your own PS4.
 > This project is not affiliated with Sony Interactive Entertainment, XDev, Clever Beans or EPOS
@@ -18,18 +18,17 @@ graphics are translated to Vulkan by the shadPS4 video core. There is no CPU emu
 |---|---|
 | Unpack the game and its update | Done (`scripts/pkg_extract.py`) |
 | Load and link the executable (eboot.bin, libc, Fios2, NpToolkit2) | Done |
-| PS4 system functions the game imports | 495 of 823 present, **328 missing** |
-| Boot to the first screen | Not yet |
-| Menus, races, sound, controller | Not yet |
-| Launcher, settings, 60/120 FPS | Not yet |
+| PS4 system functions the game uses | Done for menus and races; PSN, VR and camera answer as an offline console |
+| Boot, menus, saves | Done |
+| Races (HD and 2048), race results | Done, about 60 FPS |
+| Sound: music | Done |
+| Sound: Audio3d objects and bed (effects) | New, being tested |
+| Launcher and settings | Done (`launcher/gow3_launcher_win.py`) |
+| PS4 Pro mode (4K) | Not yet: the shadPS4 texture cache stops on an image overlap |
+| Every game and event type (HD, HD Fury, 2048) | Not all tested yet |
 
-The 328 missing imports are mostly PSN, PlayStation VR, camera and system dialogs, which the
-runtime can answer as an offline console without VR. The rest (libkernel, libSceJson2,
-libSceAudio3d, libSceDiscMap, save data) need real implementations.
-
-For reference, shadPS4 0.20.0 reaches the game's main menu and crashes when a race loads
-(the `Model_Item_LoaderThread` thread). shadPS4 stubs `sceLibcMspaceCreate` to return NULL,
-which is a likely cause; this runtime implements it.
+2048 races need red-zone protection on Windows (`src/redzone.cpp`): the game's profile turns
+it on. Without it they run at less than 1 FPS.
 
 ## Supported game versions
 
@@ -82,7 +81,23 @@ python scripts/pkg_extract.py <update.pkg> D:\games\CUSA07671-patch
 Then move the update's files over the base game folder, or pass the update folder with
 `GOW3_PATCH_DIR`. A folder dumped with GoldHEN works the same way.
 
-## Running (development)
+## Running
+
+Start the launcher, choose your game folder on the **Game** page, then click **Play**:
+
+```powershell
+python launcher\gow3_launcher_win.py
+```
+
+The **Advanced** page can put a shortcut on the desktop. Settings: display mode, frame rate
+limit, VSync, anisotropic filtering, HDR, controls, mods and the game language.
+
+Without the launcher, `run.py` starts the game:
+
+```powershell
+$env:GOW3_GAME_DIR = 'D:\games\CUSA07671'
+python run.py
+```
 
 List the PS4 functions the runtime does not have yet:
 
@@ -105,6 +120,10 @@ function the runtime does not implement and prints its name.
 | Import names | `scripts/gen_import_names.py`, `src/import_names.inc` | Maps the game's import NIDs to function names |
 | Loader | `src/probe.c` | Loads the image and starts the game's original code |
 | Runtime | `src/runtime_*.c` | PS4 system functions |
+| Audio3d | `src/runtime_audio.c` | Mixes the bed and the sound objects of the Wwise sink into one output |
+| Json2 | `src/runtime_json.c` | sce::Json values, parser and serializer (race results) |
+| Red zones | `src/redzone.cpp`, `scripts/function_starts.py` | Keeps Windows exception records out of the game's red zones |
+| Launcher | `launcher/` | Settings window and game start |
 | GPU | `gpu/shadps4/` | shadPS4 video core (Vulkan) |
 
 Many names (`gow3-probe.exe`, `GOW3_*` variables, the launcher) still come from the God of

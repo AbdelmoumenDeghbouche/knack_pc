@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: GPL-2.0-or-later
-"""God of War III (gow3) launcher for Windows and Linux (Tkinter).
+"""WipEout Omega Collection launcher for Windows and Linux (Tkinter), from gow3_pc's launcher.
 
 Every setting of the port in one window: the game folder and saves, gow3.ini (upscaler,
 preset, output, effects), start-up options passed to run.py as environment variables
@@ -51,10 +51,10 @@ from patches import game_profile, game_sfo  # noqa: E402  (scripts/)
 from prepare import load_sfo  # noqa: E402  (scripts/)
 DATA_DIR = Path(os.environ.get('GOW3_DATA_DIR', PORT_DIR))
 CONFIG_DIR = (Path(os.environ.get('APPDATA', Path.home())) if WINDOWS else
-              Path(os.environ.get('XDG_CONFIG_HOME') or Path.home() / '.config')) / 'gow3-launcher'
+              Path(os.environ.get('XDG_CONFIG_HOME') or Path.home() / '.config')) / 'wipeout-launcher'
 CONFIG_FILE = CONFIG_DIR / 'settings.json'
 MOD_PRESETS = DATA_DIR / 'mods_presets.json'
-APP_NAME = 'God of War III'
+APP_NAME = 'WipEout Omega Collection'
 MAX_LOG_LINES = 6000
 NO_WINDOW = getattr(subprocess, 'CREATE_NO_WINDOW', 0)
 # The game and everything it starts form one process group, ended together (GameJob).
@@ -62,8 +62,8 @@ NEW_GROUP = {} if WINDOWS else {'start_new_session': True}
 UI_FONT, MONO_FONT, SERIF_FONT = 'Segoe UI', 'Consolas', 'Georgia'
 # This build; GitHub release tags are windows-v<VERSION>.
 VERSION = '2.4.1'
-RELEASES_API = 'https://api.github.com/repos/FelipePrado0/gow3_pc/releases/latest'
-RELEASES_PAGE = 'https://github.com/FelipePrado0/gow3_pc/releases/latest'
+RELEASES_API = 'https://api.github.com/repos/AbdelmoumenDeghbouche/wipeout_pc/releases/latest'
+RELEASES_PAGE = 'https://github.com/AbdelmoumenDeghbouche/wipeout_pc/releases/latest'
 UPDATE_DIR = Path(tempfile.gettempdir()) / 'gow3-update'
 # Never copied over an installation by an update (the package does not hold them either).
 USER_FILES = ('user', 'out', 'mods', 'gow3.ini', 'mods.json', 'mods_presets.json', 'patches.json', 'last_run.log')
@@ -404,7 +404,7 @@ FPS_LIMITS = [('30', ('30',)), ('60', ('60',)), ('100', ('100',)), ('120', ('120
 PAGES = ('home', 'graphics', 'performance', 'game', 'controls', 'mods', 'advanced')
 PAGE_REFRESH = {'home': ('refresh_status',), 'game': ('refresh_game_patches',), 'mods': ('refresh_lists',)}
 UI_SCALES = [('auto', ('Auto',)), ('1', ('1x',)), ('2', ('2x',))]
-APP_DEFAULTS = {'ui_language': 'en', 'ui_scale': 'auto', 'game_dir': os.environ.get('GOW3_GAME_DIR', str(PORT_DIR.parent / 'CUSA01623') if WINDOWS else ''), 'update_dir': '', 'experimental_upscaler': False,
+APP_DEFAULTS = {'ui_language': 'en', 'ui_scale': 'auto', 'game_dir': os.environ.get('GOW3_GAME_DIR', str(PORT_DIR.parent / 'CUSA07671') if WINDOWS else ''), 'update_dir': '', 'experimental_upscaler': False,
                 'video_backend': 'auto', 'gamemode': False, 'mangohud': False, 'desktop_integration': True, 'user_dir': '',
                 'mods_dir': '', 'mods_enabled': True, 'patches_dir': '', 'language': '1',
                 'hdr': False, 'draw_pipe': '', 'readbacks': '', 'no_msaa': '', 'stream_memory': 'cached',
@@ -1142,9 +1142,9 @@ def game_environment(s):
 # ---------------------------------------------------------------------------------------------
 # The window.
 
-# God of War III's own colors: near black, ash and blood red (no gold or orange).
-BG, PANEL, CARD, LINE = '#0d0b0b', '#161212', '#1d1717', '#2a2222'
-TEXT, MUTED, ACCENT, ACCENT_HI = '#e6e0d8', '#8a817a', '#a4161a', '#c81e25'
+# WipEout's colors: near black, steel and the cyan of the Omega Collection menus.
+BG, PANEL, CARD, LINE = '#0b0d10', '#12161b', '#181d23', '#232a32'
+TEXT, MUTED, ACCENT, ACCENT_HI = '#e2e8ee', '#7f8a94', '#0a7fc0', '#1fa8e6'
 CONFLICT = '#e0a0a0'
 def pad_labels(style):
     """SDL gamepad button name -> its label in this naming style, in the launcher's language."""
@@ -1294,7 +1294,7 @@ class Launcher:
                 image.configure(width=n + self.px(8), height=n)
                 image.blank()  # keep the image name used by the existing theme element
             fill = ACCENT if checked else CARD
-            image.put(ACCENT_HI if checked else '#4a4040', to=(0, 0, n, n))
+            image.put(ACCENT_HI if checked else '#3a434c', to=(0, 0, n, n))
             border = self.px(1)
             image.put(fill, to=(border, border, n - border, n - border))
             if checked:
@@ -1364,8 +1364,8 @@ class Launcher:
         s.map('Link.TButton', background=[('active', PANEL)], foreground=[('active', TEXT)])
         s.configure('Play.TButton', background=ACCENT, foreground='#f4ece0', font=self.heading_font(15, bold=True),
                     padding=self.px((36, 10)), borderwidth=0)
-        s.map('Play.TButton', background=[('active', ACCENT_HI), ('disabled', '#2e1c1c')],
-              foreground=[('disabled', '#8a7a78')])
+        s.map('Play.TButton', background=[('active', ACCENT_HI), ('disabled', '#1c252e')],
+              foreground=[('disabled', '#78848e')])
         s.configure('Horizontal.TProgressbar', background=ACCENT, troughcolor=CARD, bordercolor=LINE,
                     arrowsize=self.px(14), sliderlength=self.px(30))
         s.configure('TScrollbar', background=CARD, arrowcolor=MUTED, troughcolor=PANEL, bordercolor=PANEL,
@@ -1578,7 +1578,7 @@ class Launcher:
                             pady=self.px(10), cursor='hand2')
             item.pack(fill='x')
             item.bind('<Button-1>', lambda _e, n=name: self.show(n))
-            item.bind('<Enter>', lambda _e, n=name: n != self.current_page and self.nav[n].configure(bg='#1a1414'))
+            item.bind('<Enter>', lambda _e, n=name: n != self.current_page and self.nav[n].configure(bg='#151a20'))
             item.bind('<Leave>', lambda _e, n=name: n != self.current_page and self.nav[n].configure(bg=BG))
             self.nav[name] = item
         tk.Frame(side, bg=BG).pack(fill='both', expand=True)
@@ -1649,27 +1649,26 @@ class Launcher:
         ttk.Label(quick, text=_('Quick settings', 'Основное').upper(), style='Section.TLabel').grid(
             row=0, column=0, columnspan=4, sticky='w')
         tk.Frame(quick, bg=LINE, height=self.px(1)).grid(row=1, column=0, columnspan=4, sticky='we', pady=self.px((2, 6)))
-        # Left: display and frame rate; right: Aspect ratio above the Render resolution it filters.
+        # WipEout renders 1080p at 60 FPS: no engine frame rate or render resolution patches.
         items = ((0, 0, _('Display mode'), 'display_mode', DISPLAY_MODES),
                  (1, 0, _('Frame rate limit'), 'fps_limit', FPS_LIMITS),
-                 (2, 0, _('Engine frame rate'), 'engine_fps', ENGINE_FPS_CHOICES),
-                 (0, 2, _('Aspect ratio'), None, self.aspect_options),
-                 (1, 2, _('Render resolution'), 'render_resolution', self.aspect_resolution_options))
+                 (0, 2, _('Frames queued'), 'frames_queued', FRAMES_QUEUED),
+                 (1, 2, _('Anisotropic filtering'), 'anisotropy', ANISOTROPY))
         for row, c, title, key, options in items:
             r = 2 + row
             ttk.Label(quick, text=title).grid(row=r, column=c, sticky='w', pady=self.px(6), padx=self.px((0, 12)))
-            box = (self.choice(quick, key, 'ini', options, width=18) if key else
-                   self.choice(quick, None, None, options, width=18, var=self.aspect_var()))
-            box.grid(row=r, column=c + 1, sticky='w', padx=self.px((0, 40)))
+            self.choice(quick, key, 'ini', options, width=18).grid(row=r, column=c + 1, sticky='w', padx=self.px((0, 40)))
 
     def draw_banner(self):
-        """The cover art of the selected dump (sce_sys/pic1.png) under the title."""
+        """The cover art of the selected dump (sce_sys/pic0.png, else pic1.png) under the title."""
         tk, c = self.tk, self.banner
         c.delete('all')
         w, h, bar = max(c.winfo_width(), self.px(400)), int(c['height']), self.px(44)
         folder = self.meta_dir()
         info = game_info(folder)
-        art = self.artwork_file('pic1.png')
+        art = self.artwork_file('pic0.png')  # WipEout's cover art; its pic1.png is a plain background
+        if not art.is_file():
+            art = self.artwork_file('pic1.png')
         if self.banner_source != art:
             self.banner_source, self.banner_image, self.banner_size = art, None, None
             try:
@@ -1765,13 +1764,6 @@ class Launcher:
                  _('The engine frame rate (below) is the highest it can go.'))
         self.row(f, _('Frames queued'), self.choice(f, 'frames_queued', 'ini', FRAMES_QUEUED),
                  _('1 is the lowest input latency; more can raise FPS when the graphics card is the limit.'))
-        self.row(f, _('Engine frame rate'), self.choice(f, 'engine_fps', 'ini', ENGINE_FPS_CHOICES),
-                 _('The highest frame rate the game itself runs at (a game patch).'), restart=True)
-        self.row(f, _('Aspect ratio'), self.choice(f, None, None, self.aspect_options, var=self.aspect_var()),
-                 _('Shows the render resolutions of this shape only.'))
-        self.row(f, _('Render resolution'), self.choice(f, 'render_resolution', 'ini', self.aspect_resolution_options),
-                 _('The size the game draws at; higher is sharper and slower. A resolution patch replaces the '
-                   'texture fix and reserves the memory it needs.'), restart=True)
         self.section(f, _('Shaders'))
         self.check(f, 'pipeline_binary_cache', 'app', _('Use pipeline binary cache (A/B test)'),
                    _('Reuse saved Vulkan pipelines. Disable to compare FPS with normal compilation. '
@@ -1798,9 +1790,9 @@ class Launcher:
                      'or objects look wrong.'), restart=True)
         self.check(f, 'deferred_readback', 'ini', _('Deferred GPU readbacks'),
                    _('Fewer waits for the GPU. Switch it off if textures or shadows look wrong.'), restart=True)
-        self.check(f, 'partial_height_views', 'app', _('Fast screen effects (Rage of Sparta, weapons)'),
-                   _('Keeps powers and weapon effects at full FPS. Switch it off if a screen effect '
-                     '(blur, distortion, the color change of a power) looks stretched, shifted or wrong.'),
+        self.check(f, 'partial_height_views', 'app', _('Fast screen effects'),
+                   _('Keeps screen effects at full FPS. Switch it off if a screen effect '
+                     '(blur, distortion, a color change) looks stretched, shifted or wrong.'),
                    restart=True)
         self.row(f, _('Two-stage GPU pipeline', 'Двухстадийный конвейер GPU'), self.choice(f, 'draw_pipe', 'app', DRAW_PIPE),
                  _('20–30% faster; switch it off if the game is unstable.', 'Быстрее на 20–30%; при нестабильности выключите.'))
@@ -1819,19 +1811,13 @@ class Launcher:
 
     def build_game(self):
         f = self.scrolled_page('game', _('Game', 'Игра'), _('Your game dump, saves and the game patches.'))
-        self.section(f, _('Cheats'), top=4)
-        self.check(f, 'cheat_double_jumps', 'ini', _('Infinite Double Jumps'),
-                   _('Repeat air jumps without landing. Also available in the in-game Cheats menu.'))
-        self.check(f, 'cheat_very_hard', 'ini', _('Unlock Very Hard'),
-                   _('Select Very Hard without completing the game. Does not change existing save difficulty. '
-                     'In-game: enable before opening New Game.'))
-        self.section(f, _('Folders'))
+        self.section(f, _('Folders'), top=4)
         self.folder(f, 'game_dir', _('Game folder', 'Папка игры'),
                     _('Choose the folder with eboot.bin', 'Выберите папку с eboot.bin'),
-                    _('Your own dump of the game (eboot.bin, sce_module, sce_sys): God of War III Remastered, '
-                      'any region and version.',
-                      'Ваш дамп игры (eboot.bin, sce_module, sce_sys): God of War III Remastered, '
-                      'любой регион и версия.'), on_change=self.game_changed)
+                    _('Your own dump of the game (eboot.bin, sce_module, sce_sys): WipEout Omega Collection, '
+                      'with or without its update.',
+                      'Ваш дамп игры (eboot.bin, sce_module, sce_sys): WipEout Omega Collection, '
+                      'с обновлением или без.'), on_change=self.game_changed)
         self.folder(f, 'update_dir', _('Update folder (optional)'),
                     _('Choose the folder of the update (eboot.bin, sce_sys)'),
                     _('Only if the update is dumped apart from the game: it is laid over the game folder '
@@ -2380,7 +2366,7 @@ class Launcher:
         ttk.Button(buttons, text=_('Clear', 'Очистить'), command=lambda: self.set_log('')).pack(side='left', padx=self.px(6))
         holder = ttk.Frame(f)
         holder.grid(row=self.next_row(f), column=0, columnspan=2, sticky='we')
-        self.log = tk.Text(holder, wrap='none', height=18, bg='#0a0808', fg='#cfc6bc', insertbackground=TEXT,
+        self.log = tk.Text(holder, wrap='none', height=18, bg='#080a0c', fg='#cfc6bc', insertbackground=TEXT,
                            relief='flat', font=self.font(MONO_FONT, 9), padx=self.px(8), pady=self.px(6), state='disabled', highlightthickness=0)
         bar = ttk.Scrollbar(holder, command=self.log.yview)
         self.log.configure(yscrollcommand=bar.set)
@@ -2417,7 +2403,7 @@ class Launcher:
         resolution = dict((v, _(*t)) for v, t in self.resolution_options()).get(self.var('render_resolution', 'ini').get(), '?')
         from patches import game_patchable, patch_status
         if not game_patchable(self.meta_dir()):
-            return _('{} · 60 FPS engine · no patches for this game').format(resolution)
+            return _('{} · 60 FPS · no patches for this game').format(resolution)
         text = _('{} · {} FPS engine · {} patches').format(resolution, self.var('engine_fps', 'ini').get(), len(names))
         # Which patches the game's eboot.bin had is known once the game has started (patches.py).
         status = patch_status(DATA_DIR / 'out')
@@ -3064,18 +3050,19 @@ class Launcher:
                                                  'минут будет подтормаживать, пока кэш собирается заново.'))
 
     def shortcut(self):
-        """God of War III.lnk on the desktop (a .desktop entry in the menu and on the desktop on Linux)."""
+        """<APP_NAME>.lnk on the desktop (a .desktop entry in the menu and on the desktop on Linux)."""
         if not WINDOWS:
             self.linux_shortcut()
             return
         if FROZEN:
             target, arguments, icon = sys.executable, '', f'{sys.executable},0'
-        else:  # a source tree: the launcher script with the windowless Python
+        else:  # a source tree: the launcher script with the windowless Python, the game's icon (set_icon)
             pythonw = Path(sys.executable).with_name('pythonw.exe')
             target = str(pythonw if pythonw.exists() else sys.executable)
-            arguments, icon = Path(__file__).resolve(), PORT_DIR / 'launcher' / 'gow3.ico'
+            icon = CONFIG_DIR / 'game_icon.ico'
+            arguments, icon = Path(__file__).resolve(), icon if icon.is_file() else PORT_DIR / 'launcher' / 'gow3.ico'
         script = ('$s=(New-Object -ComObject WScript.Shell).CreateShortcut([Environment]::GetFolderPath("Desktop")'
-                  '+"\\God of War III.lnk");'
+                  f'+"\\{APP_NAME}.lnk");'
                   f'$s.TargetPath="{target}";$s.WorkingDirectory="{PORT_DIR}";$s.IconLocation="{icon}";'
                   + (f"$s.Arguments='\"{arguments}\"';" if arguments else '') + '$s.Save()')
         result = subprocess.run(['powershell', '-NoProfile', '-Command', script], capture_output=True,

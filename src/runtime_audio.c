@@ -13,6 +13,7 @@
 #include <string.h>
 #include <pthread.h>
 #include <time.h>
+#include <math.h>
 #include <SDL3/SDL.h>
 
 #define PORTS 25
@@ -292,21 +293,30 @@ static ABI int32_t audio_last_time(int32_t handle, uint64_t *time) {
     *time=p->last_output_us; return 0;
 }
 
-/* ---- Audio3d (WipEout's Wwise sink). One port, paced at 48 kHz like the hardware queue, but
- * 3D objects and beds are not mixed yet: they are silent. Its AudioOut ports are real ones. ---- */
+/* ---- Audio3d (WipEout's Wwise sink). One port. Each period the game writes a bed (2, 6 or 8
+ * channels) and mono object PCM with gain and position; PortAdvance mixes them into one 7.1 frame
+ * (objects panned left/right by position), PortPush plays the queued frames on an internal
+ * AudioOut port of type 126, which paces them like sceAudioOutOutput. ---- */
 #define A3D_INVALID_PORT ((int32_t)0x80EA0002)
 #define A3D_INVALID_PARAMETER ((int32_t)0x80EA0004)
+#define A3D_OUT_OF_RESOURCES ((int32_t)0x80EA0006)
 #define A3D_NOT_READY ((int32_t)0x80EA0007)
+#define A3D_INVALID_OBJECT ((int32_t)0x80EA0008)
+#define A3D_QUEUE 8 /* finished frames held between PortAdvance and PortPush */
+enum { A3D_PCM=1, A3D_POSITION=2, A3D_GAIN=3, A3D_RESET_STATE=9 };
 typedef struct { uint64_t size; uint32_t granularity, rate, max_objects, queue_depth, buffer_mode, pad, beds; } A3dParams;
+typedef struct { uint32_t id, pad; const void *value; uint64_t size; } A3dAttribute;
+typedef struct { uint32_t format, pad; const void *samples; uint32_t count; } A3dPcm;
+typedef struct { int used, has_pcm; float gain, position[3]; float *pcm; } A3dObject;
 static int a3d_ready, a3d_open;
-static uint32_t a3d_granularity=256, a3d_depth=2, a3d_objects;
-static uint64_t a3d_due_ns; /* when the oldest queued buffer has played */
-static uint32_t a3d_queued;
-static uint64_t a3d_period_ns(void) { return (uint64_t)a3d_granularity*1000000000u/48000u; }
-/* Buffers leave the virtual queue as their play time passes. */
-static void a3d_drain(void) {
-    for (uint64_t now=now_ns(); a3d_queued && now>=a3d_due_ns; a3d_due_ns+=a3d_period_ns()) --a3d_queued;
-}
+static uint32_t a3d_granularity=256, a3d_depth=2, a3d_max_objects;
+static A3dObject *a3d_objects;
+static float *a3d_bed, *a3d_frames; /* the frame being written; A3D_QUEUE finished frames (8 channels) */
+static uint32_t a3d_head, a3d_count;
+static int32_t a3d_out=-1;
+static uint64_t a3d_bed_writes, a3d_object_pcm, a3d_frames_played;
+static pthread_mutex_t a3d_lock=PTHREAD_MUTEX_INITIALIZER;
+
 static ABI int32_t a3d_init(int64_t reserved) { if (reserved) return A3D_INVALID_PARAMETER; a3d_ready=1; return 0; }
 static ABI int32_t a3d_term(void) { if (!a3d_ready) return A3D_NOT_READY; a3d_ready=a3d_open=0; return 0; }
 /* Only the first 0x20 bytes: callers pass the SDK's 32-byte parameters (no num_beds field). */
@@ -315,50 +325,176 @@ static ABI int32_t a3d_defaults(A3dParams *p) {
     if (p) memcpy(p,&d,0x20);
     return 0;
 }
+static void a3d_free(void) {
+    for (uint32_t i=0;a3d_objects && i<a3d_max_objects;++i) free(a3d_objects[i].pcm);
+    free(a3d_objects); free(a3d_bed); free(a3d_frames);
+    a3d_objects=NULL; a3d_bed=a3d_frames=NULL;
+}
 static ABI int32_t a3d_port_open(int32_t user, const A3dParams *p, uint32_t *port) {
     (void)user;
     if (!a3d_ready) return A3D_NOT_READY;
     if (!p || !port) return A3D_INVALID_PARAMETER;
-    if (a3d_open) return (int32_t)0x80EA0006; /* OUT_OF_RESOURCES: one port */
-    a3d_granularity=p->granularity ? p->granularity : 256;
+    uint32_t granularity=p->granularity ? p->granularity : 256;
+    if (granularity>2048 || (granularity & 0xff)) return A3D_INVALID_PARAMETER;
+    pthread_mutex_lock(&a3d_lock);
+    if (a3d_open) { pthread_mutex_unlock(&a3d_lock); return A3D_OUT_OF_RESOURCES; } /* one port */
+    a3d_free();
+    a3d_granularity=granularity;
     a3d_depth=p->queue_depth ? p->queue_depth : 1;
-    a3d_queued=0; a3d_open=1; *port=0;
+    a3d_max_objects=p->max_objects ? p->max_objects : 512;
+    a3d_objects=calloc(a3d_max_objects,sizeof(*a3d_objects));
+    a3d_bed=calloc((size_t)granularity*8,sizeof(float));
+    a3d_frames=calloc((size_t)A3D_QUEUE*granularity*8,sizeof(float));
+    for (uint32_t i=0;i<a3d_max_objects;++i) a3d_objects[i].pcm=calloc(granularity,sizeof(float));
+    a3d_head=a3d_count=0; a3d_open=1; *port=0;
+    pthread_mutex_unlock(&a3d_lock);
+    printf("Runtime: Audio3d port opened (%u frames, queue %u, %u objects, mode %u)\n",granularity,a3d_depth,a3d_max_objects,p->buffer_mode);
     return 0;
 }
 static int a3d_port_ok(uint32_t port) { return a3d_open && port==0; }
-static ABI int32_t a3d_port_close(uint32_t port) { if (!a3d_port_ok(port)) return A3D_INVALID_PORT; a3d_open=0; return 0; }
+static ABI int32_t a3d_port_close(uint32_t port) {
+    if (!a3d_port_ok(port)) return A3D_INVALID_PORT;
+    pthread_mutex_lock(&a3d_lock);
+    a3d_open=0;
+    a3d_free();
+    pthread_mutex_unlock(&a3d_lock);
+    if (a3d_out>=0) audio_close(a3d_out);
+    a3d_out=-1;
+    return 0;
+}
 static ABI int32_t a3d_port_any(uint32_t port) { return a3d_port_ok(port) ? 0 : A3D_INVALID_PORT; }
+static ABI int32_t a3d_flush(uint32_t port) {
+    if (!a3d_port_ok(port)) return A3D_INVALID_PORT;
+    pthread_mutex_lock(&a3d_lock); a3d_count=0; pthread_mutex_unlock(&a3d_lock);
+    return 0;
+}
 static ABI int32_t a3d_object_reserve(uint32_t port, uint32_t *object) {
     if (!a3d_port_ok(port)) return A3D_INVALID_PORT;
     if (!object) return A3D_INVALID_PARAMETER;
-    *object=++a3d_objects; return 0;
-}
-static ABI int32_t a3d_attributes_supported(uint32_t port, uint32_t *ids, uint32_t *count) {
-    (void)ids;
-    if (!a3d_port_ok(port)) return A3D_INVALID_PORT;
-    if (!count) return A3D_INVALID_PARAMETER;
-    *count=0; return 0;
-}
-/* Queues one granularity of output; SYNC (1) waits while the queue is full. */
-static ABI int32_t a3d_push(uint32_t port, uint32_t blocking) {
-    if (!a3d_port_ok(port)) return A3D_INVALID_PORT;
-    a3d_drain();
-    if (a3d_queued>=a3d_depth) {
-        if (!blocking) return A3D_NOT_READY;
-        sleep_until(a3d_due_ns);
-        a3d_drain();
+    pthread_mutex_lock(&a3d_lock);
+    uint32_t i=0;
+    while (i<a3d_max_objects && a3d_objects[i].used) ++i;
+    if (i<a3d_max_objects) {
+        float *pcm=a3d_objects[i].pcm;
+        a3d_objects[i]=(A3dObject){.used=1,.pcm=pcm}; /* gain 0 until set, as the library */
     }
-    if (!a3d_queued) a3d_due_ns=now_ns()+a3d_period_ns();
-    ++a3d_queued;
+    pthread_mutex_unlock(&a3d_lock);
+    if (i==a3d_max_objects) return A3D_OUT_OF_RESOURCES;
+    *object=i; return 0;
+}
+static A3dObject *a3d_object(uint32_t port, uint32_t object) {
+    return a3d_port_ok(port) && object<a3d_max_objects && a3d_objects[object].used ? &a3d_objects[object] : NULL;
+}
+static ABI int32_t a3d_object_unreserve(uint32_t port, uint32_t object) {
+    if (!a3d_port_ok(port)) return A3D_INVALID_PORT;
+    pthread_mutex_lock(&a3d_lock);
+    A3dObject *o=a3d_object(port,object);
+    if (o) o->used=0;
+    pthread_mutex_unlock(&a3d_lock);
+    return o ? 0 : A3D_INVALID_OBJECT;
+}
+/* Adds `frames` frames of `channels`-channel s16 (format 0) or float (1) samples to dst (stride 8 or 1). */
+static void a3d_add(float *dst, int stride, const void *src, uint32_t format, uint32_t channels, uint32_t frames) {
+    for (uint32_t f=0;f<frames;++f) for (uint32_t c=0;c<channels;++c) {
+        size_t i=(size_t)f*channels+c;
+        dst[(size_t)f*(size_t)stride+c]+=format ? ((const float *)src)[i] : ((const int16_t *)src)[i]/32768.0f;
+    }
+}
+static ABI int32_t a3d_object_attributes(uint32_t port, uint32_t object, uint64_t count, const A3dAttribute *attributes) {
+    if (!a3d_port_ok(port)) return A3D_INVALID_PORT;
+    if (!count || !attributes) return A3D_INVALID_PARAMETER;
+    pthread_mutex_lock(&a3d_lock);
+    A3dObject *o=a3d_object(port,object);
+    for (uint64_t i=0;o && i<count;++i) if (attributes[i].id==A3D_RESET_STATE) {
+        o->has_pcm=0; o->gain=0; memset(o->position,0,sizeof(o->position));
+    }
+    for (uint64_t i=0;o && i<count;++i) {
+        const A3dAttribute *a=&attributes[i];
+        if (!a->value) continue;
+        if (a->id==A3D_GAIN && a->size>=4) memcpy(&o->gain,a->value,4);
+        else if (a->id==A3D_POSITION && a->size>=12) memcpy(o->position,a->value,12);
+        else if (a->id==A3D_PCM && a->size>=sizeof(A3dPcm)) {
+            const A3dPcm *pcm=a->value;
+            if (!pcm->samples || pcm->format>1) continue;
+            memset(o->pcm,0,a3d_granularity*sizeof(float));
+            a3d_add(o->pcm,1,pcm->samples,pcm->format,1,pcm->count<a3d_granularity ? pcm->count : a3d_granularity);
+            o->has_pcm=1; ++a3d_object_pcm;
+        }
+    }
+    pthread_mutex_unlock(&a3d_lock);
+    return 0; /* unknown objects are ignored, like the library */
+}
+static ABI int32_t a3d_bed_write(uint32_t port, uint32_t channels, uint32_t format, const void *buffer, uint32_t frames) {
+    if (!a3d_port_ok(port)) return A3D_INVALID_PORT;
+    if ((channels!=2 && channels!=6 && channels!=8) || format>1 || !buffer || !frames) return A3D_INVALID_PARAMETER;
+    pthread_mutex_lock(&a3d_lock);
+    /* 2: L R; 6: L R C LFE SL SR; 8: L R C LFE SL SR BL BR (the AudioOut 8-channel order). */
+    a3d_add(a3d_bed,8,buffer,format,channels,frames<a3d_granularity ? frames : a3d_granularity);
+    ++a3d_bed_writes;
+    pthread_mutex_unlock(&a3d_lock);
     return 0;
+}
+/* Mixes the written bed and object PCM into the next queued frame. */
+static ABI int32_t a3d_advance(uint32_t port) {
+    if (!a3d_port_ok(port)) return A3D_INVALID_PORT;
+    pthread_mutex_lock(&a3d_lock);
+    if (a3d_count==A3D_QUEUE) { pthread_mutex_unlock(&a3d_lock); return A3D_NOT_READY; }
+    size_t n=(size_t)a3d_granularity*8;
+    float *frame=a3d_frames+(size_t)((a3d_head+a3d_count)%A3D_QUEUE)*n;
+    memcpy(frame,a3d_bed,n*sizeof(float));
+    memset(a3d_bed,0,n*sizeof(float));
+    for (uint32_t i=0;i<a3d_max_objects;++i) {
+        A3dObject *o=&a3d_objects[i];
+        if (!o->used || !o->has_pcm) continue;
+        /* Equal-power pan on the direction's left/right part (x right), front speakers. */
+        float x=o->position[0], d=sqrtf(x*x+o->position[1]*o->position[1]+o->position[2]*o->position[2]);
+        float pan=d>1e-6f ? x/d : 0.0f, angle=(pan+1.0f)*0.78539816f;
+        float left=cosf(angle)*o->gain, right=sinf(angle)*o->gain;
+        for (uint32_t f=0;f<a3d_granularity;++f) { frame[f*8]+=o->pcm[f]*left; frame[f*8+1]+=o->pcm[f]*right; }
+        o->has_pcm=0;
+    }
+    ++a3d_count;
+    pthread_mutex_unlock(&a3d_lock);
+    return 0;
+}
+/* Plays the queued frames; each output waits for its period, so SYNC and ASYNC both pace. */
+static ABI int32_t a3d_push(uint32_t port, uint32_t blocking) {
+    (void)blocking;
+    if (!a3d_port_ok(port)) return A3D_INVALID_PORT;
+    if (a3d_out<0) {
+        a3d_out=audio_open(0xff,126,0,a3d_granularity,48000,5); /* float, 8 channels */
+        if (a3d_out<0) return a3d_out;
+    }
+    static float frame[2048*8]; /* one pushing thread */
+    for (;;) {
+        pthread_mutex_lock(&a3d_lock);
+        if (!a3d_count) { pthread_mutex_unlock(&a3d_lock); return 0; }
+        memcpy(frame,a3d_frames+(size_t)a3d_head*a3d_granularity*8,(size_t)a3d_granularity*8*sizeof(float));
+        a3d_head=(a3d_head+1)%A3D_QUEUE; --a3d_count;
+        pthread_mutex_unlock(&a3d_lock);
+        for (size_t i=0;i<(size_t)a3d_granularity*8;++i) frame[i]=frame[i]<-1.0f ? -1.0f : frame[i]>1.0f ? 1.0f : frame[i];
+        int32_t r=output_port(a3d_out,frame,1);
+        if (r<0) return r;
+        ++a3d_frames_played;
+    }
 }
 static ABI int32_t a3d_queue_level(uint32_t port, uint32_t *level, uint32_t *available) {
     if (!a3d_port_ok(port)) return A3D_INVALID_PORT;
     if (!level && !available) return A3D_INVALID_PARAMETER;
-    a3d_drain();
-    if (level) *level=a3d_queued;
-    if (available) *available=a3d_queued<a3d_depth ? a3d_depth-a3d_queued : 0;
+    pthread_mutex_lock(&a3d_lock);
+    uint32_t queued=a3d_count<a3d_depth ? a3d_count : a3d_depth;
+    pthread_mutex_unlock(&a3d_lock);
+    if (level) *level=queued;
+    if (available) *available=a3d_depth-queued;
     return 0;
+}
+static ABI int32_t a3d_attributes_supported(uint32_t port, uint32_t *ids, uint32_t *count) {
+    static const uint32_t supported[]={A3D_PCM,A3D_POSITION,A3D_GAIN,A3D_RESET_STATE};
+    if (!a3d_port_ok(port)) return A3D_INVALID_PORT;
+    if (!count) return A3D_INVALID_PARAMETER;
+    uint32_t n=ids && *count<4 ? *count : 4;
+    if (ids) memcpy(ids,supported,n*sizeof(*ids));
+    *count=n; return 0;
 }
 static ABI int32_t a3d_audio_out_open(uint32_t port, int32_t user, int32_t type, int32_t index, uint32_t length, uint32_t freq, uint32_t param) {
     if (!a3d_port_ok(port)) return A3D_INVALID_PORT;
@@ -369,12 +505,12 @@ static ABI int32_t a3d_audio_out_open(uint32_t port, int32_t user, int32_t type,
 static const RuntimeExport exports[]={
     {"sceAudio3dInitialize",a3d_init}, {"sceAudio3dTerminate",a3d_term},
     {"sceAudio3dGetDefaultOpenParameters",a3d_defaults}, {"sceAudio3dPortOpen",a3d_port_open},
-    {"sceAudio3dPortClose",a3d_port_close}, {"sceAudio3dPortAdvance",a3d_port_any},
-    {"sceAudio3dPortFlush",a3d_port_any}, {"sceAudio3dPortSetAttribute",a3d_port_any},
+    {"sceAudio3dPortClose",a3d_port_close}, {"sceAudio3dPortAdvance",a3d_advance},
+    {"sceAudio3dPortFlush",a3d_flush}, {"sceAudio3dPortSetAttribute",a3d_port_any},
     {"sceAudio3dPortGetAttributesSupported",a3d_attributes_supported},
     {"sceAudio3dPortPush",a3d_push}, {"sceAudio3dPortGetQueueLevel",a3d_queue_level},
-    {"sceAudio3dObjectReserve",a3d_object_reserve}, {"sceAudio3dObjectUnreserve",a3d_port_any},
-    {"sceAudio3dObjectSetAttributes",a3d_port_any}, {"sceAudio3dBedWrite",a3d_port_any},
+    {"sceAudio3dObjectReserve",a3d_object_reserve}, {"sceAudio3dObjectUnreserve",a3d_object_unreserve},
+    {"sceAudio3dObjectSetAttributes",a3d_object_attributes}, {"sceAudio3dBedWrite",a3d_bed_write},
     {"sceAudio3dAudioOutOpen",a3d_audio_out_open}, {"sceAudio3dAudioOutOutputs",audio_outputs},
     {"sceAudioOutInit",audio_init}, {"sceAudioOutOpen",audio_open}, {"sceAudioOutClose",audio_close},
     {"sceAudioOutOutput",audio_output}, {"sceAudioOutOutputs",audio_outputs},
@@ -382,4 +518,9 @@ static const RuntimeExport exports[]={
     {"sceAudioOutGetLastOutputTime",audio_last_time},
 };
 uintptr_t runtime_audio_resolve(const char *name) { return RUNTIME_LOOKUP(exports,name); }
-void runtime_audio_report(void) { printf("Runtime: audio ports opened=%zu, buffers output=%zu\n",ports_opened,buffers_out); }
+void runtime_audio_report(void) {
+    printf("Runtime: audio ports opened=%zu, buffers output=%zu\n",ports_opened,buffers_out);
+    if (a3d_bed_writes || a3d_object_pcm)
+        printf("Runtime: Audio3d bed writes=%llu, object buffers=%llu, frames played=%llu\n",(unsigned long long)a3d_bed_writes,
+               (unsigned long long)a3d_object_pcm,(unsigned long long)a3d_frames_played);
+}
