@@ -396,6 +396,42 @@ class GodOfWarLayout(unittest.TestCase):
         self.mod('B', 'dvdroot_ps4/EXEC/WAD/PS4_LE/R_UI.WAD')
         self.assertEqual(mods.conflicts(self.moddir, ['A', 'B']), [('EXEC/WAD/PS4_LE/R_UI.WAD', ['A', 'B'])])
 
+    def test_region_folders_are_used_for_discovery_and_overlay(self):
+        original = self.game / 'JAPANESE/text.wad'
+        original.parent.mkdir()
+        original.write_bytes(b'original')
+        self.mod('JP', 'Pack/app0/japanese/text.wad', b'translated')
+        self.assertEqual(mods.discover(self.moddir, self.game), ['JP'])
+        view = self.overlay('JP')
+        self.assertEqual((view / 'JAPANESE/text.wad').read_bytes(), b'translated')
+        self.assertEqual(original.read_bytes(), b'original')
+
+    def test_region_folders_do_not_leak_to_another_game(self):
+        (self.game / 'JAPANESE').mkdir()
+        self.mod('JP', 'JAPANESE/text.wad')
+        self.assertEqual(mods.discover(self.moddir, self.game), ['JP'])
+        other = self.root / 'other'
+        other.mkdir()
+        self.assertEqual(mods.discover(self.moddir, other), [])
+        self.assertEqual(mods.discover(self.moddir), [])
+
+    def test_region_mods_keep_metadata_conflicts_and_selection(self):
+        (self.game / 'JAPANESE').mkdir()
+        for name in ('A', 'B'):
+            self.mod(name, 'JAPANESE/text.wad')
+        self.assertEqual(mods.selected(self.moddir, None, self.game), ['A', 'B'])
+        self.assertEqual(mods.conflicts(self.moddir, ['A', 'B'], self.game),
+                         [('JAPANESE/text.wad', ['A', 'B'])])
+        self.assertEqual(len(list(mods.mod_files(self.moddir / 'A', self.game))), 1)
+
+    def test_learning_game_folders_does_not_allow_system_replacements(self):
+        for folder in ('sce_sys', 'sce_module', 'eboot.bin'):
+            mod = self.mod('Bad', folder + '/payload')
+            self.assertEqual(mods.discover(self.moddir, self.game), [])
+            with self.assertRaises(ValueError):
+                mods.build_overlay(self.game, self.root / 'out', [('Bad', mod)])
+            shutil.rmtree(mod)
+
 
 class ModInfo(unittest.TestCase):
     """What the launcher's Mods page shows for a mod: mod.json, else the readme and an image."""

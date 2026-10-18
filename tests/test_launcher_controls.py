@@ -1,7 +1,10 @@
 import os
+from pathlib import Path
 import queue
 import struct
 import sys
+import tempfile
+import types
 import unittest
 from unittest import mock
 
@@ -24,6 +27,42 @@ def sfo_bytes(**values):
 
 
 BASE_SFO = sfo_bytes(TITLE_ID='CUSA01623', APP_VER='01.00')
+
+
+class DiskModsTest(unittest.TestCase):
+    def test_frozen_launcher_uses_disk_loader_in_every_import(self):
+        with tempfile.TemporaryDirectory() as directory:
+            port = Path(directory)
+            (port / 'scripts').mkdir()
+            (port / 'scripts/mods.py').write_text('SOURCE = "disk"\n')
+            bundled = types.ModuleType('mods')
+            with mock.patch.object(launcher, 'FROZEN', True), mock.patch.object(launcher, 'PORT_DIR', port), \
+                    mock.patch.dict(sys.modules, {'mods': bundled}):
+                module = launcher.load_mods()
+                self.assertEqual(module.SOURCE, 'disk')
+                self.assertIs(sys.modules['mods'], module)
+                self.assertIs(launcher.load_mods(), module)
+
+    def test_missing_disk_loader_uses_the_bundle(self):
+        with tempfile.TemporaryDirectory() as directory:
+            bundled = types.ModuleType('mods')
+            with mock.patch.object(launcher, 'FROZEN', True), \
+                    mock.patch.object(launcher, 'PORT_DIR', Path(directory)), \
+                    mock.patch.dict(sys.modules, {'mods': bundled}):
+                self.assertIs(launcher.load_mods(), bundled)
+
+    def test_invalid_disk_loader_has_a_clear_error_and_keeps_the_bundle(self):
+        with tempfile.TemporaryDirectory() as directory:
+            port = Path(directory)
+            (port / 'scripts').mkdir()
+            (port / 'scripts/mods.py').write_text('raise ValueError("internal details")\n')
+            bundled = types.ModuleType('mods')
+            with mock.patch.object(launcher, 'FROZEN', True), mock.patch.object(launcher, 'PORT_DIR', port), \
+                    mock.patch.dict(sys.modules, {'mods': bundled}):
+                with self.assertRaisesRegex(RuntimeError, 'scripts/mods.py') as raised:
+                    launcher.load_mods()
+                self.assertNotIn('internal details', str(raised.exception))
+                self.assertIs(sys.modules['mods'], bundled)
 
 
 class ControlMapTest(unittest.TestCase):

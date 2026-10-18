@@ -188,7 +188,8 @@ def main():
     # (the launcher and the in-game menu list them; GOW3_EXTRA_RESOLUTIONS tells the game).
     mod_patch_files = mods.enabled_patch_files(env.get('GOW3_MODS_DIR', data / 'mods'),
                                                env.get('GOW3_MODS_CONFIG', data / 'mods.json'),
-                                               env.get('GOW3_MODS_ENABLED', '1') != '0')
+                                               env.get('GOW3_MODS_ENABLED', '1') != '0',
+                                               env.get('GOW3_GAME_DIR', PORT.parent / 'CUSA01623'))
     extra_resolutions = [s for s in patches.resolution_names(mod_patch_files) if s not in graphics_options.RESOLUTIONS]
     env['GOW3_EXTRA_RESOLUTIONS'] = ';'.join(extra_resolutions)
     derived.append('GOW3_EXTRA_RESOLUTIONS')
