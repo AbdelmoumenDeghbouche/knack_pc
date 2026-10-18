@@ -8,8 +8,6 @@ gow3: GPU timestamps around each dispatch, read when the frame retires and
 printed every 300 frames; pipelines created with CAPTURE_STATISTICS print
 the driver's register/instruction statistics (the device must enable
 pipelineExecutableInfo).
-
-Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
 ---
  src/ffx_vk_fsr4_v07.c | 109 ++++++++++++++++++++++++++++++++++++++++++
  1 file changed, 109 insertions(+)
