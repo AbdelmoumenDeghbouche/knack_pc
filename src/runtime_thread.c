@@ -151,6 +151,10 @@ static ThreadAttr *find_attr(ThreadAttr **slot) {
     return found;
 }
 
+const char *runtime_thread_name(void *handle) {
+    GuestThread *t=find_thread(handle);
+    return t ? t->name : NULL;
+}
 static ABI void *thread_self(void) { return runtime_thread_current(); }
 static ABI int32_t *guest_error(void) { return &guest_errno; }
 int32_t *runtime_errno(void) { return &guest_errno; }

@@ -403,6 +403,12 @@ static int direct_range_allocated(uint64_t phys, uint64_t size) {
 }
 
 static ABI uint64_t direct_size(void) { return POOL_SIZE; }
+uint64_t runtime_memory_flexible_available(void) {
+    read_lock();
+    uint64_t used=flexible_bytes;
+    read_unlock();
+    return used<FLEXIBLE_SIZE ? FLEXIBLE_SIZE-used : 0;
+}
 static ABI int32_t direct_allocate(int64_t low, int64_t high, uint64_t size,
                                   uint64_t alignment, int type, int64_t *out) {
     if (!alignment) alignment = PAGE;

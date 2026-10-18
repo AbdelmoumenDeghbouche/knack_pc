@@ -104,4 +104,10 @@ void runtime_savedata_report(void);
 int runtime_savedata_param(int32_t user, const char *dir, void *param);
 int runtime_savedata_icon(int32_t user, const char *dir, char *out, size_t size);
 void runtime_thread_attach_host(const char *name);
+/* Offline contracts added for MediEvil and WipEout (runtime_extra.c). */
+uintptr_t runtime_extra_resolve(const char *name);
+void runtime_extra_report(void);
+const char *runtime_thread_name(void *handle);
+uint64_t runtime_memory_flexible_available(void);
+unsigned char *runtime_image_base(void);
 #endif
