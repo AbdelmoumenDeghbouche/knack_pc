@@ -18,6 +18,7 @@
 #include <mutex>
 #include <string>
 #include <chrono>
+#include <cstdlib>
 #include <thread>
 #include <vector>
 #include <SDL3/SDL.h>
@@ -343,7 +344,19 @@ void RequestScreenshot(ScreenshotRequest request) {
     }
 }
 u32 ConsumeGameOnlyScreenshotRequests() {
-    return screenshot_requests.exchange(0, std::memory_order_acq_rel);
+    // Development: GOW3_SCREENSHOT_EVERY=N also saves a game-only screenshot every N seconds
+    // (the window need not have focus, unlike F12). Called once per presented frame.
+    static const std::chrono::seconds every{[] {
+        const char* env = std::getenv("GOW3_SCREENSHOT_EVERY");
+        return env ? std::atoi(env) : 0;
+    }()};
+    static auto next = std::chrono::steady_clock::now() + every;
+    u32 timed = 0;
+    if (every.count() > 0 && std::chrono::steady_clock::now() >= next) {
+        next += every;
+        timed = 1;
+    }
+    return screenshot_requests.exchange(0, std::memory_order_acq_rel) + timed;
 }
 u32 ConsumeWithOverlaysScreenshotRequests() { return 0; }
 ScreenshotRequests ConsumeScreenshotRequests() {

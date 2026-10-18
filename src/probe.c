@@ -20,6 +20,7 @@
 #endif
 #ifdef _WIN32
 #include <windows.h>
+#include <tlhelp32.h>
 #else
 #include <sys/mman.h>
 #include <malloc.h>
@@ -38,6 +39,7 @@ typedef struct { uint64_t target, kind, value, addend; } Reloc;
 static char (*names)[128];
 static uint64_t import_count;
 static unsigned char *image;
+static uint64_t image_size;
 unsigned char *runtime_image_base(void) { return image; }
 static size_t page_size;
 typedef struct { uint64_t base, size, init, tls_address, tls_memsz, tls_filesz, tls_module; } LinkedModule;
@@ -127,6 +129,53 @@ static void describe_address(char *out, size_t size, uintptr_t address) {
         return;
     }
     snprintf(out,size,"%p",(void *)address);
+}
+/* Watchdog (--timeout N): after N seconds, print every thread's position and the guest return
+ * addresses found on its stack, then exit 124. Waiting threads sit in Windows code without frame
+ * pointers, so the stack is scanned instead of walked.
+ * ponytail: stack scan can list stale return addresses; use a debugger for exact frames. */
+static unsigned watchdog_seconds;
+static DWORD WINAPI watchdog_thread(LPVOID unused) {
+    (void)unused;
+    Sleep(watchdog_seconds*1000u);
+    fputs("STOP: watchdog timeout; thread stacks:\n",stderr);
+    HANDLE snap=CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD,0);
+    THREADENTRY32 entry={.dwSize=sizeof(entry)};
+    const DWORD pid=GetCurrentProcessId(), self=GetCurrentThreadId();
+    for (BOOL ok=Thread32First(snap,&entry); ok; ok=Thread32Next(snap,&entry)) {
+        if (entry.th32OwnerProcessID!=pid || entry.th32ThreadID==self) continue;
+        HANDLE thread=OpenThread(THREAD_SUSPEND_RESUME|THREAD_GET_CONTEXT,FALSE,entry.th32ThreadID);
+        if (!thread) continue;
+        CONTEXT c={.ContextFlags=CONTEXT_CONTROL|CONTEXT_INTEGER};
+        if (SuspendThread(thread)!=(DWORD)-1 && GetThreadContext(thread,&c)) {
+            char where[MAX_PATH+96];
+            describe_address(where,sizeof(where),(uintptr_t)c.Rip);
+            fprintf(stderr,"thread %lu at %s rdi=0x%llx\n",entry.th32ThreadID,where,(unsigned long long)c.Rdi);
+            uintptr_t stack[4096];
+            SIZE_T got=0;
+            ReadProcessMemory(GetCurrentProcess(),(void *)(uintptr_t)c.Rsp,stack,sizeof(stack),&got);
+            for (size_t i=0, shown=0; i<got/sizeof(*stack) && shown<10; ++i)
+                if (stack[i]-(uintptr_t)image<image_size) {
+                    fprintf(stderr,"  guest return 0x%" PRIxPTR "\n",stack[i]-(uintptr_t)image); ++shown;
+                }
+        }
+        CloseHandle(thread);
+    }
+    CloseHandle(snap);
+    fflush(stderr);
+    _exit(124);
+}
+/* exit() while the game runs: who called it (other exit handlers may crash before they print). */
+static void report_exit_caller(void) {
+    void *frames[24];
+    USHORT n=RtlCaptureStackBackTrace(1,24,frames,NULL);
+    fprintf(stderr,"Runtime: exit() called by:\n");
+    for (USHORT i=0;i<n;++i) {
+        char where[MAX_PATH+96];
+        describe_address(where,sizeof(where),(uintptr_t)frames[i]);
+        fprintf(stderr,"  #%u %s\n",i,where);
+    }
+    fflush(stderr);
 }
 static int fatal_reported;
 static LONG fatal_exception(EXCEPTION_POINTERS *info) {
@@ -796,7 +845,8 @@ int main(int argc, char **argv) {
         if (!SetProcessMitigationPolicy(ProcessStrictHandleCheckPolicy,&strict,sizeof(strict)))
             fprintf(stderr,"GOW3_STRICT_HANDLES: policy not set (%lu)\n",GetLastError());
     }
-    (void)timeout_seconds; /* no watchdog on Windows */
+    watchdog_seconds = timeout_seconds;
+    if (watchdog_seconds) CloseHandle(CreateThread(NULL,0,watchdog_thread,NULL,0,NULL));
 #else
     page_size = (size_t)sysconf(_SC_PAGESIZE);
     struct sigaction sa = {0}; sa.sa_sigaction = fault; sa.sa_flags = SA_SIGINFO;
@@ -1018,6 +1068,7 @@ int main(int argc, char **argv) {
             executable_entry = 1;
     }
     if (!executable_entry) fail("entry is not executable");
+    image_size = size;
     printf("Mapped %" PRIu64 " bytes, %" PRIu64 " segments; applied %" PRIu64 " relocations\n", size, ns, nr);
     if (native_libc) {
         for (uint64_t m=0;m<module_count;++m) {
@@ -1041,6 +1092,9 @@ int main(int argc, char **argv) {
         }
     }
     printf("Entering original x86-64 code at guest offset 0x%" PRIx64 "\n", entry);
+#ifdef _WIN32
+    atexit(report_exit_caller); /* registered last, so it runs first */
+#endif
     entered_game=1;
     struct { uint64_t argc; const char *argv[2]; } params = {1, {"/app0/eboot.bin", NULL}};
 #ifdef _WIN32

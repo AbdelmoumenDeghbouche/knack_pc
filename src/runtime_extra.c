@@ -314,7 +314,7 @@ static ABI int32_t hmd_garlic_size(void) { return 0x100000; }
 static ABI int32_t hmd_onion_size(void) { return 0x810; }
 static ABI int32_t hmd_buffer_align(void) { return 0x100; }
 /* Setup dialog: finishes at once, as if the player pressed Circle (USER_CANCELED). */
-static ABI int32_t hmd_dialog_finished(void) { return 3; }
+static ABI int32_t dialog_finished(void) { return 3; }
 static ABI int32_t hmd_dialog_result(int32_t *result) { if (result) *result=1; return 0; }
 
 /* sceHttpsGetCaList: an empty certificate list (OrbisSslCaList {certs, certsNum}). */
@@ -325,6 +325,8 @@ static ABI int32_t https_ca_list(int32_t context, CaList *list) {
     list->certs=NULL; list->count=0;
     return 0;
 }
+
+static ABI int32_t no_entitlement(void) { return (int32_t)0x80D90007; } /* APP_CONTENT DRM_NO_ENTITLEMENT */
 
 /* ---- PlayStation Camera: none attached; nothing can be opened ---- */
 static ABI int32_t camera_attached(int32_t index) { return index ? (int32_t)0x802E0000 : 0; }
@@ -630,11 +632,20 @@ static const RuntimeExport exports[]={
     {"sceHmdReprojectionQueryGarlicBuffAlign",hmd_buffer_align}, {"sceHmdReprojectionQueryOnionBuffAlign",hmd_buffer_align},
     {"sceHmdSetupDialogInitialize",ok_noop}, {"sceHmdSetupDialogTerminate",ok_noop},
     {"sceHmdSetupDialogOpen",ok_noop}, {"sceHmdSetupDialogClose",ok_noop},
-    {"sceHmdSetupDialogUpdateStatus",hmd_dialog_finished}, {"sceHmdSetupDialogGetResult",hmd_dialog_result},
+    {"sceHmdSetupDialogUpdateStatus",dialog_finished}, {"sceHmdSetupDialogGetResult",hmd_dialog_result},
     {"sceCameraIsAttached",camera_attached}, {"sceCameraOpen",camera_not_connected},
     {"sceCameraClose",camera_not_open}, {"sceCameraStart",camera_not_open}, {"sceCameraStop",camera_not_open},
     {"sceCameraSetConfig",camera_not_open}, {"sceCameraSetVideoSync",camera_not_open},
     {"sceCameraGetFrameData",camera_not_open},
+    /* PlayGo: every chunk is installed, so its dialog finishes at once. */
+    {"scePlayGoDialogInitialize",ok_noop}, {"scePlayGoDialogTerminate",ok_noop},
+    {"scePlayGoDialogOpen",ok_noop}, {"scePlayGoDialogClose",ok_noop},
+    {"scePlayGoDialogUpdateStatus",dialog_finished}, {"scePlayGoDialogGetStatus",dialog_finished},
+    {"sceErrorDialogGetStatus",error_dialog_status_get}, {"sceErrorDialogClose",ok_noop},
+    {"sceSigninDialogInitialize",ok_noop}, {"sceSigninDialogTerminate",ok_noop},
+    {"sceNpSnsFacebookDialogInitialize",ok_noop}, {"sceNpSnsFacebookDialogTerminate",ok_noop},
+    /* No add-ons: downloads are accepted but never arrive, and no entitlement key exists. */
+    {"sceAppContentAddcontEnqueueDownload",ok_noop}, {"sceAppContentGetEntitlementKey",no_entitlement},
     /* HTTP settings are accepted; every request still fails with SCE_HTTP_ERROR_NETWORK. */
     {"sceHttpsGetCaList",https_ca_list}, {"sceHttpsSetSslCallback",ok_noop},
     {"sceHttpSetCookieEnabled",ok_noop}, {"sceHttpSetChunkedTransferEnabled",ok_noop},
