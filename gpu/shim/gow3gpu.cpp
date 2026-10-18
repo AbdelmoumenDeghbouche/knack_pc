@@ -372,6 +372,10 @@ extern "C" void gow3gpu_movie_picture(void) {
     Vulkan::MovieBars::Cutscenes().NotePicture(Vulkan::MovieBars::NowMs());
 }
 
+extern "C" void gow3gpu_request_screenshot(void) {
+    VideoCore::RequestScreenshot(VideoCore::ScreenshotRequest::GameOnly);
+}
+
 extern "C" int gow3gpu_mouse_prompt_distance(void) {
     return Gow3Settings::Get().mouse_prompt_distance.load(std::memory_order_relaxed);
 }

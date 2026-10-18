@@ -40,6 +40,8 @@ int gow3gpu_vibration_percent(void);
 /* The video decoder handed the game a picture: a cutscene is on screen (the presenter draws
  * black bars outside its 16:9 picture when the render resolution is not 16:9). */
 void gow3gpu_movie_picture(void);
+/* Saves the game's next frame to the screenshots folder, as F12 does. */
+void gow3gpu_request_screenshot(void);
 /* Mouse movement in px that counts as one step of a stick prompt, set in the menu. */
 int gow3gpu_mouse_prompt_distance(void);
 /* The pause key (touchpad right) was pressed: it lets go of the mouse lock, or takes it back. */

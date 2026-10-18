@@ -9,12 +9,14 @@ PROFILES = {
     # WipEout Omega Collection. NpToolkit2 is the game's own PSN toolkit. Red-zone protection
     # always: the startup probe sees no overwrite, but 2048 races run at 0.3 FPS without it (a
     # loop at 0x40ff50 keeps its count below the stack pointer, under the GPU write faults).
+    # The engine steps by the time between frames (rdtsc), so it runs at any frame rate: vblank
+    # at 240 Hz, and the frame rate limit (launcher, in-game menu) caps it.
     'CUSA07671': {'name': 'WipEout Omega Collection',
                   'modules': ('libc.prx', 'libSceFios2.prx', 'libSceNpToolkit2.prx'),
-                  'env': {'GOW3_RED_ZONE': '1'}},
+                  'env': {'GOW3_RED_ZONE': '1', 'GOW3_VBLANK_HZ': '240', 'GOW3_ENGINE_FPS': '240'}},
     'CUSA05670': {'name': 'WipEout Omega Collection',
                   'modules': ('libc.prx', 'libSceFios2.prx', 'libSceNpToolkit2.prx'),
-                  'env': {'GOW3_RED_ZONE': '1'}},
+                  'env': {'GOW3_RED_ZONE': '1', 'GOW3_VBLANK_HZ': '240', 'GOW3_ENGINE_FPS': '240'}},
     'CUSA01623': {'name': 'God of War III', 'modules': ('libc.prx', 'libSceFios2.prx')},
 }
 DEFAULT = {'name': None, 'modules': ('libc.prx', 'libSceFios2.prx')}

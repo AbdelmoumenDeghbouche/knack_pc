@@ -313,9 +313,12 @@ def main():
             env['GOW3_VBLANK_HZ'] = '60'
             derived.append('GOW3_VBLANK_HZ')
         # Without the frame rate patch the engine steps 1/60 s per frame: the present thread must
-        # not flip faster (gow3_graphics.h PresentLimit), or the game speeds up.
-        env['GOW3_ENGINE_FPS'] = str(engine_fps)
-        derived.append('GOW3_ENGINE_FPS')
+        # not flip faster (gow3_graphics.h PresentLimit), or the game speeds up. A game whose
+        # engine steps by the real time (its profile sets the rate) keeps the profile's.
+        if 'GOW3_ENGINE_FPS' not in env:
+            env['GOW3_ENGINE_FPS'] = str(engine_fps)
+            derived.append('GOW3_ENGINE_FPS')
+        engine_fps = int(env['GOW3_ENGINE_FPS'])
         print(f'Engine frame rate: {engine_fps} FPS'
               + ('' if engine_fps > 60 or graphics['engine_fps'] == '60' else
                  ' (the frame rate patch was not found in this eboot.bin)'), flush=True)

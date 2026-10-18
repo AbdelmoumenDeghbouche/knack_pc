@@ -506,8 +506,8 @@ static void sample_host(PadData *d) {
 /* GOW3_PAD_FILE=<file>: scripted input for automated runs. The file holds whitespace-separated
  * tokens, re-read when it changes: button names (cross circle square triangle l1 r1 l2 r2 l3 r3
  * options touchpad touchpad_left touchpad_right up down left right) are held while listed;
- * touchpad is the left side; lx= ly= rx= ry= (0..255) override the sticks. An empty file
- * releases everything. */
+ * touchpad is the left side; lx= ly= rx= ry= (0..255) override the sticks; shot saves a
+ * screenshot (as F12, without taking the focus). An empty file releases everything. */
 static struct { uint32_t buttons; int stick[4]; } injected={0,{-1,-1,-1,-1}};
 static int replay_armed;      /* 1 while a GOW3_PAD_REPLAY recording plays, 2 once it ended */
 static uint64_t replay_start; /* 0: (re)start at the next sample */
@@ -536,6 +536,7 @@ static void read_inject(void) {
     char token[64];
     while (fscanf(f,"%63s",token)==1) {
         if (!strcmp(token,"replay") && replay_armed!=1) { replay_armed=1; replay_start=0; } /* GOW3_PAD_REPLAY */
+        if (!strcmp(token,"shot")) gow3gpu_request_screenshot();
         for (size_t i=0;i<sizeof(ps_names)/sizeof(*ps_names);++i) if (!strcmp(token,ps_names[i].name)) injected.buttons|=ps_names[i].ps;
         for (int i=0;i<4;++i) if (!strncmp(token,sticks[i],3)) { int v=atoi(token+3); injected.stick[i]=v<0 ? 0 : v>255 ? 255 : v; }
     }

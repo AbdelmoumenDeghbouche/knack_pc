@@ -6,6 +6,7 @@
 int gow3gpu_overlay_captures_input(void) { return 0; }
 int gow3gpu_vibration_percent(void) { return 100; }
 int gow3gpu_mouse_prompt_distance(void) { return 48; }
+void gow3gpu_request_screenshot(void) {}
 static int pause_keys;
 void gow3gpu_mouse_pause_key(void) { ++pause_keys; }
 static int aim_style;

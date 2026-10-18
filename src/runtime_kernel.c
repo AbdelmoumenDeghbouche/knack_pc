@@ -12,6 +12,7 @@
 #include <time.h>
 #include <unistd.h>
 #include <sys/time.h>
+#include <x86intrin.h>
 #ifndef _WIN32
 #include <sys/random.h>
 #include <sys/resource.h>
@@ -84,10 +85,25 @@ static ABI uint64_t process_time_counter(void) {
     return (uint64_t)(t.tv_sec-process_start.tv_sec)*1000000000+(uint64_t)(t.tv_nsec-process_start.tv_nsec);
 }
 static ABI uint64_t process_time_frequency(void) { return 1000000000; }
-/* The guest's TSC is the process clock in nanoseconds. The raw rdtsc differs per core on some
- * hosts (3.9 s apart on a Xeon E5-2680 v4, #42), so a thread moving cores made the game jump. */
-static ABI uint64_t read_tsc(void) { return process_time_counter(); }
-static ABI uint64_t tsc_frequency(void) { return 1000000000; }
+/* The guest's TSC is the host's, as on the PS4: WipEout also runs rdtsc inline (125 places) and
+ * divides by sceKernelGetTscFrequency, so a made-up 1 GHz ran its clocks 2.4x fast on a 2.4 GHz
+ * TSC. The frequency is measured once against the monotonic clock (50 ms). Hosts whose TSC
+ * differs per core (a Xeon E5-2680 v4, #42) make threads that move cores see time jump. */
+static uint64_t tsc_hz;
+__attribute__((constructor)) static void measure_tsc(void) {
+    struct timespec a,b;
+    clock_gettime(CLOCK_MONOTONIC,&a);
+    const uint64_t t0=__rdtsc();
+    int64_t ns;
+    do {
+        clock_gettime(CLOCK_MONOTONIC,&b);
+        ns=(int64_t)(b.tv_sec-a.tv_sec)*1000000000+(b.tv_nsec-a.tv_nsec);
+    } while (ns<50000000);
+    tsc_hz=(uint64_t)((unsigned __int128)(__rdtsc()-t0)*1000000000/(uint64_t)ns);
+    printf("Runtime: TSC %.4f GHz\n",(double)tsc_hz/1e9);
+}
+static ABI uint64_t read_tsc(void) { return __rdtsc(); }
+static ABI uint64_t tsc_frequency(void) { return tsc_hz; }
 /* Shared with the GPU library so flip/label timestamps use the guest's clock. */
 uint64_t runtime_process_time_us(void) { return process_time(); }
 uint64_t runtime_process_time_counter(void) { return process_time_counter(); }

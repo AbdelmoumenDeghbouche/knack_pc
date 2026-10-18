@@ -5,7 +5,7 @@ style of [bbport](https://github.com/deadinside28/bloodborne_pc): the game's ori
 code runs directly on the PC's processor, a runtime replaces the PS4 system libraries, and the
 graphics are translated to Vulkan by the shadPS4 video core. There is no CPU emulator.
 
-> **Status: early development. Menus and races (HD and 2048) play at about 60 FPS.** There
+> **Status: early development. Menus and races (HD and 2048) play above 60 FPS.** There
 > is no packaged release yet: build it from source. See [Progress](#progress).
 
 > **No game files are included.** You need your own copy of the game, dumped from your own PS4.
@@ -20,7 +20,8 @@ graphics are translated to Vulkan by the shadPS4 video core. There is no CPU emu
 | Load and link the executable (eboot.bin, libc, Fios2, NpToolkit2) | Done |
 | PS4 system functions the game uses | Done for menus and races; PSN, VR and camera answer as an offline console |
 | Boot, menus, saves | Done |
-| Races (HD and 2048), race results | Done, about 60 FPS |
+| Races (HD and 2048), race results | Done |
+| Frame rate above 60 FPS | Done: up to 240 FPS, set by the frame rate limit (90–120 FPS in 2048 races on an RTX 4070 Laptop) |
 | Sound: music | Done |
 | Sound: Audio3d objects and bed (effects) | New, being tested |
 | Launcher and settings | Done (`launcher/gow3_launcher_win.py`) |
@@ -29,6 +30,10 @@ graphics are translated to Vulkan by the shadPS4 video core. There is no CPU emu
 
 2048 races need red-zone protection on Windows (`src/redzone.cpp`): the game's profile turns
 it on. Without it they run at less than 1 FPS.
+
+The game times itself with the processor's time stamp counter (`rdtsc`), so the runtime gives
+it the real counter and its measured frequency (`src/runtime_kernel.c`). Its speed then does
+not depend on the frame rate.
 
 ## Supported game versions
 
