@@ -238,7 +238,11 @@ def main():
     try:
         run_script('prepare.py', game, '--out', out)
         run_script('link_libc.py', game, '--out', out)
-        run_script('link_modules.py', game, '--out', out)
+        import game_profiles
+        profile = game_profiles.profile(game)
+        if profile['name']:
+            print(f'Game profile: {profile["name"]} ({", ".join(profile["modules"])})', flush=True)
+        run_script('link_modules.py', game, '--out', out, '--modules', *profile['modules'])
         # A failed rewrite prints its reason and the game starts without the table.
         isa_args = []
         if isa_rewrite_wanted(missing, env):

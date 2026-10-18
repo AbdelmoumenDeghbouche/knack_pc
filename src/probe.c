@@ -981,12 +981,17 @@ int main(int argc, char **argv) {
         _exit(missing ? 1 : 0); /* no destructors: GPU threads are running */
     }
     if (patch_file) apply_patches(patch_file, segments, ns, relocs, nr);
-    if (gpu_enabled) install_orb_multiplier(segments, ns, size);
-    if (gpu_enabled) install_cheats(segments, ns, size);
-    if (gpu_enabled) install_actor_watch(segments, ns, size);
-    if (gpu_enabled) install_stat_multipliers(segments, ns, size);
-    if (gpu_enabled) install_qte_hooks(segments, ns, size);
-    if (gpu_enabled && pause_menu && app0) install_menu_exit(segments, ns, size, pause_menu);
+    /* Cheats, multipliers, QTE and menu hooks patch God of War III's code (CUSA01623) only. */
+    char hooks_sfo[4096], hooks_serial[32]="";
+    snprintf(hooks_sfo,sizeof(hooks_sfo),"%s/sce_sys/param.sfo",app0 ? app0 : ".");
+    sfo_value(hooks_sfo,"TITLE_ID",hooks_serial,sizeof(hooks_serial),NULL);
+    const int game_hooks=gpu_enabled && !strcmp(hooks_serial,"CUSA01623");
+    if (game_hooks) install_orb_multiplier(segments, ns, size);
+    if (game_hooks) install_cheats(segments, ns, size);
+    if (game_hooks) install_actor_watch(segments, ns, size);
+    if (game_hooks) install_stat_multipliers(segments, ns, size);
+    if (game_hooks) install_qte_hooks(segments, ns, size);
+    if (game_hooks && pause_menu && app0) install_menu_exit(segments, ns, size, pause_menu);
 #ifdef _WIN32
     printf("Guest TCB loads redirected to the TEB TLS slot: %" PRIu64 "\n", patch_tcb_loads(segments, ns));
 #endif

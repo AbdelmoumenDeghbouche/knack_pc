@@ -50,7 +50,7 @@ def module(path):
     def identity(name):
         parts = name.split('#')
         if len(parts) != 3:
-            raise ValueError(f'unsupported symbol encoding {name!r}')
+            return None  # plain names such as __start__Ztext (WipEout's libc) are not linkable
         n, lib, mod = parts
         return (n, libraries[lib], modules[mod])
     symbols = []
