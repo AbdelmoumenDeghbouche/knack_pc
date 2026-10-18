@@ -196,6 +196,14 @@ class GraphicsOptionsTest(unittest.TestCase):
             self.assertTrue(reverted)
             self.assertEqual(options['render_resolution'], '3840x1080')
 
+    def test_engine_rate_100_for_100hz_displays(self):
+        self.assertIn(100, g.ENGINE_FPS)
+        options = g.startup_options({'render_resolution': 'native', 'engine_fps': '100'})
+        self.assertEqual(options['engine_fps'], '100')
+        self.assertEqual(g.patch_names(['Bug Fix - Texture Corruption Fix'], options),
+                         ['Bug Fix - Texture Corruption Fix', 'Frame Rate Patch - 100 FPS'])
+        self.assertEqual(g.startup_options({'engine_fps': '90'})['engine_fps'], '120')  # not a choice: the default
+
     def test_applied_engine_fps(self):
         self.assertEqual(
             g.applied_engine_fps(
@@ -206,6 +214,10 @@ class GraphicsOptionsTest(unittest.TestCase):
         self.assertEqual(
             g.applied_engine_fps(['Frame Rate Patch - 120 FPS']),
             120,
+        )
+        self.assertEqual(
+            g.applied_engine_fps(['Frame Rate Patch - 100 FPS']),
+            100,
         )
         self.assertEqual(
             g.applied_engine_fps(['Bug Fix - Texture Corruption Fix']),

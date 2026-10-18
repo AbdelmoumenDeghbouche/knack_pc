@@ -442,7 +442,7 @@ void PerformanceTab() {
     auto& s = Gow3Settings::Get();
     ImGui::SeparatorText("Live");
     if (BeginRows("##live")) {
-        static const char* const fps_labels[] = {"30", "60", "120", "240", "Unlimited"};
+        static const char* const fps_labels[] = {"30", "60", "100", "120", "240", "Unlimited"};
         ChoiceRow("Frame rate limit", s.fps_limit, fps_labels, G::FpsLimits.data(), int(G::FpsLimits.size()),
                   "Caps the frame rate. The engine frame rate (below) is the highest it can go.");
         const int effective = G::EffectiveFps(s.fps_limit, s.applied_engine_fps);
@@ -481,7 +481,7 @@ void PerformanceTab() {
         }
         ChoiceRow("Render resolution", s.render_resolution, resolution_labels.data(), nullptr,
                   int(resolution_labels.size()), "The resolution the game draws at. Higher is sharper and slower.");
-        static const char* const engine_labels[] = {"60 (original)", "120", "240"};
+        static const char* const engine_labels[] = {"60 (original)", "100", "120", "240"};
         ChoiceRow("Engine frame rate", s.engine_fps, engine_labels, G::EngineFps.data(), int(G::EngineFps.size()),
                   "The highest frame rate the game itself runs at.");
         CheckRow("Game reads GPU data without waiting", s.stale_readback,

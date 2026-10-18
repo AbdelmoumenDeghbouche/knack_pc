@@ -21,7 +21,7 @@ inline constexpr std::array<const char*, DisplayModeCount> DisplayModeNames = {
     "Windowed", "Borderless", "Fullscreen"};
 
 /// Present rate limits; 0 = unlimited.
-inline constexpr std::array<int, 5> FpsLimits = {30, 60, 120, 240, 0};
+inline constexpr std::array<int, 6> FpsLimits = {30, 60, 100, 120, 240, 0};
 
 /// Game patch suffixes ("Resolution Patch - <name>"); "native" is no resolution patch.
 /// The last six are the Ultrawide mod's sizes (#202), built in as beta (scripts/graphics_options.py).
@@ -58,8 +58,8 @@ inline std::pair<int, int> ResolutionSize(std::string_view name) {
     }
     return ResolutionSizes[0].second;
 }
-/// Engine frame rate ceilings: 60 is the game's own, 120 and 240 are frame rate patches.
-inline constexpr std::array<int, 3> EngineFps = {60, 120, 240};
+/// Engine frame rate ceilings: 60 is the game's own, 100 (for 100 Hz displays), 120 and 240 are frame rate patches.
+inline constexpr std::array<int, 4> EngineFps = {60, 100, 120, 240};
 
 template <typename T, std::size_t N>
 constexpr int IndexOf(const std::array<T, N>& values, const T& value, int fallback) {
