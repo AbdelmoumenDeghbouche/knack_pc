@@ -15,6 +15,9 @@
 #include "damage_hook.h"
 #include "menu_hook.h"
 #include "gpu/gow3gpu.h"
+#ifdef _WIN32
+#include "redzone.h"
+#endif
 #if !defined(__x86_64__) || !defined(__GNUC__)
 #error This prototype requires x86-64 GCC or Clang (including MinGW).
 #endif
@@ -165,6 +168,66 @@ static DWORD WINAPI watchdog_thread(LPVOID unused) {
     fflush(stderr);
     _exit(124);
 }
+/* GOW3_PROFILE=1: sample every thread's instruction pointer every 5 ms and print the hottest
+ * addresses of each 5-second window (guest offsets, or host module+offset).
+ * ponytail: suspends all threads per sample (slows the game a little); fine for finding hot loops. */
+/* Guest instructions that hit GPU write tracking, counted while profiling (racy counts are fine). */
+static int profiling;
+static struct { uintptr_t rip; uint32_t count; } fault_sites[256];
+static void profile_fault_site(uintptr_t rip) {
+    for (size_t i=0;i<256;++i) {
+        if (fault_sites[i].rip==rip || !fault_sites[i].rip) { fault_sites[i].rip=rip; ++fault_sites[i].count; return; }
+    }
+}
+static DWORD WINAPI profiler_thread(LPVOID unused) {
+    (void)unused;
+    enum { SLOTS=8192, TOP=15 };
+    static struct { uintptr_t key; uint32_t count; } table[SLOTS];
+    const DWORD pid=GetCurrentProcessId(), self=GetCurrentThreadId();
+    for (unsigned window=1;;++window) {
+        memset(table,0,sizeof(table));
+        uint32_t samples=0;
+        for (ULONGLONG end=GetTickCount64()+5000; GetTickCount64()<end; Sleep(5)) {
+            HANDLE snap=CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD,0);
+            THREADENTRY32 entry={.dwSize=sizeof(entry)};
+            for (BOOL ok=Thread32First(snap,&entry); ok; ok=Thread32Next(snap,&entry)) {
+                if (entry.th32OwnerProcessID!=pid || entry.th32ThreadID==self) continue;
+                HANDLE thread=OpenThread(THREAD_SUSPEND_RESUME|THREAD_GET_CONTEXT,FALSE,entry.th32ThreadID);
+                if (!thread) continue;
+                CONTEXT c={.ContextFlags=CONTEXT_CONTROL};
+                if (SuspendThread(thread)!=(DWORD)-1) {
+                    if (GetThreadContext(thread,&c)) {
+                        uintptr_t key=(uintptr_t)c.Rip & ~(uintptr_t)15; /* 16-byte buckets */
+                        size_t h=(key>>4)%SLOTS;
+                        while (table[h].count && table[h].key!=key) h=(h+1)%SLOTS;
+                        table[h].key=key; ++table[h].count; ++samples;
+                    }
+                    ResumeThread(thread);
+                }
+                CloseHandle(thread);
+            }
+            CloseHandle(snap);
+        }
+        fprintf(stderr,"Profile window %u: %u samples; hottest:\n",window,samples);
+        for (int n=0;n<TOP;++n) {
+            size_t best=SLOTS;
+            for (size_t i=0;i<SLOTS;++i) if (table[i].count && (best==SLOTS || table[i].count>table[best].count)) best=i;
+            if (best==SLOTS) break;
+            char where[MAX_PATH+96];
+            describe_address(where,sizeof(where),table[best].key);
+            fprintf(stderr,"  %5.1f%%  %s\n",100.0*table[best].count/(samples ? samples : 1),where);
+            table[best].count=0;
+        }
+        for (size_t i=0;i<256 && fault_sites[i].rip;++i) {
+            if (!fault_sites[i].count) continue;
+            char where[MAX_PATH+96];
+            describe_address(where,sizeof(where),fault_sites[i].rip);
+            fprintf(stderr,"  GPU write fault at %s: %u\n",where,fault_sites[i].count);
+            fault_sites[i].count=0;
+        }
+        fflush(stderr);
+    }
+}
 /* exit() while the game runs: who called it (other exit handlers may crash before they print). */
 static void report_exit_caller(void) {
     void *frames[24];
@@ -231,7 +294,10 @@ static LONG CALLBACK vectored_fault(EXCEPTION_POINTERS *info) {
     }
     if (code==EXCEPTION_ACCESS_VIOLATION && record->NumberParameters>=2) {
         /* GPU page tracking (write-protected guest pages) is resolved first. */
-        if (gpu_enabled && gow3gpu_handle_fault(info,(void *)record->ExceptionInformation[1])) return EXCEPTION_CONTINUE_EXECUTION;
+        if (gpu_enabled && gow3gpu_handle_fault(info,(void *)record->ExceptionInformation[1])) {
+            if (profiling) profile_fault_site((uintptr_t)info->ContextRecord->Rip);
+            return EXCEPTION_CONTINUE_EXECUTION;
+        }
         if (runtime_fault_recover) {
             /* A speculative guest memory read (GPU draw preparation) faulted: the thread resumes
              * in gow3_longjmp, outside the exception dispatcher, back at its recovery point. */
@@ -1045,6 +1111,9 @@ int main(int argc, char **argv) {
     if (game_hooks && pause_menu && app0) install_menu_exit(segments, ns, size, pause_menu);
 #ifdef _WIN32
     printf("Guest TCB loads redirected to the TEB TLS slot: %" PRIu64 "\n", patch_tcb_loads(segments, ns));
+    /* Windows writes exception records into the SysV red zone: faultable accesses of the game's
+     * functions that keep data there go through trampolines (src/redzone.cpp). */
+    bbport_red_zone_protect(argv[1], image, size, (const BbRedZoneSegment *)segments, ns);
 #endif
     if (isa_table) {
         IsaReport r = isa_rewrite_apply(isa_table, image, stubs, isa_sets);
@@ -1094,6 +1163,7 @@ int main(int argc, char **argv) {
     printf("Entering original x86-64 code at guest offset 0x%" PRIx64 "\n", entry);
 #ifdef _WIN32
     atexit(report_exit_caller); /* registered last, so it runs first */
+    if ((profiling=getenv("GOW3_PROFILE")!=NULL)) CloseHandle(CreateThread(NULL,0,profiler_thread,NULL,0,NULL));
 #endif
     entered_game=1;
     struct { uint64_t argc; const char *argv[2]; } params = {1, {"/app0/eboot.bin", NULL}};

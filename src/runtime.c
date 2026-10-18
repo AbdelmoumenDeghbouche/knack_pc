@@ -84,6 +84,7 @@ void runtime_report(void) {
     runtime_savedata_report();
     runtime_file_report();
     runtime_extra_report();
+    runtime_json_report();
     printf("Runtime: memory operations=%zu\n", (size_t)memory_calls);
     if (report_hook) report_hook();
 }
@@ -256,6 +257,8 @@ uintptr_t runtime_resolve(const char *name, int is_data) {
     if (file) return file;
     uintptr_t extra = runtime_extra_resolve(name);
     if (extra) return extra;
+    uintptr_t json = runtime_json_resolve(name);
+    if (json) return json;
     return gow3gpu_resolve(name);
 }
 static const struct { const char *nid, *symbol; } import_names[]={

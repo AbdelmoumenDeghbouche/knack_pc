@@ -3,8 +3,7 @@
  *   - kernel event flags (full implementation), small kernel/libc queries;
  *   - POSIX names for rwlocks and scheduling;
  *   - sockets unavailable (network unplugged);
- *   - NGS2 renders silence (no voices play yet);
- *   - Json2 parsing fails cleanly (callers fall back to defaults).
+ *   - NGS2 renders silence (no voices play yet).
  * Every entry is an explicit contract; unknown functions still stop. */
 #define _GNU_SOURCE
 #define _CRT_RAND_S /* rand_s */
@@ -443,26 +442,6 @@ static ABI int32_t ngs2_render(uintptr_t system, Ngs2RenderBuffer *buffers, uint
 }
 static ABI int32_t ngs2_unsupported_waveform(void) { return (int32_t)0x804A0200; } /* invalid waveform */
 
-/* ---- Json2 (C++ ABI, this in rdi). Parsing reports failure; values read as null/empty. ---- */
-static unsigned char json_null[64];
-static ABI void json_nothing(void *self) { (void)self; }
-static ABI int32_t json_initialize(void *self, const void *param) { (void)self; (void)param; return 0; }
-static ABI void json_notify_error(void *self, int32_t error, uint64_t size, void *user) {
-    (void)self; (void)user;
-    printf("Runtime: Json2 allocator error %d (size %llu)\n",error,(unsigned long long)size);
-}
-static ABI int32_t json_parse(void *self, void *value, const char *text, uint64_t size) {
-    (void)self; (void)value;
-    printf("Runtime: Json2 parse of %llu bytes not supported, reported as invalid\n",(unsigned long long)size);
-    (void)text;
-    return (int32_t)0x80920005; /* SCE_JSON_ERROR_PARSE_INVALID_CHAR */
-}
-static ABI uint64_t json_zero(void *self) { (void)self; return 0; }
-static ABI void *json_null_value(void *self) { (void)self; return json_null; }
-static ABI const char *json_c_str(void *self) { (void)self; return ""; }
-static ABI int32_t json_empty(void *self) { (void)self; return 1; }
-static ABI int32_t json_equals(void *self, const char *text) { (void)self; return text && !*text; }
-
 /* ---- Console features with no PC counterpart: accepted and ignored ---- */
 static ABI int32_t privacy_setting(int32_t type, int32_t *value) {
     (void)type;
@@ -671,19 +650,6 @@ static const RuntimeExport exports[]={
     {"sceNgs2VoiceGetState",ngs2_voice_state}, {"sceNgs2VoiceGetStateFlags",ngs2_voice_flags},
     {"sceNgs2SystemRender",ngs2_render}, {"sceNgs2PanInit",ok_noop}, {"sceNgs2PanGetVolumeMatrix",ok_noop},
     {"sceNgs2ParseWaveformData",ngs2_unsupported_waveform}, {"sceNgs2CalcWaveformBlock",ngs2_unsupported_waveform},
-    {"_ZN3sce4Json11InitializerC1Ev",json_nothing}, {"_ZN3sce4Json11InitializerD1Ev",json_nothing},
-    {"_ZN3sce4Json11Initializer10initializeEPKNS0_13InitParameterE",json_initialize},
-    {"_ZN3sce4Json12MemAllocatorC2Ev",json_nothing}, {"_ZN3sce4Json12MemAllocatorD2Ev",json_nothing},
-    {"_ZN3sce4Json12MemAllocator11notifyErrorEimPv",json_notify_error},
-    {"_ZN3sce4Json5ValueC1Ev",json_nothing}, {"_ZN3sce4Json5ValueD1Ev",json_nothing},
-    {"_ZN3sce4Json6Parser5parseERNS0_5ValueEPKcm",json_parse},
-    {"_ZN3sce4Json6StringC1ERKS1_",json_nothing}, {"_ZN3sce4Json6StringD1Ev",json_nothing},
-    {"_ZNK3sce4Json5Value10getBooleanEv",json_zero}, {"_ZNK3sce4Json5Value10getIntegerEv",json_zero},
-    {"_ZNK3sce4Json5Value11getUIntegerEv",json_zero}, {"_ZNK3sce4Json5Value5countEv",json_zero},
-    {"_ZNK3sce4Json5Value9getStringEv",json_null_value},
-    {"_ZNK3sce4Json5ValueixEPKc",json_null_value}, {"_ZNK3sce4Json5ValueixEm",json_null_value},
-    {"_ZNK3sce4Json6String4sizeEv",json_zero}, {"_ZNK3sce4Json6String5c_strEv",json_c_str},
-    {"_ZNK3sce4Json6String5emptyEv",json_empty}, {"_ZNK3sce4Json6StringeqEPKc",json_equals},
 };
 /* MediEvil native output (GOW3_UE4_SETRES=WxH, run.py): the base PS4 renderer makes its buffers at
  * the display size at start and only a live r.SetRes change resizes them (the debug menu's

@@ -1,15 +1,20 @@
 """Per-game settings, by title id in sce_sys/param.sfo (after bc160201983's MediEvil port).
 
 modules: bundled sce_module PRX files linked into the image (link_modules.py), in order.
+env: default environment for the run (run.py); a value already set wins.
 """
 from pathlib import Path
 
 PROFILES = {
-    # WipEout Omega Collection. NpToolkit2 is the game's own PSN toolkit.
+    # WipEout Omega Collection. NpToolkit2 is the game's own PSN toolkit. Red-zone protection
+    # always: the startup probe sees no overwrite, but 2048 races run at 0.3 FPS without it (a
+    # loop at 0x40ff50 keeps its count below the stack pointer, under the GPU write faults).
     'CUSA07671': {'name': 'WipEout Omega Collection',
-                  'modules': ('libc.prx', 'libSceFios2.prx', 'libSceNpToolkit2.prx')},
+                  'modules': ('libc.prx', 'libSceFios2.prx', 'libSceNpToolkit2.prx'),
+                  'env': {'GOW3_RED_ZONE': '1'}},
     'CUSA05670': {'name': 'WipEout Omega Collection',
-                  'modules': ('libc.prx', 'libSceFios2.prx', 'libSceNpToolkit2.prx')},
+                  'modules': ('libc.prx', 'libSceFios2.prx', 'libSceNpToolkit2.prx'),
+                  'env': {'GOW3_RED_ZONE': '1'}},
     'CUSA01623': {'name': 'God of War III', 'modules': ('libc.prx', 'libSceFios2.prx')},
 }
 DEFAULT = {'name': None, 'modules': ('libc.prx', 'libSceFios2.prx')}

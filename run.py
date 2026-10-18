@@ -242,7 +242,11 @@ def main():
         profile = game_profiles.profile(game)
         if profile['name']:
             print(f'Game profile: {profile["name"]} ({", ".join(profile["modules"])})', flush=True)
+        for name, value in profile.get('env', {}).items():
+            env.setdefault(name, value)
         run_script('link_modules.py', game, '--out', out, '--modules', *profile['modules'])
+        if WINDOWS:  # function starts for the loader's red-zone protection (src/redzone.cpp)
+            run_script('function_starts.py', game, '--out', out, '--modules', *profile['modules'])
         # A failed rewrite prints its reason and the game starts without the table.
         isa_args = []
         if isa_rewrite_wanted(missing, env):
