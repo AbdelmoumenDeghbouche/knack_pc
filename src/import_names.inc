@@ -1394,3 +1394,4 @@
 {"-PoIzr3PEk0#libSceSsl","sceSslGetMemoryPoolStats"},
 {"wuI7c7UNk0A#libSceUserServiceForNpToolkit","sceUserServiceRegisterEventCallback"},
 {"spW--yoLQ9o#libSceUserServiceForNpToolkit","sceUserServiceUnregisterEventCallback"},
+{"fJgP+wqifno#libSceDiscMap","Func_7C980FFB0AA27E7A"},

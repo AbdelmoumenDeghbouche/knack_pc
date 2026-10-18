@@ -33,6 +33,13 @@ static ABI int32_t module_load(uint16_t id) {
     else printf("Runtime: system module 0x%x loaded (host implementation)\n",id);
     return 0;
 }
+/* Internal variant (WipEout's Fios2 loads 0xd7): same tracking; the module's start result is 0. */
+static ABI int32_t module_load_internal_arg(uint32_t id, int32_t argc, const void *argv, uint64_t flags, int32_t *result) {
+    (void)argc; (void)argv; (void)flags;
+    int32_t status=module_load((uint16_t)id);
+    if (!status && result) *result=0;
+    return status;
+}
 static ABI int32_t module_loaded(uint16_t id) {
     if (!id) return INVALID_ID;
     return module_refs[id] ? 0 : NOT_LOADED;
@@ -79,6 +86,7 @@ static ABI int32_t addon_list(uint32_t service,void *list,uint32_t capacity,uint
 }
 uintptr_t runtime_content_resolve(const char *name) {
     if (!strcmp(name,"g8cM39EUZ6o#libSceSysmodule")) return (uintptr_t)module_load;
+    if (!strcmp(name,"hHrGoGoNf+s#libSceSysmodule")) return (uintptr_t)module_load_internal_arg;
     if (!strcmp(name,"fMP5NHUOaMk#libSceSysmodule")) return (uintptr_t)module_loaded;
     if (!strcmp(name,"eR2bZFAAU0Q#libSceSysmodule")) return (uintptr_t)module_unload;
     if (!strcmp(name,"R9lA82OraNs#libSceAppContent")) return (uintptr_t)content_init;

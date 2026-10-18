@@ -36,7 +36,7 @@ def main():
             known.add(key)
             added.append(f'{{"{key}","{names[nid]}"}},')
     if added:
-        INC.write_text(text.rstrip('\n') + '\n/* Added by gen_import_names.py */\n' + '\n'.join(added) + '\n')
+        INC.write_text(text.rstrip('\n') + '\n/* Added by gen_import_names.py */\n' + '\n'.join(added) + '\n', newline='\n')
     print(f'{len(added)} names added to {INC}')
 
 

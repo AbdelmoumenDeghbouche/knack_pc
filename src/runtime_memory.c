@@ -438,6 +438,32 @@ static ABI int32_t direct_allocate(int64_t low, int64_t high, uint64_t size,
     printf("Runtime: direct allocation offset=0x%" PRIx64 ", size=%" PRIu64 " bytes, type=%d\n", start, size, type);
     return 0;
 }
+static int by_start(const void *a, const void *b) {
+    uint64_t x=((const Block *)a)->start, y=((const Block *)b)->start;
+    return x<y ? -1 : x>y;
+}
+/* The largest free aligned direct-memory range in [low,high): its start and size. */
+static ABI int32_t direct_available(int64_t low, int64_t high, uint64_t alignment, int64_t *start_out, uint64_t *size_out) {
+    if (!alignment) alignment = PAGE;
+    if (!start_out || !size_out || low < 0 || high <= low || !valid_alignment(alignment)) return INVALID;
+    uint64_t end = (uint64_t)high < POOL_SIZE ? (uint64_t)high : POOL_SIZE;
+    static Block used[LIMIT]; /* under the write lock */
+    write_lock();
+    int n=0;
+    for (int i=0;i<LIMIT;++i) if (blocks[i].used) used[n++]=blocks[i];
+    qsort(used,(size_t)n,sizeof(*used),by_start);
+    uint64_t best_start=0, best_size=0, at=(uint64_t)low;
+    for (int i=0;i<=n;++i) {
+        uint64_t gap_end = i<n ? (used[i].start<end ? used[i].start : end) : end;
+        uint64_t s=align_up(at,alignment);
+        if (gap_end > s && gap_end-s > best_size) { best_start=s; best_size=gap_end-s; }
+        if (i<n && used[i].start+used[i].size > at) at=used[i].start+used[i].size;
+    }
+    write_unlock();
+    if (!best_size) return NO_MEMORY;
+    *start_out=(int64_t)best_start; *size_out=best_size;
+    return 0;
+}
 static int32_t map_direct_locked(void **out, uint64_t size, int prot, int flags, int64_t physical, uint64_t alignment) {
     if (!alignment) alignment=PAGE;
     if (!out || physical < 0 || (uint64_t)physical % PAGE || !size || size % PAGE || !valid_alignment(alignment) ||
@@ -652,6 +678,7 @@ static ABI int32_t batch_map(BatchEntry *entries, int count, int *processed) {
 static const RuntimeExport exports[]={
     {"mmap",posix_mmap}, {"msync",posix_msync},
     {"sceKernelGetDirectMemorySize",direct_size}, {"sceKernelAllocateDirectMemory",direct_allocate},
+    {"sceKernelAvailableDirectMemorySize",direct_available},
     {"sceKernelMapDirectMemory",direct_map}, {"sceKernelMapNamedDirectMemory",direct_map_named},
     {"sceKernelReleaseDirectMemory",direct_release}, {"sceKernelMunmap",direct_unmap}, {"munmap",direct_unmap},
     {"sceKernelMapFlexibleMemory",map_flexible}, {"sceKernelMapNamedFlexibleMemory",map_flexible_named},

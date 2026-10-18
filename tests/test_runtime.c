@@ -196,6 +196,12 @@ static void direct_memory(void) {
     assert(*(uint64_t *)y==UINT64_C(0xabcdef0123456789)); /* real shared backing */
     assert((uint32_t)unmap((char *)x+4096,length)==0x80020016); /* unaligned */
     assert(unmap(x,length)==0 && unmap(y,length)==0);
+    /* Used: [0,32K) and [2M,2M+16K). Largest free range below 4M: [2M+16K,4M). */
+    int32_t (ABI *available)(int64_t,int64_t,uint64_t,int64_t *,uint64_t *)=
+        (int32_t (ABI *)(int64_t,int64_t,uint64_t,int64_t *,uint64_t *))runtime_resolve("C0f7TJcbfac#libkernel",0);
+    int64_t free_start=-1; uint64_t free_size=0;
+    assert(available(0,4194304,16384,&free_start,&free_size)==0);
+    assert(free_start==2097152+16384 && free_size==2097152-16384);
     assert(release(a,length)==0 && release(b,length)==0 && release(c,length)==0);
     assert(alloc(0,pool,length,0,0,&a)==0 && a==0);
     x=NULL; assert(map(&x,length,3,0,a,0)==0);

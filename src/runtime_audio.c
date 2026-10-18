@@ -292,7 +292,90 @@ static ABI int32_t audio_last_time(int32_t handle, uint64_t *time) {
     *time=p->last_output_us; return 0;
 }
 
+/* ---- Audio3d (WipEout's Wwise sink). One port, paced at 48 kHz like the hardware queue, but
+ * 3D objects and beds are not mixed yet: they are silent. Its AudioOut ports are real ones. ---- */
+#define A3D_INVALID_PORT ((int32_t)0x80EA0002)
+#define A3D_INVALID_PARAMETER ((int32_t)0x80EA0004)
+#define A3D_NOT_READY ((int32_t)0x80EA0007)
+typedef struct { uint64_t size; uint32_t granularity, rate, max_objects, queue_depth, buffer_mode, pad, beds; } A3dParams;
+static int a3d_ready, a3d_open;
+static uint32_t a3d_granularity=256, a3d_depth=2, a3d_objects;
+static uint64_t a3d_due_ns; /* when the oldest queued buffer has played */
+static uint32_t a3d_queued;
+static uint64_t a3d_period_ns(void) { return (uint64_t)a3d_granularity*1000000000u/48000u; }
+/* Buffers leave the virtual queue as their play time passes. */
+static void a3d_drain(void) {
+    for (uint64_t now=now_ns(); a3d_queued && now>=a3d_due_ns; a3d_due_ns+=a3d_period_ns()) --a3d_queued;
+}
+static ABI int32_t a3d_init(int64_t reserved) { if (reserved) return A3D_INVALID_PARAMETER; a3d_ready=1; return 0; }
+static ABI int32_t a3d_term(void) { if (!a3d_ready) return A3D_NOT_READY; a3d_ready=a3d_open=0; return 0; }
+/* Only the first 0x20 bytes: callers pass the SDK's 32-byte parameters (no num_beds field). */
+static ABI int32_t a3d_defaults(A3dParams *p) {
+    A3dParams d={.size=0x20,.granularity=256,.rate=0,.max_objects=512,.queue_depth=2,.buffer_mode=2};
+    if (p) memcpy(p,&d,0x20);
+    return 0;
+}
+static ABI int32_t a3d_port_open(int32_t user, const A3dParams *p, uint32_t *port) {
+    (void)user;
+    if (!a3d_ready) return A3D_NOT_READY;
+    if (!p || !port) return A3D_INVALID_PARAMETER;
+    if (a3d_open) return (int32_t)0x80EA0006; /* OUT_OF_RESOURCES: one port */
+    a3d_granularity=p->granularity ? p->granularity : 256;
+    a3d_depth=p->queue_depth ? p->queue_depth : 1;
+    a3d_queued=0; a3d_open=1; *port=0;
+    return 0;
+}
+static int a3d_port_ok(uint32_t port) { return a3d_open && port==0; }
+static ABI int32_t a3d_port_close(uint32_t port) { if (!a3d_port_ok(port)) return A3D_INVALID_PORT; a3d_open=0; return 0; }
+static ABI int32_t a3d_port_any(uint32_t port) { return a3d_port_ok(port) ? 0 : A3D_INVALID_PORT; }
+static ABI int32_t a3d_object_reserve(uint32_t port, uint32_t *object) {
+    if (!a3d_port_ok(port)) return A3D_INVALID_PORT;
+    if (!object) return A3D_INVALID_PARAMETER;
+    *object=++a3d_objects; return 0;
+}
+static ABI int32_t a3d_attributes_supported(uint32_t port, uint32_t *ids, uint32_t *count) {
+    (void)ids;
+    if (!a3d_port_ok(port)) return A3D_INVALID_PORT;
+    if (!count) return A3D_INVALID_PARAMETER;
+    *count=0; return 0;
+}
+/* Queues one granularity of output; SYNC (1) waits while the queue is full. */
+static ABI int32_t a3d_push(uint32_t port, uint32_t blocking) {
+    if (!a3d_port_ok(port)) return A3D_INVALID_PORT;
+    a3d_drain();
+    if (a3d_queued>=a3d_depth) {
+        if (!blocking) return A3D_NOT_READY;
+        sleep_until(a3d_due_ns);
+        a3d_drain();
+    }
+    if (!a3d_queued) a3d_due_ns=now_ns()+a3d_period_ns();
+    ++a3d_queued;
+    return 0;
+}
+static ABI int32_t a3d_queue_level(uint32_t port, uint32_t *level, uint32_t *available) {
+    if (!a3d_port_ok(port)) return A3D_INVALID_PORT;
+    if (!level && !available) return A3D_INVALID_PARAMETER;
+    a3d_drain();
+    if (level) *level=a3d_queued;
+    if (available) *available=a3d_queued<a3d_depth ? a3d_depth-a3d_queued : 0;
+    return 0;
+}
+static ABI int32_t a3d_audio_out_open(uint32_t port, int32_t user, int32_t type, int32_t index, uint32_t length, uint32_t freq, uint32_t param) {
+    if (!a3d_port_ok(port)) return A3D_INVALID_PORT;
+    if (length!=a3d_granularity) return A3D_INVALID_PARAMETER;
+    return audio_open(user,type,index,length,freq,param);
+}
+
 static const RuntimeExport exports[]={
+    {"sceAudio3dInitialize",a3d_init}, {"sceAudio3dTerminate",a3d_term},
+    {"sceAudio3dGetDefaultOpenParameters",a3d_defaults}, {"sceAudio3dPortOpen",a3d_port_open},
+    {"sceAudio3dPortClose",a3d_port_close}, {"sceAudio3dPortAdvance",a3d_port_any},
+    {"sceAudio3dPortFlush",a3d_port_any}, {"sceAudio3dPortSetAttribute",a3d_port_any},
+    {"sceAudio3dPortGetAttributesSupported",a3d_attributes_supported},
+    {"sceAudio3dPortPush",a3d_push}, {"sceAudio3dPortGetQueueLevel",a3d_queue_level},
+    {"sceAudio3dObjectReserve",a3d_object_reserve}, {"sceAudio3dObjectUnreserve",a3d_port_any},
+    {"sceAudio3dObjectSetAttributes",a3d_port_any}, {"sceAudio3dBedWrite",a3d_port_any},
+    {"sceAudio3dAudioOutOpen",a3d_audio_out_open}, {"sceAudio3dAudioOutOutputs",audio_outputs},
     {"sceAudioOutInit",audio_init}, {"sceAudioOutOpen",audio_open}, {"sceAudioOutClose",audio_close},
     {"sceAudioOutOutput",audio_output}, {"sceAudioOutOutputs",audio_outputs},
     {"sceAudioOutSetVolume",audio_volume}, {"sceAudioOutGetPortState",audio_state},

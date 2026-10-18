@@ -183,6 +183,28 @@ static ABI int32_t thread_name(void *thread, char *name) {
 static ABI int32_t ok_noop(void) { return 0; }
 static ABI void *null_pointer(void) { return NULL; }
 static ABI int32_t not_found(void) { return ERR(E_SRCH); }
+/* f(id, int *out): *out = 0 (e.g. Remote Play connection status DISCONNECT). */
+static ABI int32_t out2_zero(int32_t id, int32_t *out) { (void)id; if (out) *out=0; return 0; }
+/* libc's _malloc_init_lv2 ignores the result and writes through both pointers (WipEout's
+ * libc), so they must point at real storage. Layout as shadPS4's HeapInfoInfo. */
+typedef struct { uint64_t size; uint32_t flag, get_segment_info; uint64_t *id_mask, *mstate_table; } HeapTraceInfo;
+static uint64_t heap_id_mask, heap_mstate_table[64];
+/* libSceDiscMap Func_7C980FFB0AA27E7A (Fios2 asks where a byte range lives): everything is
+ * installed, no flags, as in shadPS4. */
+static ABI int32_t disc_map_query(const char *path, int64_t offset, int64_t bytes, int32_t *flags, int32_t *a, int32_t *b) {
+    (void)path; (void)offset; (void)bytes;
+    if (flags) *flags=0;
+    if (a) *a=0;
+    if (b) *b=0;
+    return 0;
+}
+static ABI int32_t heap_trace_info(HeapTraceInfo *info) {
+    if (!info) return ERR(E_INVAL);
+    info->get_segment_info = 0;
+    info->id_mask = &heap_id_mask;
+    info->mstate_table = heap_mstate_table;
+    return 0;
+}
 static ABI int32_t kernel_chmod(const char *path, uint16_t mode) { (void)path; (void)mode; return 0; }
 static ABI int32_t kernel_utimes(const char *path, const void *times) { (void)path; (void)times; return 0; }
 static ABI int32_t kernel_getdents(int fd, char *buffer, uint64_t size) {
@@ -245,6 +267,76 @@ static ABI int32_t random_number(void *buffer, uint64_t size) {
         p[i]=(unsigned char)random();
 #endif
     }
+    return 0;
+}
+/* ---- PlayStation VR headset: the library works, no headset is detected (as shadPS4) ---- */
+#define HMD_NOT_INITIALIZED ((int32_t)0x81110002)
+#define HMD_HANDLE_INVALID ((int32_t)0x81110003)
+#define HMD_ALREADY_OPENED ((int32_t)0x81110006)
+#define HMD_PARAMETER_NULL ((int32_t)0x81110008)
+#define HMD_HANDLE 0xf000000 /* positive, distinct from other VrTracker devices */
+static int hmd_initialized;
+static int32_t hmd_handle, hmd_user=-1;
+static ABI int32_t hmd_initialize(const void *param) {
+    if (!param) return HMD_PARAMETER_NULL;
+    hmd_initialized=1;
+    return 0;
+}
+static ABI int32_t hmd_terminate(void) {
+    if (!hmd_initialized) return HMD_NOT_INITIALIZED;
+    hmd_initialized=0;
+    return 0;
+}
+static ABI int32_t hmd_open(int32_t user, int32_t type, int32_t index, const void *param) {
+    (void)type; (void)index; (void)param;
+    if (!hmd_initialized) return HMD_NOT_INITIALIZED;
+    if (hmd_handle) return HMD_ALREADY_OPENED;
+    hmd_user=user;
+    return hmd_handle=HMD_HANDLE;
+}
+static ABI int32_t hmd_close(int32_t handle) {
+    if (!hmd_initialized) return HMD_NOT_INITIALIZED;
+    if (handle!=hmd_handle) return HMD_HANDLE_INVALID;
+    hmd_handle=0; hmd_user=-1;
+    return 0;
+}
+/* OrbisHmdDeviceInformation (32 bytes): status NOT_DETECTED (2), user id. */
+static ABI int32_t hmd_device_info(uint32_t *info) {
+    if (!info) return HMD_PARAMETER_NULL;
+    if (!hmd_initialized) return HMD_NOT_INITIALIZED;
+    memset(info,0,32);
+    info[0]=2; info[1]=(uint32_t)hmd_user;
+    return 0;
+}
+/* SDK 4.50+ libraries report a missing headset as an invalid handle. */
+static ABI int32_t hmd_by_handle(void) { return HMD_HANDLE_INVALID; }
+static ABI int32_t hmd_garlic_size(void) { return 0x100000; }
+static ABI int32_t hmd_onion_size(void) { return 0x810; }
+static ABI int32_t hmd_buffer_align(void) { return 0x100; }
+/* Setup dialog: finishes at once, as if the player pressed Circle (USER_CANCELED). */
+static ABI int32_t hmd_dialog_finished(void) { return 3; }
+static ABI int32_t hmd_dialog_result(int32_t *result) { if (result) *result=1; return 0; }
+
+/* sceHttpsGetCaList: an empty certificate list (OrbisSslCaList {certs, certsNum}). */
+typedef struct { void *certs; int32_t count; } CaList;
+static ABI int32_t https_ca_list(int32_t context, CaList *list) {
+    (void)context;
+    if (!list) return (int32_t)0x804311FE; /* SCE_HTTP_ERROR_INVALID_VALUE */
+    list->certs=NULL; list->count=0;
+    return 0;
+}
+
+/* ---- PlayStation Camera: none attached; nothing can be opened ---- */
+static ABI int32_t camera_attached(int32_t index) { return index ? (int32_t)0x802E0000 : 0; }
+static ABI int32_t camera_not_connected(void) { return (int32_t)0x802E0010; }
+static ABI int32_t camera_not_open(void) { return (int32_t)0x802E0004; }
+
+/* sceKernelUuidCreate: 16 random bytes, version 4. */
+static ABI int32_t uuid_create(unsigned char *uuid) {
+    if (!uuid) return ERR(E_INVAL);
+    random_number(uuid,16);
+    uuid[6]=(unsigned char)((uuid[6]&0x0f)|0x40);
+    uuid[8]=(unsigned char)((uuid[8]&0x3f)|0x80);
     return 0;
 }
 
@@ -516,7 +608,37 @@ static const RuntimeExport exports[]={
     {"sceKernelGetSanitizerMallocReplaceExternal",null_pointer},
     {"sceKernelGetSanitizerNewReplaceExternal",null_pointer},
     {"sceKernelGetModuleInfoForUnwind",not_found}, {"sceKernelInternalMemoryGetModuleSegmentInfo",not_found},
-    {"sceSysmoduleGetModuleInfoForUnwind",not_found}, {"sceLibcHeapGetTraceInfo",not_found},
+    {"sceSysmoduleGetModuleInfoForUnwind",not_found}, {"sceLibcHeapGetTraceInfo",heap_trace_info}, {"Func_7C980FFB0AA27E7A",disc_map_query},
+    /* WipEout: nobody connects through Remote Play. */
+    {"sceRemoteplayInitialize",ok_noop}, {"sceRemoteplayTerminate",ok_noop},
+    {"sceRemoteplayGetConnectionStatus",out2_zero},
+    /* WipEout: no share menu or social screen; mastering and Ajm memory need no state (shadPS4). */
+    {"sceShareUtilityInitializeEx2",ok_noop}, {"sceShareUtilityTerminate",ok_noop},
+    {"sceShareUtilityOpenShareMenuDefault",ok_noop},
+    {"sceSocialScreenInitialize",ok_noop}, {"sceSocialScreenTerminate",ok_noop},
+    {"sceAudioOutMasteringInit",ok_noop}, {"sceAudioOutMasteringSetParam",ok_noop},
+    {"sceAudioOutMasteringTerm",ok_noop}, {"sceAjmMemoryUnregister",ok_noop},
+    {"sceKernelUuidCreate",uuid_create},
+    {"sceHmdInitialize315",hmd_initialize}, {"sceHmdTerminate",hmd_terminate},
+    {"sceHmdOpen",hmd_open}, {"sceHmdClose",hmd_close}, {"sceHmdGetDeviceInformation",hmd_device_info},
+    {"sceHmdGetDeviceInformationByHandle",hmd_by_handle}, {"sceHmdGetFieldOfView",hmd_by_handle},
+    {"sceHmdReprojectionInitialize",ok_noop}, {"sceHmdReprojectionFinalize",ok_noop},
+    {"sceHmdReprojectionStart",ok_noop}, {"sceHmdReprojectionStop",ok_noop},
+    {"sceHmdReprojectionSetDisplayBuffers",ok_noop}, {"sceHmdReprojectionUnsetDisplayBuffers",ok_noop},
+    {"sceHmdReprojectionSetOutputMinColor",ok_noop},
+    {"sceHmdReprojectionQueryGarlicBuffSize",hmd_garlic_size}, {"sceHmdReprojectionQueryOnionBuffSize",hmd_onion_size},
+    {"sceHmdReprojectionQueryGarlicBuffAlign",hmd_buffer_align}, {"sceHmdReprojectionQueryOnionBuffAlign",hmd_buffer_align},
+    {"sceHmdSetupDialogInitialize",ok_noop}, {"sceHmdSetupDialogTerminate",ok_noop},
+    {"sceHmdSetupDialogOpen",ok_noop}, {"sceHmdSetupDialogClose",ok_noop},
+    {"sceHmdSetupDialogUpdateStatus",hmd_dialog_finished}, {"sceHmdSetupDialogGetResult",hmd_dialog_result},
+    {"sceCameraIsAttached",camera_attached}, {"sceCameraOpen",camera_not_connected},
+    {"sceCameraClose",camera_not_open}, {"sceCameraStart",camera_not_open}, {"sceCameraStop",camera_not_open},
+    {"sceCameraSetConfig",camera_not_open}, {"sceCameraSetVideoSync",camera_not_open},
+    {"sceCameraGetFrameData",camera_not_open},
+    /* HTTP settings are accepted; every request still fails with SCE_HTTP_ERROR_NETWORK. */
+    {"sceHttpsGetCaList",https_ca_list}, {"sceHttpsSetSslCallback",ok_noop},
+    {"sceHttpSetCookieEnabled",ok_noop}, {"sceHttpSetChunkedTransferEnabled",ok_noop},
+    {"sceHttpSetRecvTimeOut",ok_noop}, {"sceHttpSetResolveTimeOut",ok_noop}, {"sceHttpSetSendTimeOut",ok_noop},
     {"sceRandomGetRandomNumber",random_number},
     {"pthread_rwlock_init",posix_rw_init}, {"pthread_rwlock_destroy",posix_rw_destroy},
     {"pthread_rwlock_rdlock",posix_rw_rdlock}, {"pthread_rwlock_wrlock",posix_rw_wrlock},

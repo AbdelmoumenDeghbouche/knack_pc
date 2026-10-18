@@ -183,6 +183,7 @@ static int slot_of(const MountPoint *point) {
     int slot=atoi(point->data+9);
     return slot>=0 && slot<SLOTS && slots[slot].used ? slot : -1;
 }
+static ABI int32_t save_no_backup(const void *param) { return param ? ERR_NOT_FOUND : ERR_PARAMETER; }
 static ABI int32_t save_umount(const MountPoint *point) {
     if (!initialized) return ERR_NOT_INITIALIZED;
     pthread_mutex_lock(&lock);
@@ -335,6 +336,10 @@ static const RuntimeExport exports[]={
     {"sceSaveDataInitialize",save_initialize}, {"sceSaveDataInitialize2",save_initialize},
     {"sceSaveDataInitialize3",save_initialize}, {"sceSaveDataTerminate",save_terminate},
     {"sceSaveDataMount",save_mount}, {"sceSaveDataMount2",save_mount2}, {"sceSaveDataUmount",save_umount},
+    /* No backup copies are kept (saves are written straight to disk): unmount normally, and
+     * there is never a backup to check or restore. */
+    {"sceSaveDataUmountWithBackup",save_umount},
+    {"sceSaveDataCheckBackupData",save_no_backup}, {"sceSaveDataRestoreBackupData",save_no_backup},
     {"sceSaveDataSetParam",save_set_param}, {"sceSaveDataSaveIcon",save_icon}, {"sceSaveDataDelete",save_delete},
     {"sceSaveDataDirNameSearch",save_search},
     {"sceSaveDataSetupSaveDataMemory",memory_setup}, {"sceSaveDataGetSaveDataMemory",memory_get},
