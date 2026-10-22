@@ -26,6 +26,10 @@ PROFILES = {
                   'env': {'GOW3_RED_ZONE': '1', 'GOW3_ENGINE_FPS': '240',
                           'GOW3_ALLOWED_RESOLUTIONS': 'native;2560x1080;5120x2160'}},
     'CUSA01623': {'name': 'God of War III', 'modules': ('libc.prx', 'libSceFios2.prx')},
+    # Knack (US 1.10, the development target; EU CUSA00006/CUSA00202 untested).
+    'CUSA00068': {'name': 'Knack', 'modules': ('libc.prx', 'libSceFios2.prx')},
+    'CUSA00006': {'name': 'Knack', 'modules': ('libc.prx', 'libSceFios2.prx')},
+    'CUSA00202': {'name': 'Knack', 'modules': ('libc.prx', 'libSceFios2.prx')},
 }
 DEFAULT = {'name': None, 'modules': ('libc.prx', 'libSceFios2.prx')}
 

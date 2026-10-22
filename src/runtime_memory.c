@@ -40,6 +40,14 @@ static uint64_t pool_size_bytes(void) {
 #define PAGE UINT64_C(16384)
 #define USER_MIN UINT64_C(0x1000000000)
 #define USER_MAX UINT64_C(0xfc00000000)
+/* Host-owned memory the guest can see (image, stacks, trampolines) lives in
+ * [LOW_MIN, USER_MIN): PS4 code packs pointers into 40-bit fields. */
+#define LOW_MIN UINT64_C(0x0800000000)
+/* Top of the PS4 system-managed range, below the low area: older games (Knack, SDK 1.0) map
+ * direct memory there at fixed addresses (0x7f0000000). Windows reserves it like the user range.
+ * ponytail: [0x400000, SYSTEM_MIN) stays unreserved (the host exe and heaps live there); a fixed
+ * map below SYSTEM_MIN stops, reserve more if a game needs it. */
+#define SYSTEM_MIN UINT64_C(0x0400000000)
 #define LIMIT 4096
 #define INVALID ((int32_t)UINT32_C(0x80020016))
 #define NO_MEMORY ((int32_t)UINT32_C(0x8002000c))
@@ -100,7 +108,7 @@ static int host_prot(int prot) {
 }
 #ifdef _WIN32
 /* ---- host mappings (Windows) ----
- * [USER_MIN,USER_MAX) is covered by regions, each one placeholder or one view of the
+ * [SYSTEM_MIN,LOW_MIN) and [USER_MIN,USER_MAX) are covered by regions, each one placeholder or one view of the
  * section. Mapping a range carves it out as a single placeholder first: views overlapping
  * it are unmapped, placeholders coalesced and split, and the parts of views outside the
  * range mapped again with the page protections they had (GPU page tracking included). */
@@ -135,12 +143,15 @@ static void region_insert(size_t at, HostRegion r) {
 static void region_erase(size_t at, size_t n) {
     memmove(regions+at,regions+at+n,(region_count-at-n)*sizeof(*regions)); region_count-=n;
 }
-/* The guest range is reserved before anything else can be placed there (runtime_start). */
+/* The guest ranges are reserved before anything else can be placed there (runtime_start). */
 void runtime_memory_reserve(void) {
     if (region_count) return;
+    if (!VirtualAlloc2(NULL,(void *)SYSTEM_MIN,LOW_MIN-SYSTEM_MIN,MEM_RESERVE|MEM_RESERVE_PLACEHOLDER,PAGE_NOACCESS,NULL,0))
+        win_fail("reserving the PS4 system-managed range",SYSTEM_MIN,LOW_MIN-SYSTEM_MIN);
     if (!VirtualAlloc2(NULL,(void *)USER_MIN,USER_MAX-USER_MIN,MEM_RESERVE|MEM_RESERVE_PLACEHOLDER,PAGE_NOACCESS,NULL,0))
         win_fail("reserving the PS4 address range (link with --disable-high-entropy-va)",USER_MIN,USER_MAX-USER_MIN);
-    region_insert(0,(HostRegion){USER_MIN,USER_MAX,0,0});
+    region_insert(0,(HostRegion){SYSTEM_MIN,LOW_MIN,0,0});
+    region_insert(1,(HostRegion){USER_MIN,USER_MAX,0,0});
 }
 static void view_map(const HostRegion *r, DWORD protect) {
     DWORD initial=protect==PAGE_NOACCESS ? PAGE_READWRITE : protect, old;
@@ -167,6 +178,8 @@ static size_t carve_host(uintptr_t a, uintptr_t b) {
     if (first==region_count || regions[first].start>a) win_fail("guest range outside the reservation",a,b-a);
     while (last<region_count && regions[last].start<b) ++last;
     if (regions[last-1].end<b) win_fail("guest range outside the reservation",a,b-a);
+    for (size_t i=first;i+1<last;++i) /* the two reservations do not touch */
+        if (regions[i].end!=regions[i+1].start) win_fail("guest range outside the reservation",a,b-a);
     uintptr_t lo=regions[first].start, hi=regions[last-1].end;
     HostRegion left=regions[first], right=regions[last-1];
     int keep_left=left.mapped && lo<a, keep_right=right.mapped && b<hi;
@@ -696,9 +709,6 @@ uintptr_t runtime_memory_resolve(const char *name) {
     if (!strcmp(name, "cQke9UuBQOk#libkernel")) return (uintptr_t)direct_unmap;
     return RUNTIME_LOOKUP(exports,name);
 }
-/* Host-owned memory the guest can see (image, stacks, trampolines) lives in
- * [LOW_MIN, USER_MIN): PS4 code packs pointers into 40-bit fields. */
-#define LOW_MIN UINT64_C(0x0800000000)
 static uintptr_t low_next=LOW_MIN;
 void *runtime_low_map(size_t size, int prot) {
     size=align_up(size,PAGE);
