@@ -109,8 +109,7 @@ Knack's sound engine (Sony's Sndx) plays everything through libSceNgs2.
   - `V_CVT_PKRTZ_F16_F32` rounds toward zero like the hardware: a value past the half-float range
     becomes ±65504, never infinity;
   - `V_RCP_LEGACY_F32` takes the sign of an infinite result from its bits.
-- **Smoke shader skipped** (game profile, `GOW3_SKIP_PS=7ce10a50`): see
-  [Known issues](#known-issues).
+- **Robot dust skipped** (game profile, `GOW3_SKIP_PS`): see [Known issues](#known-issues).
 
 ### Frame rate
 
@@ -119,12 +118,15 @@ The Knack profile sets the vblank to 120 Hz (`GOW3_VBLANK_HZ=120`): up to 120 FP
 
 ## Known issues
 
-- **Dust and smoke clouds are hidden.** The soft smoke shader (pixel shader `7ce10a50`, for
-  example the dust of a broken robot) drew black and white "TV static" that stayed on screen.
-  It happens often above 60 FPS and rarely at 60. Checked and clean: its constants, its vertex
-  data, the GPU particle-light table, the eye-adaptation luminance and the shader translator's
-  half-float and legacy operations. Not checked yet: the textures it samples and the shader's own
-  math (needs a GPU debugger). Until then, the profile skips its draws.
+- **The dust of a broken robot is hidden.** Two draws of the soft smoke shader (pixel shader
+  `7ce10a50`) drew black and white "TV static" that stayed on screen: a 3-index dust triangle
+  (vertex shader `9b043ce0`) and a 2280-index dust cloud mesh (vertex shader `73cc6623`). It
+  happens often above 60 FPS and rarely at 60. Every noisy frame recorded had the dust triangle.
+  Checked and clean: their constants, vertex data, the GPU particle-light table, the
+  eye-adaptation luminance and the shader translator's half-float and legacy operations. Not
+  checked yet: the textures they sample and the shader's own math (needs a GPU debugger). Until
+  then, the profile skips only these two draws; the shader's other effects (wall lasers, sparks)
+  stay.
 - **Menu text** can glitch for the first frames after boot.
 - **Later levels** may send NGS2 parameters that are not implemented: they are skipped and logged
   as `NGS2: voice param ... skipped`.
@@ -186,7 +188,7 @@ Added while porting Knack. All are environment variables for `run.py`.
 | `GOW3_TOGGLE_FILE=<file>` | Switches GPU optimizations while the game runs (write a bit mask to the file) |
 | `GOW3_DISABLED_OPTIMIZATIONS=<mask>` | The optimizations switched off at start |
 | `GOW3_TSC_SCALE=<n>` | The game's clock runs 1/n: a 60 FPS run steps the game like n × 60 FPS (finds high frame rate bugs on a slow or busy GPU) |
-| `GOW3_SKIP_PS=<hash>[,...]` | Drops the draws of these pixel shaders |
+| `GOW3_SKIP_PS=<ps>[/<vs>[/<index count>]][,...]` | Drops the draws of a pixel shader, optionally only with that vertex shader and index count |
 | `GOW3_CAPTURE_TRIGGER=<file>`, `GOW3_CAPTURE_DIR=<dir>` | Creating the trigger file records the next frame: passes, shaders, textures, constants |
 | `GOW3_CAPTURE_PS=<hash>` | The recording keeps every draw of that pixel shader, with its constants, vertex streams and attribute formats |
 | `GOW3_CAPTURE_FULL=<address>` | That buffer is dumped whole, once per recording |

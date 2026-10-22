@@ -912,13 +912,23 @@ bool Rasterizer::FilterDrawPasses() const {
     return !(mode == Mode::Disable && (depth_copy || stencil_copy));
 }
 
-// knack_pc diagnostic: GOW3_SKIP_PS=<hex>[,<hex>...] drops the draws of these pixel shaders.
-static bool SkippedPixelShader(const GraphicsPipeline* pipeline) {
-    static const std::vector<u64> skipped = [] {
-        std::vector<u64> list;
+// knack_pc: GOW3_SKIP_PS=<ps hash>[/<vs hash>[/<index count>]][,...] drops those draws: a pixel
+// shader, optionally only with that vertex shader and index count (0 or left out: any).
+// `num_indices` is 0 for indirect draws (the count is in GPU memory): only entries without an
+// index count drop them.
+static bool SkippedDraw(const GraphicsPipeline* pipeline, u32 num_indices) {
+    struct Entry {
+        u64 ps, vs;
+        u32 indices;
+    };
+    static const std::vector<Entry> skipped = [] {
+        std::vector<Entry> list;
         if (const char* v = std::getenv("GOW3_SKIP_PS")) {
             for (char* p = const_cast<char*>(v); *p;) {
-                list.push_back(std::strtoull(p, &p, 16));
+                Entry e{std::strtoull(p, &p, 16), 0, 0};
+                if (*p == '/') e.vs = std::strtoull(p + 1, &p, 16);
+                if (*p == '/') e.indices = u32(std::strtoul(p + 1, &p, 10));
+                list.push_back(e);
                 while (*p == ',') ++p;
             }
         }
@@ -926,7 +936,11 @@ static bool SkippedPixelShader(const GraphicsPipeline* pipeline) {
     }();
     if (skipped.empty()) return false;
     const auto* ps = pipeline->GetStages()[u32(Shader::SwStage::Fragment)];
-    return ps && std::ranges::find(skipped, ps->pgm_hash) != skipped.end();
+    const auto* vs = pipeline->GetStages()[u32(Shader::SwStage::Vertex)];
+    return ps && std::ranges::any_of(skipped, [&](const Entry& e) {
+        return e.ps == ps->pgm_hash && (!e.vs || (vs && e.vs == vs->pgm_hash)) &&
+               (!e.indices || e.indices == num_indices);
+    });
 }
 
 void Rasterizer::Draw(bool is_indexed, u32 index_offset, const PreparedDraw* prepared) {
@@ -956,7 +970,7 @@ void Rasterizer::Draw(bool is_indexed, u32 index_offset, const PreparedDraw* pre
                          prepared->state.load(std::memory_order_acquire) == PreparedDraw::Ready &&
                          prepared->reg_checksum == liverpool->gfx_reg_checksum);
     }
-    if (!pipeline || SkippedPixelShader(pipeline)) {
+    if (!pipeline) {
         return;
     }
     if (pipelined && FilterDrawPasses()) {
@@ -1001,6 +1015,10 @@ void Rasterizer::DrawRecord(const GraphicsPipeline* pipeline, const PreparedDraw
     if (DrawPipe::OnStageB()) {
         FrameCapture::Poll();
         scheduler.PopPendingOperations();
+    }
+    // Here, not in Draw: pipelined draws pick their pipeline on the recording thread.
+    if (SkippedDraw(pipeline, Regs().num_indices)) {
+        return;
     }
     DiagPassBoundary(false);
     const auto& regs = Regs();
@@ -1233,7 +1251,7 @@ void Rasterizer::DrawIndirect(bool is_indexed, VAddr arg_address, u32 offset, u3
         .instance_sgpr_offset = instance_sgpr_offset,
     };
     const GraphicsPipeline* pipeline = pipeline_cache.GetGraphicsPipeline(params);
-    if (!pipeline || SkippedPixelShader(pipeline)) {
+    if (!pipeline) {
         return;
     }
     const IndirectDraw indirect = {arg_address + offset, count_address, stride, max_count};
@@ -1249,6 +1267,9 @@ void Rasterizer::DrawIndirectRecord(const GraphicsPipeline* pipeline, bool is_in
     if (DrawPipe::OnStageB()) {
         FrameCapture::Poll();
         scheduler.PopPendingOperations();
+    }
+    if (SkippedDraw(pipeline, 0)) {
+        return;
     }
     const VAddr count_address = indirect.count;
     const u32 stride = indirect.stride;
