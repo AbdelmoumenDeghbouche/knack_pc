@@ -421,6 +421,20 @@ extern "C" int gow3gpu_choice_poll(void) {
     return Gow3Overlay::PollChoice();
 }
 
+extern "C" int gow3gpu_png_decode(const void* png, uint64_t size, void* out, uint64_t out_size, uint32_t pitch,
+                                  uint32_t* width, uint32_t* height) {
+    Gow3Png::Image image;
+    if (!Gow3Png::DecodeRgba(static_cast<const unsigned char*>(png), size, image)) return 0;
+    const uint64_t row = uint64_t(image.width) * 4;
+    if (pitch < row || uint64_t(pitch) * (image.height - 1) + row > out_size) return 0;
+    for (int y = 0; y < image.height; ++y) {
+        std::memcpy(static_cast<unsigned char*>(out) + uint64_t(pitch) * y, image.rgba.data() + row * y, row);
+    }
+    *width = uint32_t(image.width);
+    *height = uint32_t(image.height);
+    return 1;
+}
+
 extern "C" int gow3gpu_text_input_poll(char* out, uint64_t size) {
     if (!g_window) return 2;
     std::string text;

@@ -12,7 +12,7 @@ extern "C" {
 namespace Gow3Png {
 
 namespace {
-constexpr int kMaxSide = 4096; // save icons are 228x128; anything far larger is not one
+constexpr int kMaxSide = 16384; // save icons are 228x128; libScePngDec images are game textures
 }
 
 bool DecodeRgba(const unsigned char* data, size_t size, Image& out) {

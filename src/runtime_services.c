@@ -462,8 +462,11 @@ static ABI int32_t trophy_release(int32_t id) { return id>0 ? 0 : TROPHY_INVALID
 
 /* ---- PlayGo: fully installed package ---- */
 static int playgo_handle, playgo_chunks=-1;
+/* Language mask: language n is bit 63-n; it starts as the system language. */
+static uint64_t playgo_languages;
 static ABI int32_t playgo_init(const void *params) {
     (void)params;
+    playgo_languages=language()>=0 && language()<48 ? UINT64_C(1)<<(63-language()) : 0;
     int fd=(int)runtime_file_open("/app0/sce_sys/playgo-chunk.dat",0,0);
     unsigned char header[12];
     playgo_chunks=1;
@@ -522,6 +525,15 @@ static ABI int32_t playgo_close(int32_t handle) {
     playgo_handle=0; return 0;
 }
 static ABI int32_t playgo_terminate(void) { playgo_handle=0; return 0; }
+static ABI int32_t playgo_get_languages(int32_t handle,uint64_t *mask) {
+    if (handle!=playgo_handle || !handle) return PLAYGO_BAD_HANDLE;
+    if (!mask) return PLAYGO_BAD_POINTER;
+    *mask=playgo_languages; return 0;
+}
+static ABI int32_t playgo_set_languages(int32_t handle,uint64_t mask) {
+    if (handle!=playgo_handle || !handle) return PLAYGO_BAD_HANDLE;
+    playgo_languages=mask; return 0;
+}
 
 /* ---- DiscMap: the game is fully installed, no disc bitmap exists ---- */
 #define DISC_MAP_NO_BITMAP ((int32_t)0x81100004)
@@ -721,9 +733,17 @@ static const RuntimeExport exports[]={
     {"scePlayGoGetLocus",playgo_locus}, {"scePlayGoSetInstallSpeed",playgo_speed},
     {"scePlayGoGetInstallSpeed",playgo_get_speed}, {"scePlayGoGetProgress",playgo_progress},
     {"scePlayGoSetToDoList",playgo_todo}, {"scePlayGoClose",playgo_close}, {"scePlayGoTerminate",playgo_terminate},
+    {"scePlayGoGetLanguageMask",playgo_get_languages}, {"scePlayGoSetLanguageMask",playgo_set_languages},
     {"sceMouseInit",ok_void}, {"sceMouseOpen",mouse_open}, {"sceMouseRead",mouse_read}, {"sceMouseClose",mouse_close},
     {"sceAudioInOpen",audio_in_open},
     {"sceDiscMapIsRequestOnHDD",discmap_on_hdd}, {"sceDiscMap_8A828CAEE7EDD5E9",discmap_8a82},
     {"sceVoiceInit",ok_void}, {"sceVoiceEnd",ok_void},
+    /* Knack: the pre-account-id (SDK 1.x) NP score, TUS and auth calls, offline as above. */
+    {"sceNetCtlInit",ok_void}, {"sceHttpCreateRequest",http_object},
+    {"sceNpAuthSetTimeout",ok_void}, {"sceNpAuthWaitAsync",np_poll},
+    {"sceNpScoreRecordScoreAsync",np_signed_out}, {"sceNpScoreGetRankingByNpIdAsync",np_signed_out},
+    {"sceNpScoreGetRankingByRangeAsync",np_signed_out}, {"sceNpScorePollAsync",np_poll},
+    {"sceNpTusCreateNpTitleCtx",np_request_ctx}, {"sceNpTusGetMultiUserVariable",np_signed_out},
+    {"sceNpTusGetMultiSlotVariable",np_signed_out}, {"sceNpTusSetMultiSlotVariable",np_signed_out},
 };
 uintptr_t runtime_services_resolve(const char *name) { return RUNTIME_LOOKUP(exports,name); }

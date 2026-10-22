@@ -293,10 +293,22 @@ static ABI JValue **value_assign(JValue **self, JValue *const *other) {
     free_value(*self); *self=copy;
     return self;
 }
+static ABI void value_copy(JValue **self, JValue *const *other) { *self=copy_value(*other); }
+static int32_t value_replace(JValue **self, JValue *v) { free_value(*self); *self=v; return 0; }
 static ABI int32_t value_set_object(JValue **self, JObject *const *o) {
     JValue *v=new_value(J_OBJECT); v->o=copy_object(*o);
-    free_value(*self); *self=v;
-    return 0;
+    return value_replace(self,v);
+}
+/* Knack: set(bool), set(long), set(unsigned long), set(double), set(String), set(ValueType). */
+static ABI int32_t value_set_bool(JValue **self, bool b) { JValue *v=new_value(J_BOOL); v->b=b; return value_replace(self,v); }
+static ABI int32_t value_set_int(JValue **self, int64_t i) { JValue *v=new_value(J_INT); v->i=i; return value_replace(self,v); }
+static ABI int32_t value_set_uint(JValue **self, uint64_t u) { JValue *v=new_value(J_UINT); v->u=u; return value_replace(self,v); }
+static ABI int32_t value_set_real(JValue **self, double r) { JValue *v=new_value(J_REAL); v->r=r; return value_replace(self,v); }
+static ABI int32_t value_set_string(JValue **self, char *const *s) { JValue *v=new_value(J_STRING); v->s=dup_string(*s); return value_replace(self,v); }
+/* The type's empty value (null, false, 0, "", [] or {}). */
+static ABI int32_t value_set_type(JValue **self, int32_t type) {
+    if (type<J_NULL || type>J_OBJECT) { fprintf(stderr,"STOP: Json2 Value::set with unknown type %d\n",type); exit(21); }
+    return value_replace(self,type==J_NULL ? NULL : new_value(type));
 }
 static ABI int32_t value_null_callback(JValue **self, void *callback, void *context) {
     (void)self; (void)callback; (void)context;
@@ -354,7 +366,9 @@ static ABI JValue ***array_end(JValue ***out, JArray *const *self) { *out=*self 
 static ABI void object_copy(JObject **self, JObject *const *other) { *self=copy_object(*other); }
 static ABI void object_free(JObject **self) { free_object(*self); *self=NULL; }
 static ABI JValue **object_index(JObject **self, char *const *key) { return object_slot(self,*key); }
+static ABI JMember ***object_begin(JMember ***out, JObject *const *self) { *out=*self ? (*self)->items : NULL; return out; }
 static ABI JMember ***object_end(JMember ***out, JObject *const *self) { *out=*self ? (*self)->items+(*self)->count : NULL; return out; }
+static ABI bool object_empty(JObject *const *self) { return !*self || !(*self)->count; }
 static ABI JMember ***object_find_key(JMember ***out, JObject *const *self, char *const *key) {
     JMember **found=object_find(*self,*key);
     if (!found) return object_end(out,self);
@@ -367,6 +381,7 @@ static ABI void iterator_copy(void **self, void *const *other) { *self=*other; }
 static ABI bool iterator_equal(void *const *self, void *const *other) { return *self==*other; }
 static ABI bool iterator_not_equal(void *const *self, void *const *other) { return *self!=*other; }
 static ABI JValue ***array_iterator_next(JValue ***self) { ++*self; return self; }
+static ABI JMember ***object_iterator_next(JMember ***self) { ++*self; return self; }
 static ABI JValue **array_iterator_value(JValue **const *self) { return *self; }
 static ABI JMember *object_iterator_pair(JMember **const *self) { return **self; }
 
@@ -385,7 +400,10 @@ static const RuntimeExport exports[]={
     {"_ZN3sce4Json5ValueC1ERKNS0_6StringE",value_from_string}, {"_ZN3sce4Json5ValueC1ERKNS0_5ArrayE",value_from_array},
     {"_ZN3sce4Json5ValueC1ERKNS0_6ObjectE",value_from_object}, {"_ZN3sce4Json5ValueD1Ev",value_free},
     {"_ZN3sce4Json5ValueaSERKS1_",value_assign}, {"_ZN3sce4Json5Value5clearEv",value_free},
-    {"_ZN3sce4Json5Value3setERKNS0_6ObjectE",value_set_object},
+    {"_ZN3sce4Json5Value3setERKNS0_6ObjectE",value_set_object}, {"_ZN3sce4Json5ValueC1ERKS1_",value_copy},
+    {"_ZN3sce4Json5Value3setEb",value_set_bool}, {"_ZN3sce4Json5Value3setEl",value_set_int},
+    {"_ZN3sce4Json5Value3setEm",value_set_uint}, {"_ZN3sce4Json5Value3setEd",value_set_real},
+    {"_ZN3sce4Json5Value3setERKNS0_6StringE",value_set_string}, {"_ZN3sce4Json5Value3setENS0_9ValueTypeE",value_set_type},
     {"_ZN3sce4Json5Value21setNullAccessCallBackEPFRKS1_NS0_9ValueTypeEPS2_PvES6_",value_null_callback},
     {"_ZN3sce4Json5Value9serializeERNS0_6StringE",value_serialize},
     {"_ZNK3sce4Json5Value7getTypeEv",value_type}, {"_ZNK3sce4Json5Value10getBooleanEv",value_boolean},
@@ -400,6 +418,9 @@ static const RuntimeExport exports[]={
     {"_ZNK3sce4Json5Array5beginEv",array_begin}, {"_ZNK3sce4Json5Array3endEv",array_end},
     {"_ZN3sce4Json5Array8iteratorD1Ev",nothing}, {"_ZN3sce4Json5Array8iteratorppEv",array_iterator_next},
     {"_ZNK3sce4Json5Array8iteratorneERKS2_",iterator_not_equal}, {"_ZNK3sce4Json5Array8iteratorptEv",array_iterator_value},
+    {"_ZNK3sce4Json5Array8iteratordeEv",array_iterator_value},
+    {"_ZNK3sce4Json6Object5beginEv",object_begin}, {"_ZNK3sce4Json6Object5emptyEv",object_empty},
+    {"_ZN3sce4Json6Object8iteratorppEv",object_iterator_next},
     {"_ZN3sce4Json6ObjectC1Ev",clear_handle}, {"_ZN3sce4Json6ObjectC1ERKS1_",object_copy},
     {"_ZN3sce4Json6ObjectD1Ev",object_free}, {"_ZN3sce4Json6ObjectixERKNS0_6StringE",object_index},
     {"_ZNK3sce4Json6Object4findERKNS0_6StringE",object_find_key}, {"_ZNK3sce4Json6Object3endEv",object_end},

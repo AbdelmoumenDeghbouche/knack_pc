@@ -214,6 +214,33 @@ bad:
     pthread_mutex_unlock(&lock);
     return ERR_PARAMETER;
 }
+/* The other half of save_set_param, plus type 5 (modification time, time_t). */
+static ABI int32_t save_get_param(const MountPoint *point, uint32_t type, void *buffer, uint64_t size, uint64_t *got) {
+    if (!initialized) return ERR_NOT_INITIALIZED;
+    if (!buffer || !size) return ERR_PARAMETER;
+    pthread_mutex_lock(&lock);
+    int slot=slot_of(point);
+    if (slot<0) { pthread_mutex_unlock(&lock); return ERR_NOT_MOUNTED; }
+    Param p; read_param(slots[slot].meta,&p);
+    pthread_mutex_unlock(&lock);
+    const void *from;
+    uint64_t n;
+    switch (type) {
+    case 0: from=&p; n=sizeof(p); break;
+    case 1: from=p.title; n=strnlen(p.title,sizeof(p.title)-1)+1; break;
+    case 2: from=p.subtitle; n=strnlen(p.subtitle,sizeof(p.subtitle)-1)+1; break;
+    case 3: from=p.detail; n=strnlen(p.detail,sizeof(p.detail)-1)+1; break;
+    case 4: from=&p.user_param; n=4; break;
+    case 5: from=&p.mtime; n=8; break;
+    default: return ERR_PARAMETER;
+    }
+    if ((type==0 || type>=4) && size<n) return ERR_PARAMETER;
+    if (n>size) n=size; /* a string cut to the buffer, still terminated */
+    memcpy(buffer,from,n);
+    if (type>=1 && type<=3) ((char *)buffer)[n-1]=0;
+    if (got) *got=n;
+    return 0;
+}
 static ABI int32_t save_icon(const MountPoint *point, const Icon *icon) {
     if (!initialized) return ERR_NOT_INITIALIZED;
     if (!icon || !icon->buffer) return ERR_PARAMETER;
@@ -340,7 +367,7 @@ static const RuntimeExport exports[]={
      * there is never a backup to check or restore. */
     {"sceSaveDataUmountWithBackup",save_umount},
     {"sceSaveDataCheckBackupData",save_no_backup}, {"sceSaveDataRestoreBackupData",save_no_backup},
-    {"sceSaveDataSetParam",save_set_param}, {"sceSaveDataSaveIcon",save_icon}, {"sceSaveDataDelete",save_delete},
+    {"sceSaveDataSetParam",save_set_param}, {"sceSaveDataGetParam",save_get_param}, {"sceSaveDataSaveIcon",save_icon}, {"sceSaveDataDelete",save_delete},
     {"sceSaveDataDirNameSearch",save_search},
     {"sceSaveDataSetupSaveDataMemory",memory_setup}, {"sceSaveDataGetSaveDataMemory",memory_get},
     {"sceSaveDataSetSaveDataMemory",memory_set},

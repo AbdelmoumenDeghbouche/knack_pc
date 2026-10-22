@@ -33,6 +33,10 @@ int gow3gpu_text_input_poll(char *out_utf8, uint64_t size);
  * poll: -1 while open, -2 cancelled, else the chosen index. */
 int gow3gpu_choice_begin(const char *title, const char *const *items, const char *const *images, int count, int focus);
 int gow3gpu_choice_poll(void);
+/* libScePngDec: PNG data decoded to RGBA8 rows `pitch` bytes apart in out (out_size bytes).
+ * 1 with the size in width/height; 0 when the data is not a PNG or out is too small. */
+int gow3gpu_png_decode(const void *png, uint64_t size, void *out, uint64_t out_size, uint32_t pitch,
+                       uint32_t *width, uint32_t *height);
 /* 1 while the in-game settings menu is open: the game's pad input is held neutral. */
 int gow3gpu_overlay_captures_input(void);
 /* Controller vibration strength set in the menu, 0 (off) to 100 (the game's own). */

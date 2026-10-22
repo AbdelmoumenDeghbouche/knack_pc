@@ -143,6 +143,26 @@ static ABI int32_t rtc_rfc2822_local(char *out, const uint64_t *utc_tick) {
     memcpy(out,text,strlen(text)+1); /* 31 characters + NUL, the SDK's buffer size */
     return 0;
 }
+/* "2026-09-25T12:00:00.00+03:00" (hundredths of a second; "Z" for UTC) for the given UTC tick
+ * (NULL = now) in local time. */
+static ABI int32_t rtc_rfc3339_local(char *out, const uint64_t *utc_tick) {
+    if (!out) return ERR_INVALID_POINTER;
+    uint64_t utc=utc_tick ? *utc_tick : now_utc();
+    int64_t offset=local_offset(utc), minutes=offset/60000000, size=minutes<0 ? -minutes : minutes;
+    DateTime t; from_tick((uint64_t)((int64_t)utc+offset),&t);
+    char zone[8]="Z";
+    if (minutes) snprintf(zone,sizeof(zone),"%c%02d:%02d",minutes<0 ? '-' : '+',(int)(size/60),(int)(size%60));
+    char text[40];
+    snprintf(text,sizeof(text),"%04u-%02u-%02uT%02u:%02u:%02u.%02u%s",t.year,t.month,t.day,t.hour,t.minute,t.second,
+             t.microsecond/10000,zone);
+    memcpy(out,text,strlen(text)+1);
+    return 0;
+}
+static ABI int32_t rtc_add_ticks(uint64_t *out, const uint64_t *tick, int64_t add) {
+    if (!out || !tick) return ERR_INVALID_POINTER;
+    *out=*tick+(uint64_t)add; return 0;
+}
+static ABI int32_t rtc_add_seconds(uint64_t *out, const uint64_t *tick, int64_t add) { return rtc_add_ticks(out,tick,add*1000000); }
 
 static const RuntimeExport exports[]={
     {"sceRtcGetCurrentClockLocalTime",rtc_current_local}, {"sceRtcGetCurrentClock",rtc_current_clock},
@@ -151,5 +171,7 @@ static const RuntimeExport exports[]={
     {"sceRtcGetDayOfWeek",rtc_day_of_week}, {"sceRtcGetTick",rtc_get_tick}, {"sceRtcSetTick",rtc_set_tick},
     {"sceRtcGetTickResolution",rtc_tick_resolution}, {"sceRtcSetTime_t",rtc_set_time_t},
     {"sceRtcGetTime_t",rtc_get_time_t}, {"sceRtcFormatRFC2822LocalTime",rtc_rfc2822_local},
+    {"sceRtcFormatRFC3339LocalTime",rtc_rfc3339_local},
+    {"sceRtcTickAddTicks",rtc_add_ticks}, {"sceRtcTickAddSeconds",rtc_add_seconds},
 };
 uintptr_t runtime_rtc_resolve(const char *name) { return RUNTIME_LOOKUP(exports,name); }

@@ -8,6 +8,7 @@
 #define _GNU_SOURCE
 #define _CRT_RAND_S /* rand_s */
 #include "runtime.h"
+#include "gpu/gow3gpu.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -401,6 +402,10 @@ static ABI int32_t temp_mount2(uint32_t option, MountPoint *mount) {
     printf("Runtime: temporary data mounted at /temp0 -> %s\n",host);
     return 0;
 }
+static ABI int32_t temp_space(const MountPoint *mount, uint64_t *kb) {
+    if (!mount || !kb) return (int32_t)0x80D90002;
+    *kb=1048576; return 0;
+}
 
 /* ---- NGS2: silent renderer. Handles are distinct non-null tokens; voices never play. ---- */
 static uintptr_t ngs2_next=0x1000;
@@ -424,6 +429,18 @@ static ABI int32_t ngs2_rack_create(uintptr_t system, uint32_t rack, const void 
     if (!out) return (int32_t)0x804A0003;
     *out=ngs2_token(); return 0;
 }
+/* Knack: racks in a buffer the game allocates (OrbisNgs2ContextBufferInfo: host buffer, size, ...).
+ * The silent renderer keeps no state there; one page is asked for. */
+typedef struct { void *buffer; uint64_t size; uintptr_t reserved[5], user; } Ngs2BufferInfo;
+static ABI int32_t ngs2_rack_buffer_size(uint32_t rack, const void *option, Ngs2BufferInfo *info) {
+    (void)rack; (void)option;
+    if (!info) return (int32_t)0x804A0003;
+    info->size=0x1000; return 0;
+}
+static ABI int32_t ngs2_rack_create_buffer(uintptr_t system, uint32_t rack, const void *option, const Ngs2BufferInfo *info, uintptr_t *out) {
+    (void)info;
+    return ngs2_rack_create(system,rack,option,NULL,out);
+}
 static ABI int32_t ngs2_voice_handle(uintptr_t rack, uint32_t index, uintptr_t *out) {
     if (!out) return (int32_t)0x804A0003;
     *out=rack+0x100000+(uintptr_t)index*0x10; return 0;
@@ -446,6 +463,89 @@ static ABI int32_t ngs2_render(uintptr_t system, Ngs2RenderBuffer *buffers, uint
     return 0;
 }
 static ABI int32_t ngs2_unsupported_waveform(void) { return (int32_t)0x804A0200; } /* invalid waveform */
+
+/* ---- PngDec (Knack): FFmpeg decodes (gow3gpu_png_decode); the header is read here. The handle
+ * is the game's work memory holding the create parameters. 8-bit RGBA/BGRA output only. ---- */
+#define PNG_INVALID_ADDR ((int32_t)0x80690001)
+#define PNG_INVALID_SIZE ((int32_t)0x80690002)
+#define PNG_INVALID_PARAM ((int32_t)0x80690003)
+#define PNG_INVALID_HANDLE ((int32_t)0x80690004)
+#define PNG_INVALID_DATA ((int32_t)0x80690010)
+#define PNG_DECODE_ERROR ((int32_t)0x80690012)
+#define PNG_MAGIC 0x504e4744u
+typedef struct { uint32_t this_size, attribute, max_width; } PngCreateParam;
+typedef struct { uint32_t magic, attribute, max_width; } PngState;
+typedef struct { const unsigned char *png; uint32_t size, reserved; } PngParseParam;
+typedef struct { uint32_t width, height; uint16_t color_space, bit_depth; uint32_t flags; } PngInfo;
+typedef struct { const unsigned char *png; unsigned char *image; uint32_t png_size, image_size;
+                 uint16_t pixel_format, alpha; uint32_t pitch; } PngDecodeParam;
+static uint32_t big32(const unsigned char *p) { return (uint32_t)p[0]<<24|(uint32_t)p[1]<<16|(uint32_t)p[2]<<8|p[3]; }
+/* IHDR, and a tRNS chunk before IDAT. Color space: 2 gray, 3 RGB, 4 palette, 18 gray+alpha, 19 RGBA. */
+static int32_t png_header(const unsigned char *png, uint32_t size, PngInfo *info) {
+    static const unsigned char signature[8]={0x89,'P','N','G','\r','\n',0x1a,'\n'};
+    if (!png || size<33 || memcmp(png,signature,8) || memcmp(png+12,"IHDR",4)) return PNG_INVALID_DATA;
+    static const uint16_t spaces[7]={2,0,3,4,18,0,19};
+    unsigned type=png[25];
+    if (type>6 || !spaces[type]) return PNG_INVALID_DATA;
+    info->width=big32(png+16); info->height=big32(png+20);
+    info->bit_depth=png[24]; info->color_space=spaces[type];
+    info->flags=png[28]==1; /* Adam7 */
+    for (uint32_t at=8; at+12<=size;) {
+        uint32_t length=big32(png+at);
+        if (!memcmp(png+at+4,"IDAT",4) || length>size-at-12) break;
+        if (!memcmp(png+at+4,"tRNS",4)) { info->flags|=2; break; }
+        at+=12+length;
+    }
+    return 0;
+}
+static ABI int32_t png_memory_size(const PngCreateParam *param) {
+    if (!param || param->attribute>1) return PNG_INVALID_PARAM;
+    if (param->max_width-1>1000000) return PNG_INVALID_SIZE;
+    return (int32_t)sizeof(PngState);
+}
+static ABI int32_t png_create(const PngCreateParam *param, void *memory, uint32_t size, void **handle) {
+    int32_t need=png_memory_size(param);
+    if (need<0) return need;
+    if (!memory || !handle) return PNG_INVALID_ADDR;
+    if (size<(uint32_t)need) return PNG_INVALID_SIZE;
+    if (param->attribute) { fputs("STOP: PngDec 16-bit output is not supported\n",stderr); exit(21); }
+    PngState *state=memory;
+    state->magic=PNG_MAGIC; state->attribute=param->attribute; state->max_width=param->max_width;
+    *handle=state;
+    return 0;
+}
+static ABI int32_t png_delete(PngState *handle) {
+    if (!handle || handle->magic!=PNG_MAGIC) return PNG_INVALID_HANDLE;
+    handle->magic=0; return 0;
+}
+static ABI int32_t png_parse(const PngParseParam *param, PngInfo *info) {
+    if (!param || !info) return PNG_INVALID_PARAM;
+    return png_header(param->png,param->size,info);
+}
+static ABI int32_t png_decode(PngState *handle, const PngDecodeParam *param, PngInfo *info) {
+    if (!handle || handle->magic!=PNG_MAGIC) return PNG_INVALID_HANDLE;
+    if (!param) return PNG_INVALID_PARAM;
+    if (!param->png || !param->image) return PNG_INVALID_ADDR;
+    if (param->pixel_format>1) return PNG_INVALID_PARAM;
+    PngInfo header;
+    int32_t r=png_header(param->png,param->png_size,&header);
+    if (r) return r;
+    if (header.width>handle->max_width) return PNG_INVALID_SIZE;
+    uint32_t pitch=param->pitch ? param->pitch : header.width*4, width, height;
+    if (!gow3gpu_png_decode(param->png,param->png_size,param->image,param->image_size,pitch,&width,&height))
+        return PNG_DECODE_ERROR;
+    /* No alpha channel and no tRNS: alpha is the caller's value. RGBA, or BGRA (format 1). */
+    int fill=(header.color_space==2 || header.color_space==3 || header.color_space==4) && !(header.flags&2);
+    for (uint32_t y=0;(fill || param->pixel_format) && y<height;++y) {
+        unsigned char *p=param->image+(uint64_t)pitch*y;
+        for (uint32_t x=0;x<width;++x,p+=4) {
+            if (param->pixel_format) { unsigned char t=p[0]; p[0]=p[2]; p[2]=t; }
+            if (fill) p[3]=(unsigned char)param->alpha;
+        }
+    }
+    if (info) *info=header;
+    return width>32767 || height>32767 ? 0 : (int32_t)(width<<16|height);
+}
 
 /* ---- Console features with no PC counterpart: accepted and ignored ---- */
 static ABI int32_t privacy_setting(int32_t type, int32_t *value) {
@@ -655,6 +755,11 @@ static const RuntimeExport exports[]={
     {"sceNgs2VoiceGetState",ngs2_voice_state}, {"sceNgs2VoiceGetStateFlags",ngs2_voice_flags},
     {"sceNgs2SystemRender",ngs2_render}, {"sceNgs2PanInit",ok_noop}, {"sceNgs2PanGetVolumeMatrix",ok_noop},
     {"sceNgs2ParseWaveformData",ngs2_unsupported_waveform}, {"sceNgs2CalcWaveformBlock",ngs2_unsupported_waveform},
+    {"sceNgs2RackQueryBufferSize",ngs2_rack_buffer_size}, {"sceNgs2RackCreate",ngs2_rack_create_buffer},
+    /* Knack: CPU 0 for every thread, as shadPS4; temporary data always has 1 GB free. */
+    {"sceKernelGetCurrentCpu",ok_noop}, {"sceAppContentTemporaryDataGetAvailableSpaceKb",temp_space},
+    {"scePngDecQueryMemorySize",png_memory_size}, {"scePngDecCreate",png_create}, {"scePngDecDelete",png_delete},
+    {"scePngDecParseHeader",png_parse}, {"scePngDecDecode",png_decode},
 };
 /* MediEvil native output (GOW3_UE4_SETRES=WxH, run.py): the base PS4 renderer makes its buffers at
  * the display size at start and only a live r.SetRes change resizes them (the debug menu's

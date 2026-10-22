@@ -268,6 +268,17 @@ static ABI int32_t audio_volume(int32_t handle, int32_t flags, const int32_t *vo
     pthread_mutex_unlock(&p->lock);
     return 0;
 }
+/* Mix of a pad-speaker port into the TV speakers: accepted (pad speaker sound already plays on
+ * the PC's output). */
+static ABI int32_t audio_mix_level_pad(int32_t handle, int32_t level) {
+    int32_t error=0;
+    pthread_mutex_lock(&table_lock);
+    Port *p=port_of(handle,&error);
+    pthread_mutex_unlock(&table_lock);
+    if (!p) return error;
+    if (p->type!=4) return ERR_INVALID_TYPE;
+    return level<0 || level>VOLUME_0DB ? (int32_t)0x80260014 /* INVALID_MIXLEVEL */ : 0;
+}
 static ABI int32_t audio_state(int32_t handle, PortState *state) {
     int32_t error=0;
     pthread_mutex_lock(&table_lock);
@@ -515,6 +526,7 @@ static const RuntimeExport exports[]={
     {"sceAudioOutInit",audio_init}, {"sceAudioOutOpen",audio_open}, {"sceAudioOutClose",audio_close},
     {"sceAudioOutOutput",audio_output}, {"sceAudioOutOutputs",audio_outputs},
     {"sceAudioOutSetVolume",audio_volume}, {"sceAudioOutGetPortState",audio_state},
+    {"sceAudioOutSetMixLevelPadSpk",audio_mix_level_pad},
     {"sceAudioOutGetLastOutputTime",audio_last_time},
 };
 uintptr_t runtime_audio_resolve(const char *name) { return RUNTIME_LOOKUP(exports,name); }
