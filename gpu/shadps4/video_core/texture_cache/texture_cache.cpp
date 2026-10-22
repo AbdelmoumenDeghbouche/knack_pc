@@ -397,18 +397,47 @@ void TextureCache::DownloadImageMemory(ImageId image_id, bool sync) {
     }
 }
 
+ImageId TextureCache::FeedbackCopy(ImageId target_id, u64 epoch) {
+    auto& entry = feedback_copies[target_id.index];
+    const Image& target = slot_images[target_id];
+    if (entry.copy) {
+        const auto& info = slot_images[entry.copy].info;
+        if (info.pixel_format != target.info.pixel_format || info.size != target.info.size ||
+            info.resources != target.info.resources || info.num_samples != target.info.num_samples) {
+            // ponytail: the old copy is not freed (a target changing size or format is rare).
+            entry = {};
+        }
+    }
+    if (!entry.copy) {
+        entry.copy = slot_images.insert(instance, runtime, slot_image_views, target.info);
+    }
+    Image& copy = slot_images[entry.copy];
+    if (entry.epoch != epoch) {
+        runtime.CopyImage(&slot_images[target_id], &copy);
+        entry.epoch = epoch;
+    }
+    copy.flags &= ~ImageFlagBits::Dirty;
+    return entry.copy;
+}
+
 void TextureCache::DiagDumpImage(ImageId image_id, const char* tag) {
     Image& image = slot_images[image_id];
     const u32 bytes_per_pixel = image.info.num_bits / 8;
-    if (image.info.props.is_depth || image.info.props.is_block || bytes_per_pixel == 0) {
+    if (image.info.props.is_depth || bytes_per_pixel == 0) {
         return;
     }
-    const u32 size = image.info.pitch * image.info.size.height * bytes_per_pixel;
+    // knack_pc: block-compressed images are written as their 4x4 blocks (bytes_per_pixel is then
+    // the bytes per block), mip 0.
+    const bool block = image.info.props.is_block;
+    const u32 row_texels = block ? (image.info.size.width + 3) / 4 * 4 : image.info.pitch;
+    const u32 rows = block ? (image.info.size.height + 3) / 4 * 4 : image.info.size.height;
+    const u32 size = block ? (row_texels / 4) * (rows / 4) * bytes_per_pixel
+                           : image.info.pitch * image.info.size.height * bytes_per_pixel;
     const auto download = runtime.GetStagingPool().Request(size, MemoryType::HostCached, 16);
     const vk::BufferImageCopy copy = {
         .bufferOffset = download.offset,
-        .bufferRowLength = image.info.pitch,
-        .bufferImageHeight = image.info.size.height,
+        .bufferRowLength = row_texels,
+        .bufferImageHeight = rows,
         .imageSubresource = {vk::ImageAspectFlagBits::eColor, 0, 0, 1},
         .imageOffset = {0, 0, 0},
         .imageExtent = {image.info.size.width, image.info.size.height, 1},

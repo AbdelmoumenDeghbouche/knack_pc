@@ -522,6 +522,18 @@ void BufferCache::EnsureResident(const Buffer* arena, u64 first_block, u64 last_
 
     staging.Flush();
     runtime.CopyBuffer(staging.buffer, bda_pagetable_buffer.get(), copies);
+    // knack_pc test (GOW3_ZERO_RESIDENT=1): new backing memory starts as zeros, not whatever the
+    // allocation held.
+    static const bool zero = [] {
+        const char* v = std::getenv("GOW3_ZERO_RESIDENT");
+        return v && *v == '1';
+    }();
+    if (zero) {
+        for (const auto& range : bind_ranges) {
+            runtime.FillBuffer(arena, (range.start << block_shift) - arena->cpu_addr,
+                               (range.end - range.start) << block_shift, 0);
+        }
+    }
 }
 
 bool BufferCache::SynchronizeMemory(const Buffer* arena, VAddr device_addr, u32 size,

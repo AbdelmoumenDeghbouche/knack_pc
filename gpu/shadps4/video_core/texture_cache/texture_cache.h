@@ -243,6 +243,12 @@ public:
     /// the GPU.
     void DiagDumpImage(ImageId image_id, const char* tag);
 
+    /// knack_pc: a copy of `target` to sample while it is a bound render target. On the PS4 the
+    /// texture units do not see the color block's writes until they are flushed, so a shader
+    /// reading its own target sees the target as it was; Vulkan would show it half-written.
+    /// The copy is taken again when `epoch` changes.
+    ImageId FeedbackCopy(ImageId target, u64 epoch);
+
     [[nodiscard]] Image& GetImage(ImageId id) {
         auto& image = slot_images[id];
         TouchImage(image);
@@ -436,6 +442,11 @@ private:
 
 private:
     const Vulkan::Instance& instance;
+    struct FeedbackCopyEntry {
+        ImageId copy{};
+        u64 epoch = ~u64(0);
+    };
+    std::unordered_map<u32, FeedbackCopyEntry> feedback_copies;
     Vulkan::Scheduler& scheduler;
     Vulkan::Runtime& runtime;
     AmdGpu::Liverpool* liverpool;

@@ -1010,6 +1010,22 @@ void Rasterizer::DiagPassBoundary(bool force) {
     diag_addresses = force ? std::array<VAddr, 8>{} : addresses;
 }
 
+u64 Rasterizer::FeedbackEpoch() {
+    const auto& regs = Regs();
+    std::array<VAddr, AmdGpu::NUM_COLOR_BUFFERS> targets{};
+    for (u32 cb = 0; cb < targets.size(); ++cb) {
+        if (regs.color_buffers[cb]) {
+            targets[cb] = regs.color_buffers[cb].Address();
+        }
+    }
+    if (targets != feedback_targets || feedback_dispatches != dispatch_count) {
+        feedback_targets = targets;
+        feedback_dispatches = dispatch_count;
+        ++feedback_epoch;
+    }
+    return feedback_epoch;
+}
+
 void Rasterizer::DrawRecord(const GraphicsPipeline* pipeline, const PreparedDraw* used_prepared,
                             bool is_indexed, u32 index_offset) {
     if (DrawPipe::OnStageB()) {
@@ -1068,6 +1084,35 @@ void Rasterizer::DrawRecord(const GraphicsPipeline* pipeline, const PreparedDraw
     draw_inputs.pending = false;
     if (!bound) {
         return;
+    }
+    // knack_pc diagnostic: GOW3_DIAG_IMAGES=1 with GOW3_CAPTURE_PS: a recorded frame also writes
+    // the textures of that pixel shader's first draws (out/diag, or GOW3_DIAG_DIR).
+    if (FrameCapture::IsRecording()) {
+        static const bool diag = [] {
+            const char* env = std::getenv("GOW3_DIAG_IMAGES");
+            return env && *env == '1';
+        }();
+        static const u64 watched = [] {
+            const char* v = std::getenv("GOW3_CAPTURE_PS");
+            return v ? std::strtoull(v, nullptr, 16) : 0;
+        }();
+        static u64 frame = ~u64(0);
+        static u32 dumped = 0;
+        const auto* ps = pipeline->GetStages()[u32(Shader::SwStage::Fragment)];
+        if (diag && watched && ps && ps->pgm_hash == watched) {
+            if (frame != FrameCapture::Flips()) {
+                frame = FrameCapture::Flips();
+                dumped = 0;
+            }
+            if (dumped < 16) {
+                char tag[32];
+                std::snprintf(tag, sizeof(tag), "d%02u_n%u", dumped++, Regs().num_indices);
+                const auto images = bound_images;
+                for (const auto image_id : images) {
+                    texture_cache.DiagDumpImage(image_id, tag);
+                }
+            }
+        }
     }
     const auto state = BeginRendering(pipeline);
 
@@ -1213,6 +1258,10 @@ void Rasterizer::DrawRecord(const GraphicsPipeline* pipeline, const PreparedDraw
     });
     if (FrameCapture::Active()) {
         const auto* ps = pipeline->GetStages()[u32(Shader::SwStage::Fragment)];
+        FrameCapture::Text(fmt::format("  draw state: prim {} gs {} vtx_point_size {} indexed {}",
+                                       u32(regs.primitive_type),
+                                       pipeline->GetStages()[u32(Shader::SwStage::Geometry)] != nullptr,
+                                       u32(regs.vs_output_control.use_vtx_point_size), is_indexed));
         FrameCapture::Draw(vs_info.pgm_hash, ps ? ps->pgm_hash : 0, num_indices, num_instances);
         if (const auto& bc = regs.blend_control[0]; bc.enable && regs.color_buffers[0]) {
             char note[128];
@@ -1431,6 +1480,7 @@ void Rasterizer::DispatchRecord(const ComputePipeline* pipeline) {
         }
     });
     DebugState.IncDispatch();
+    ++dispatch_count;
 
     // knack_pc diagnostic: GOW3_CAPTURE_DOWNLOAD=<hex address>:<bytes>:<hex cs hash>: in a
     // recorded frame, the GPU's copy of that region after the first dispatch and after each
@@ -1550,6 +1600,7 @@ void Rasterizer::DispatchIndirectRecord(const ComputePipeline* pipeline, VAddr a
         }
     });
     DebugState.IncDispatch();
+    ++dispatch_count;
 
     ResetBindings(true);
     scheduler.KickRecording();
@@ -2602,6 +2653,29 @@ void Rasterizer::BindTextures(const Shader::Info& stage, const PreparedStage* pr
                     ++proxy_samples;
                     continue;
                 }
+            }
+            // knack_pc: a color target the draw also samples is read from a copy taken once per
+            // pass (TextureCache::FeedbackCopy) with GOW3_FEEDBACK_COPY=1; else the feedback loop
+            // layout. Off by default: it did not change Knack's smoke noise (2026-10-22).
+            static const bool feedback_copy = [] {
+                const char* v = std::getenv("GOW3_FEEDBACK_COPY");
+                return v && *v == '1';
+            }();
+            if (feedback_copy && binding.is_target && !binding.force_general && !is_storage &&
+                !image.info.props.is_depth) {
+                const auto copy_id = texture_cache.FeedbackCopy(image_id, FeedbackEpoch());
+                auto& copy = texture_cache.GetImage(copy_id);
+                auto& copy_view = texture_cache.FindTexture(copy_id, desc, nullptr, false);
+                barrier |= runtime.Transit(&copy, vk::ImageLayout::eShaderReadOnlyOptimal,
+                                           vk::PipelineStageFlagBits2::eAllCommands,
+                                           vk::AccessFlagBits2::eShaderRead, desc.view_info.range);
+                if (FrameCapture::Active()) {
+                    FrameCapture::Sampled(image.info, false);
+                }
+                image_infos.emplace_back(VK_NULL_HANDLE, *copy_view.image_view,
+                                         copy.backing->state.layout);
+                set_ok = false;
+                continue;
             }
             // The image is either bound as storage in a separate descriptor or bound as render
             // target in feedback loop. Depth images are excluded because they can't be bound as

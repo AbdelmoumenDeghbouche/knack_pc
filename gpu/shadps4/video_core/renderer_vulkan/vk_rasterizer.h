@@ -347,6 +347,13 @@ private:
     std::pair<VideoCore::ImageId, VideoCore::TextureCache::ImageDesc> db_desc;
     boost::container::static_vector<vk::DescriptorImageInfo, Shader::NUM_IMAGES> image_infos;
     boost::container::static_vector<vk::DescriptorBufferInfo, Shader::NUM_BUFFERS> buffer_infos;
+    /// knack_pc: the pass a feedback copy belongs to (TextureCache::FeedbackCopy): the color
+    /// targets and the dispatches seen when the epoch last changed.
+    u64 FeedbackEpoch();
+    std::array<VAddr, AmdGpu::NUM_COLOR_BUFFERS> feedback_targets{};
+    u64 feedback_dispatches = 0;
+    u64 dispatch_count = 0;
+    u64 feedback_epoch = 0;
     boost::container::static_vector<VideoCore::ImageId, Shader::NUM_IMAGES> bound_images;
     /// gow3 diagnostics (GOW3_DIAG_IMAGES=1, draw pipe off): while a frame capture records, the
     /// color targets of a pass are written to files when the next pass or dispatch begins.
