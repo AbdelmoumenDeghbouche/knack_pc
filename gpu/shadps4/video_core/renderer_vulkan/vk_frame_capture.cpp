@@ -271,6 +271,20 @@ void FrameCapture::Draw(u64 vs_hash, u64 ps_hash, u32 num_indices, u32 num_insta
     AddShader(e, vs_hash);
     AddShader(e, ps_hash);
     AddSampled(e);
+    // knack_pc: GOW3_CAPTURE_PS=<hex hash>: every draw with that pixel shader keeps its constants.
+    static const u64 watched = [] {
+        const char* v = std::getenv("GOW3_CAPTURE_PS");
+        return v ? std::strtoull(v, nullptr, 16) : 0;
+    }();
+    if (watched && ps_hash == watched) {
+        e.buffers.push_back(std::format("  draw #{} vs {:016x} ps {:016x} indices {} instances {}",
+                                        e.draws, vs_hash, ps_hash, num_indices, num_instances));
+        for (auto& b : pending_buffers) {
+            e.buffers.push_back(std::move(b));
+        }
+        pending_buffers.clear();
+        return;
+    }
     AddBuffers(e);
 }
 
@@ -296,7 +310,18 @@ void FrameCapture::Buffer(u64 stage_hash, u32 slot, VAddr address, const void* d
     if (!data) {
         return;
     }
-    const u64 bytes = std::min<u64>(size, 1024) & ~u64(3);
+    // knack_pc: GOW3_CAPTURE_FULL=<hex address>: that buffer is dumped whole (up to 1 MB).
+    static const u64 full = [] {
+        const char* v = std::getenv("GOW3_CAPTURE_FULL");
+        return v ? std::strtoull(v, nullptr, 16) : 0;
+    }();
+    // Once per captured frame (the first binding of it).
+    static u64 full_frame = ~u64(0);
+    const bool whole = address == full && full_frame != flips.load(std::memory_order_relaxed);
+    if (whole) {
+        full_frame = flips.load(std::memory_order_relaxed);
+    }
+    const u64 bytes = std::min<u64>(size, whole ? 1_MB : 1024) & ~u64(3);
     std::string out = std::format("  buffer stage {:016x} slot {} at {:#x} size {}:", stage_hash,
                                   slot, address, size);
     const auto* words = static_cast<const float*>(data);
@@ -307,6 +332,10 @@ void FrameCapture::Buffer(u64 stage_hash, u32 slot, VAddr address, const void* d
         out += std::format(" {:12.6g}", words[i]);
     }
     pending_buffers.push_back(std::move(out));
+}
+
+void FrameCapture::Text(std::string text) {
+    pending_buffers.push_back(std::move(text));
 }
 
 void FrameCapture::Sampled(const VideoCore::ImageInfo& info, bool storage) {

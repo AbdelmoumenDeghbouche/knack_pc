@@ -912,6 +912,23 @@ bool Rasterizer::FilterDrawPasses() const {
     return !(mode == Mode::Disable && (depth_copy || stencil_copy));
 }
 
+// knack_pc diagnostic: GOW3_SKIP_PS=<hex>[,<hex>...] drops the draws of these pixel shaders.
+static bool SkippedPixelShader(const GraphicsPipeline* pipeline) {
+    static const std::vector<u64> skipped = [] {
+        std::vector<u64> list;
+        if (const char* v = std::getenv("GOW3_SKIP_PS")) {
+            for (char* p = const_cast<char*>(v); *p;) {
+                list.push_back(std::strtoull(p, &p, 16));
+                while (*p == ',') ++p;
+            }
+        }
+        return list;
+    }();
+    if (skipped.empty()) return false;
+    const auto* ps = pipeline->GetStages()[u32(Shader::SwStage::Fragment)];
+    return ps && std::ranges::find(skipped, ps->pgm_hash) != skipped.end();
+}
+
 void Rasterizer::Draw(bool is_indexed, u32 index_offset, const PreparedDraw* prepared) {
     RENDERER_TRACE;
     Gow3Stats::draws.fetch_add(1, std::memory_order_relaxed);
@@ -939,7 +956,7 @@ void Rasterizer::Draw(bool is_indexed, u32 index_offset, const PreparedDraw* pre
                          prepared->state.load(std::memory_order_acquire) == PreparedDraw::Ready &&
                          prepared->reg_checksum == liverpool->gfx_reg_checksum);
     }
-    if (!pipeline) {
+    if (!pipeline || SkippedPixelShader(pipeline)) {
         return;
     }
     if (pipelined && FilterDrawPasses()) {
@@ -1216,7 +1233,7 @@ void Rasterizer::DrawIndirect(bool is_indexed, VAddr arg_address, u32 offset, u3
         .instance_sgpr_offset = instance_sgpr_offset,
     };
     const GraphicsPipeline* pipeline = pipeline_cache.GetGraphicsPipeline(params);
-    if (!pipeline) {
+    if (!pipeline || SkippedPixelShader(pipeline)) {
         return;
     }
     const IndirectDraw indirect = {arg_address + offset, count_address, stride, max_count};
@@ -1393,6 +1410,53 @@ void Rasterizer::DispatchRecord(const ComputePipeline* pipeline) {
         }
     });
     DebugState.IncDispatch();
+
+    // knack_pc diagnostic: GOW3_CAPTURE_DOWNLOAD=<hex address>:<bytes>:<hex cs hash>: in a
+    // recorded frame, the GPU's copy of that region after the first dispatch and after each
+    // dispatch of that shader, summarized in 28-float records (count, bad values, largest).
+    static const auto download = [] {
+        struct { VAddr addr = 0; u32 size = 0; u64 cs = 0; } d;
+        if (const char* v = std::getenv("GOW3_CAPTURE_DOWNLOAD")) {
+            char* p;
+            d.addr = std::strtoull(v, &p, 16);
+            d.size = u32(std::strtoul(p + (*p == ':'), &p, 10));
+            d.cs = std::strtoull(p + (*p == ':'), nullptr, 16);
+        }
+        return d;
+    }();
+    static u64 download_frame = ~u64(0);
+    if (download.size && FrameCapture::IsRecording() &&
+        (cs.pgm_hash == download.cs || download.cs == 1 || download_frame != FrameCapture::Flips())) {
+        download_frame = FrameCapture::Flips();
+        const auto bytes = buffer_cache.DebugRead(download.addr, download.size);
+        const auto* f = reinterpret_cast<const float*>(bytes.data());
+        u32 nonzero = 0, bad = 0;
+        float largest = 0;
+        std::string list;
+        for (u32 i = 0; i < download.size / 4; ++i) {
+            const float v = f[i];
+            nonzero += v != 0.0f;
+            if (!std::isfinite(v) || std::abs(v) > 1e6f) {
+                if (bad++ < 16) {
+                    list += fmt::format(" r{}[{}]={}", i / 28, i % 28, v);
+                }
+            } else {
+                largest = std::max(largest, std::abs(v));
+            }
+        }
+        std::string records;
+        if (download.size <= 256) {
+            for (u32 i = 0; i < download.size / 4; ++i) records += fmt::format(" {}", f[i]);
+        } else
+        for (u32 r = 0; r < download.size / 112 && records.size() < 600; ++r) {
+            bool any = false;
+            for (u32 k = 0; k < 28; ++k) any |= f[r * 28 + k] != 0.0f;
+            if (any) records += fmt::format(" {}", r);
+        }
+        FrameCapture::Note(fmt::format("{}  download after cs {:08x}: nonzero {} bad {} largest {}{} records{}",
+                                       '\n',
+                                       u32(cs.pgm_hash), nonzero, bad, largest, list, records).c_str());
+    }
 
     // gow3 diagnostics: GOW3_DIAG_IMAGES=1 writes the images a dispatch read and wrote, after
     // it, while a frame capture records (GOW3_CAPTURE_TRIGGER).
@@ -1822,6 +1886,33 @@ void Rasterizer::ResolveVertexBuffers(const GraphicsPipeline* pipeline,
         motion_geometry = ready ? ready->buffers_hash
                                 : XXH3_64bits(guest_buffers.data(),
                                               guest_buffers.size() * sizeof(AmdGpu::Buffer));
+    }
+    // knack_pc: the vertex streams and attribute formats of GOW3_CAPTURE_PS draws.
+    static const u64 watched_ps = [] {
+        const char* v = std::getenv("GOW3_CAPTURE_PS");
+        return v ? std::strtoull(v, nullptr, 16) : 0;
+    }();
+    if (watched_ps && FrameCapture::Active()) {
+        const auto* ps = pipeline->GetStages()[u32(Shader::SwStage::Fragment)];
+        if (ps && ps->pgm_hash == watched_ps) {
+            for (u32 i = 0; i < guest_buffers.size(); ++i) {
+                const auto& vb = guest_buffers[i];
+                if (vb.base_address && memory->IsValidGpuMapping(vb.base_address, 0)) {
+                    FrameCapture::Buffer(0xFE7C0000u + i, i, vb.base_address,
+                                         reinterpret_cast<const void*>(vb.base_address),
+                                         memory->ClampRangeSize(vb.base_address, vb.GetSize()));
+                }
+            }
+            std::string formats;
+            for (const auto& a : attributes) {
+                formats += fmt::format(" loc{}:b{}:{}+{}", a.location, a.binding,
+                                       vk::to_string(a.format), a.offset);
+            }
+            for (const auto& b : bindings) {
+                formats += fmt::format(" b{}:stride{}", b.binding, b.stride);
+            }
+            FrameCapture::Text("  vertex inputs" + formats);
+        }
     }
     // Object motion research: vertex streams of G-buffer draws.
     if (FrameCapture::Active() && gbuffer_draw) {

@@ -33,6 +33,10 @@ public:
     static bool Active() {
         return state.load(std::memory_order_relaxed) != Idle;
     }
+    /// Flips so far (a frame number).
+    static u64 Flips() {
+        return flips.load(std::memory_order_relaxed);
+    }
     /// GPU thread: whether a frame is being recorded right now.
     static bool IsRecording() {
         return state.load(std::memory_order_relaxed) == Recording;
@@ -47,6 +51,8 @@ public:
     static void Draw(u64 vs_hash, u64 ps_hash, u32 num_indices, u32 num_instances);
     static void Dispatch(u64 cs_hash, u32 x, u32 y, u32 z);
     static void Sampled(const VideoCore::ImageInfo& info, bool storage);
+    /// GPU thread: a line kept with the next draw's dumped constants.
+    static void Text(std::string text);
     /// Contents of a bound buffer (first 1 KiB), kept for small passes and a pass's first draw.
     static void Buffer(u64 stage_hash, u32 slot, VAddr address, const void* data, u64 size);
     static void Note(const char* text);

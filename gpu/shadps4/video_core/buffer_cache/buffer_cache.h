@@ -103,6 +103,9 @@ public:
     /// Return true when a region is modified from the GPU
     [[nodiscard]] bool IsRegionGpuModified(VAddr addr, size_t size);
 
+    /// knack_pc diagnostic: the GPU's copy of a region (waits for the GPU; outside rendering).
+    [[nodiscard]] std::vector<u8> DebugRead(VAddr device_addr, u32 size);
+
     /// Processes the fault buffer.
     void ProcessFaultBuffer();
 

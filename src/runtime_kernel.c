@@ -107,7 +107,14 @@ static void measure_tsc(void) {
     printf("Runtime: TSC %.4f GHz\n",(double)tsc_hz/1e9);
 }
 static ABI uint64_t read_tsc(void) { return __rdtsc(); }
-static ABI uint64_t tsc_frequency(void) { measure_tsc(); return tsc_hz; }
+/* GOW3_TSC_SCALE=<n> reports n times the TSC rate: the game's clock runs 1/n, so a 60 FPS run
+ * steps the game like n*60 FPS (finds high frame rate bugs on a slow or busy GPU). */
+static ABI uint64_t tsc_frequency(void) {
+    measure_tsc();
+    static uint64_t scale;
+    if (!scale) { const char *v=getenv("GOW3_TSC_SCALE"); scale=v ? strtoull(v,NULL,10) : 1; if (!scale) scale=1; }
+    return tsc_hz*scale;
+}
 /* Shared with the GPU library so flip/label timestamps use the guest's clock. */
 uint64_t runtime_process_time_us(void) { return process_time(); }
 uint64_t runtime_process_time_counter(void) { return process_time_counter(); }

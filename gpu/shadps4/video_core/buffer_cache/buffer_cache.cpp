@@ -172,6 +172,16 @@ void BufferCache::ReadMemory(VAddr device_addr, u64 size, bool is_write, bool as
     }
 }
 
+std::vector<u8> BufferCache::DebugRead(VAddr device_addr, u32 size) {
+    const auto [buffer, offset] = ObtainBuffer(device_addr, size, false);
+    const auto staging = staging_pool.Request(size, VideoCore::MemoryType::HostCached);
+    const vk::BufferCopy copy{.srcOffset = offset, .dstOffset = staging.offset, .size = size};
+    runtime.CopyBuffer(buffer, staging.buffer, std::span{&copy, 1});
+    scheduler.Finish();
+    staging.buffer->Invalidate(staging.offset, size);
+    return {staging.mapped, staging.mapped + size};
+}
+
 void BufferCache::DownloadMemory(const Buffer* arena, VAddr device_addr, u64 size) {
     boost::container::small_vector<vk::BufferCopy, 1> copies;
     u64 total_size_bytes = 0;
