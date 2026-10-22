@@ -91,6 +91,31 @@ struct Ngs2Filter {
     std::vector<Ngs2FilterHistory> history;
 };
 
+// knack_pc: PS4 sampler envelope (param 0x10000006): forward points run after play, release points
+// after a stop event; a point is (curve, duration in samples at the system rate, height), each
+// segment goes from the previous height (0 at play) to its own. Empty = no envelope.
+struct Ngs2EnvelopePoint {
+    std::uint32_t curve;
+    std::uint32_t duration;
+    float height;
+};
+struct Ngs2Envelope {
+    std::vector<Ngs2EnvelopePoint> forward, release;
+    bool releasing = false;
+    std::size_t segment = 0;
+    std::uint64_t position = 0;
+    float start = 0.0f;
+    float gain = 1.0f;
+};
+
+// knack_pc: PS4 submixer compressor (param 0x20000002): linear threshold, ratio, attack and
+// release in seconds, output level.
+struct Ngs2Compressor {
+    bool enabled = false;
+    float threshold = 1.0f, ratio = 1.0f, attack = 0.0f, release = 0.0f, level = 1.0f;
+    float detector = 0.0f;
+};
+
 struct Ngs2Port {
     Ngs2Voice* dest = nullptr;
     float volume = 1.0f;
@@ -134,6 +159,8 @@ struct Ngs2Voice {
     std::vector<Ngs2Port> ports;
     std::vector<std::vector<float>> matrices;
     std::vector<Ngs2Filter> filters;
+    Ngs2Envelope envelope;
+    Ngs2Compressor compressor;
     std::uint32_t outputId = 0;
     float fbwLevel = 1.0f;
     float lfeLevel = 1.0f;

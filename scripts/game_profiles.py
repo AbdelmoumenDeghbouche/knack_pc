@@ -28,10 +28,9 @@ PROFILES = {
                   'env': {'GOW3_RED_ZONE': '1', 'GOW3_ENGINE_FPS': '240',
                           'GOW3_ALLOWED_RESOLUTIONS': 'native;2560x1080;5120x2160'}},
     'CUSA01623': {'name': 'God of War III', 'modules': ('libc.prx', 'libSceFios2.prx')},
-    # Knack (US 1.10, the development target; EU CUSA00006/CUSA00202 untested). NGS2 does not
-    # implement the sampler envelope (0x10000006), the submixer compressor (0x20000002) and
-    # filter (0x20000006) yet: they are skipped and logged instead of stopping the game.
-    # ponytail: mix without those effects, implement them in src/ngs2 to remove the skip.
+    # Knack (US 1.10, the development target; EU CUSA00006/CUSA00202 untested). NGS2 parameters
+    # not implemented yet (none in the first level) are skipped and logged instead of stopping, so a
+    # later level plays on with that one effect missing.
     # The draw-preparation workers (prepared resources 4096, prepared draws 8192) read Knack's
     # resource descriptors before the game has written them: gameplay geometry exploded.
     'CUSA00068': {'name': 'Knack', 'modules': ('libc.prx', 'libSceFios2.prx'), 'env': KNACK_ENV},

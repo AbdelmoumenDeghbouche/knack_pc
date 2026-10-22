@@ -151,6 +151,60 @@ static void ApplyFilter(Ngs2Voice& voice, Ngs2Filter& filter, std::uint32_t grai
     }
 }
 
+// knack_pc: the envelope's gain for the next sample (linear segments; the curve type is not used).
+// Returns false once the release points have ended.
+static bool EnvelopeStep(Ngs2Envelope& e, float& gain) {
+    const auto& points = e.releasing ? e.release : e.forward;
+    while (e.segment < points.size() && e.position >= points[e.segment].duration) {
+        e.start = points[e.segment].height;
+        ++e.segment;
+        e.position = 0;
+    }
+    if (e.segment >= points.size()) {
+        e.gain = points.empty() ? e.gain : points.back().height;
+        gain = e.gain;
+        return !e.releasing;
+    }
+    const auto& point = points[e.segment];
+    e.gain = e.start + (point.height - e.start) * static_cast<float>(e.position) / static_cast<float>(point.duration);
+    ++e.position;
+    gain = e.gain;
+    return true;
+}
+
+static void ApplyEnvelope(Ngs2Voice& voice, std::uint32_t grain) {
+    if (voice.envelope.forward.empty() && voice.envelope.release.empty()) return;
+    for (std::uint32_t i = 0; i < grain; i++) {
+        float gain;
+        if (!EnvelopeStep(voice.envelope, gain)) {
+            for (std::uint32_t c = 0; c < voice.channels; c++)
+                std::fill(voice.samples.begin() + c * grain + i, voice.samples.begin() + (c + 1) * grain, 0.0f);
+            voice.state = Ngs2PlayState::Stopped;
+            return;
+        }
+        for (std::uint32_t c = 0; c < voice.channels; c++) voice.samples[c * grain + i] *= gain;
+    }
+}
+
+// knack_pc: feed-forward peak compressor. Above the threshold the level grows by `ratio` per unit
+// (below 1: that slope, 0 limits; from 1 up: an N:1 ratio); the output is scaled by `level`.
+static void ApplyCompressor(Ngs2Voice& voice, std::uint32_t grain, std::uint32_t systemRate) {
+    auto& c = voice.compressor;
+    const auto coefficient = [systemRate](float seconds) {
+        return seconds > 0.0f ? std::exp(-1.0f / (seconds * static_cast<float>(systemRate))) : 0.0f;
+    };
+    const float attack = coefficient(c.attack), release = coefficient(c.release);
+    const float slope = c.ratio < 1.0f ? c.ratio : 1.0f / c.ratio;
+    for (std::uint32_t i = 0; i < grain; i++) {
+        float peak = 0.0f;
+        for (std::uint32_t ch = 0; ch < voice.channels; ch++) peak = std::max(peak, std::abs(voice.samples[ch * grain + i]));
+        c.detector = peak + (c.detector - peak) * (peak > c.detector ? attack : release);
+        float gain = c.level;
+        if (c.detector > c.threshold) gain *= (c.threshold + (c.detector - c.threshold) * slope) / c.detector;
+        for (std::uint32_t ch = 0; ch < voice.channels; ch++) voice.samples[ch * grain + i] *= gain;
+    }
+}
+
 static void RenderSampler(Ngs2Voice& voice, std::uint32_t grain, std::uint32_t systemRate) {
     const auto channels = voice.channels;
     if (voice.waveformType == SCE_NGS2_WAVEFORM_TYPE_ATRAC9) Ngs2ConsumeAtrac9(voice, grain, systemRate);
@@ -165,6 +219,7 @@ static void RenderSampler(Ngs2Voice& voice, std::uint32_t grain, std::uint32_t s
         ApplyFilter(voice, filter, grain);
         voice.hasSamples = true;
     }
+    if (voice.hasSamples) ApplyEnvelope(voice, grain);
     const bool buffered = voice.waveformType == SCE_NGS2_WAVEFORM_TYPE_ATRAC9 && voice.atrac9.windowCursor * voice.channels < voice.atrac9.window.size();
     if (voice.state == Ngs2PlayState::Playing && voice.blocks.empty() && !buffered && !voice.acceptsBlocks && std::none_of(voice.filters.begin(), voice.filters.end(), HasHistory)) {
         voice.state = Ngs2PlayState::Empty;
@@ -258,6 +313,13 @@ static void RenderVoice(Ngs2Voice& voice, const std::vector<Ngs2Voice*>& voices,
             RenderSampler(voice, grain, systemRate);
         } else {
             MixInputs(voice, voices, grain, systemRate);
+            // knack_pc: the submixer's equalizer (filters) and compressor run on its mix.
+            for (auto& filter : voice.filters) {
+                if (!filter.enabled || (!voice.hasSamples && !HasHistory(filter))) continue;
+                ApplyFilter(voice, filter, grain);
+                voice.hasSamples = true;
+            }
+            if (voice.compressor.enabled && voice.hasSamples) ApplyCompressor(voice, grain, systemRate);
         }
         if (voice.rack->rackId == SCE_NGS2_RACK_ID_REVERB && voice.reverb) voice.hasSamples = Ngs2ProcessReverb(voice, grain, systemRate);
         Ngs2ProcessLegacyUserFx(voice, grain, systemRate);

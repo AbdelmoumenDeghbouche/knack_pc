@@ -26,11 +26,26 @@ void Ngs2Voice::SetEvent(std::uint32_t eventId) {
         case SCE_NGS2_VOICE_EVENT_PLAY:
             if (state == Ngs2PlayState::Empty || state == Ngs2PlayState::Stopped) {
                 state = Ngs2PlayState::Playing;
+                envelope.releasing = false;
+                envelope.segment = 0;
+                envelope.position = 0;
+                envelope.start = 0.0f;
+                envelope.gain = envelope.forward.empty() ? 1.0f : 0.0f;
                 stateFlags |= SCE_NGS2_VOICE_STATE_FLAG_INUSE;
                 if (userFxHandler) userFxFlags = 1;
             }
             break;
         case SCE_NGS2_VOICE_EVENT_STOP:
+            // knack_pc: with release points the voice plays on until they end (Render.cpp).
+            if (state == Ngs2PlayState::Playing && !envelope.release.empty()) {
+                if (!envelope.releasing) {
+                    envelope.releasing = true;
+                    envelope.segment = 0;
+                    envelope.position = 0;
+                    envelope.start = envelope.gain;
+                }
+                break;
+            }
             if (state == Ngs2PlayState::Playing || state == Ngs2PlayState::Paused) state = Ngs2PlayState::Stopped;
             break;
         case SCE_NGS2_VOICE_EVENT_STOP_IMM:
@@ -54,6 +69,8 @@ void Ngs2Voice::ResetSetup() {
     std::fill(ports.begin(), ports.end(), Ngs2Port{});
     for (auto& matrix : matrices) matrix.clear();
     filters.clear();
+    envelope = {};
+    compressor = {};
     fbwLevel = 1.0f;
     lfeLevel = 1.0f;
     channels = 0;
@@ -390,6 +407,22 @@ void Ngs2SetFilter(Ngs2Voice& voice, const Ngs2SamplerVoiceFilterParam& param) {
     }
 }
 
+// knack_pc: PS4 parameters NGS2 here had no counterpart for.
+static constexpr std::uint32_t SAMPLER_VOICE_PARAM_ENVELOPE = 0x10000006;
+static constexpr std::uint32_t SUBMIXER_VOICE_PARAM_COMPRESSOR = 0x20000002;
+static constexpr std::uint32_t SUBMIXER_VOICE_PARAM_FILTER = 0x20000006;
+struct Ps4EnvelopeParam {
+    Ngs2VoiceParamHeader header;
+    std::uint32_t num_forward, num_release;
+    const Ngs2EnvelopePoint* points;
+};
+struct Ps4CompressorParam {
+    Ngs2VoiceParamHeader header;
+    std::uint32_t flags;
+    float threshold, ratio, knee, attack_time, release_time, level;
+    std::uint32_t reserved;
+};
+
 static void ApplySamplerParam(Ngs2Voice& voice, const Ngs2VoiceParamHeader& param) {
     switch (param.id) {
         case SCE_NGS2_SAMPLER_VOICE_PARAM_SETUP:
@@ -414,6 +447,14 @@ static void ApplySamplerParam(Ngs2Voice& voice, const Ngs2VoiceParamHeader& para
             break;
         }
         case SCE_NGS2_SAMPLER_VOICE_PARAM_FILTER: Ngs2SetFilter(voice, ParamAs<Ngs2SamplerVoiceFilterParam>(param)); break;
+        case SAMPLER_VOICE_PARAM_ENVELOPE: {
+            const auto& envelope = ParamAs<Ps4EnvelopeParam>(param);
+            const std::uint32_t count = envelope.num_forward + envelope.num_release;
+            if (count != 0 && envelope.points == nullptr) APS5_INVALID_ARG_EX;
+            voice.envelope.forward.assign(envelope.points, envelope.points + envelope.num_forward);
+            voice.envelope.release.assign(envelope.points + envelope.num_forward, envelope.points + count);
+            break;
+        }
         default: ngs2_stop("NGS2: sampler voice param " + Ngs2Hex(param.id) + " is not implemented");
     }
 }
@@ -444,6 +485,25 @@ static void ApplyParam(Ngs2Voice& voice, const Ngs2VoiceParamHeader& param) {
                 voice.userFxHandler = fx.handler;
                 voice.userFxData = {fx.user_data0, fx.user_data1, fx.user_data2};
                 voice.userFxFlags = fx.handler ? 1 : 0;
+                return;
+            }
+            if (param.id == SUBMIXER_VOICE_PARAM_FILTER) {
+                Ngs2SetFilter(voice, ParamAs<Ngs2SamplerVoiceFilterParam>(param));
+                return;
+            }
+            if (param.id == SUBMIXER_VOICE_PARAM_COMPRESSOR) {
+                // ponytail: no soft knee (Knack sends 0); add it if a game sets one.
+                const auto& c = ParamAs<Ps4CompressorParam>(param);
+                if (!std::isfinite(c.threshold) || c.threshold <= 0.0f || !std::isfinite(c.ratio) || c.ratio < 0.0f ||
+                    !std::isfinite(c.level) || c.attack_time < 0.0f || c.release_time < 0.0f) {
+                    APS5_INVALID_ARG_EX;
+                }
+                voice.compressor.enabled = true;
+                voice.compressor.threshold = c.threshold;
+                voice.compressor.ratio = c.ratio;
+                voice.compressor.attack = c.attack_time;
+                voice.compressor.release = c.release_time;
+                voice.compressor.level = c.level;
                 return;
             }
             if (param.id != SCE_NGS2_SUBMIXER_VOICE_PARAM_SETUP) break;

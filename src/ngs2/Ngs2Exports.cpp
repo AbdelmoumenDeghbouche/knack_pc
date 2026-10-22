@@ -154,22 +154,48 @@ bool Implemented(std::uint32_t id) {
         case SCE_NGS2_SAMPLER_VOICE_PARAM_FILTER: case SCE_NGS2_SUBMIXER_VOICE_PARAM_SETUP:
         case SCE_NGS2_SUBMIXER_VOICE_PARAM_USER_FX: case SCE_NGS2_REVERB_VOICE_PARAM_SETUP:
         case SCE_NGS2_REVERB_VOICE_PARAM_I3DL2: case SCE_NGS2_MASTERING_VOICE_PARAM_SETUP:
-        case SCE_NGS2_MASTERING_VOICE_PARAM_GAIN: case SCE_NGS2_MASTERING_VOICE_PARAM_OUTPUT: return true;
+        case SCE_NGS2_MASTERING_VOICE_PARAM_GAIN: case SCE_NGS2_MASTERING_VOICE_PARAM_OUTPUT:
+        case 0x10000006: case 0x20000002: case 0x20000006: return true; // envelope, compressor, submixer filter
         default: return false;
     }
 }
 
 // GOW3_NGS2_SKIP_UNKNOWN=1 (diagnostics): parameters NGS2 does not implement are left out, each id
 // logged once, instead of stopping; the voice then sounds as if they were not set.
-bool SkipUnknown(std::uint32_t id) {
+bool SkipUnknown(const Ngs2VoiceParamHeader* param) {
+    const std::uint32_t id = param->id;
     static const bool skip = [] { const char* v = std::getenv("GOW3_NGS2_SKIP_UNKNOWN"); return v && *v == '1'; }();
     if (!skip || Implemented(id)) return false;
-    static std::vector<std::uint32_t> logged;
+    static std::vector<std::pair<std::uint32_t, int>> logged;
     static std::mutex lock;
     const std::lock_guard guard(lock);
-    if (std::find(logged.begin(), logged.end(), id) == logged.end()) {
-        logged.push_back(id);
+    auto it = std::find_if(logged.begin(), logged.end(), [id](const auto& e) { return e.first == id; });
+    if (it == logged.end()) {
+        logged.push_back({id, 0});
+        it = logged.end() - 1;
         std::printf("NGS2: voice param %s skipped (not implemented)\n", Ngs2Hex(id).c_str());
+    }
+    // GOW3_NGS2_LOG_SKIPPED=1: the first 6 of each, as 32-bit words (hex and float).
+    static const bool dump = std::getenv("GOW3_NGS2_LOG_SKIPPED") != nullptr;
+    if (dump && it->second++ < 6) {
+        std::string words;
+        const auto* w = reinterpret_cast<const std::uint32_t*>(param);
+        for (std::uint32_t i = 2; i < param->size / 4; ++i) {
+            float f;
+            std::memcpy(&f, &w[i], 4);
+            words += " " + Ngs2Hex(w[i]) + "(" + std::to_string(f) + ")";
+        }
+        std::printf("NGS2: param %s size %u:%s\n", Ngs2Hex(id).c_str(), param->size, words.c_str());
+        // Envelope points (curve, duration, height) behind the pointer at +16.
+        if (id == 0x10000006 && param->size >= 24) {
+            const auto count = w[2] + w[3];
+            const auto* points = *reinterpret_cast<const std::uint32_t* const*>(&w[4]);
+            for (std::uint32_t p = 0; points && p < count && p < 8; ++p) {
+                float height;
+                std::memcpy(&height, &points[p * 3 + 2], 4);
+                std::printf("NGS2:   point %u curve %u duration %u height %f\n", p, points[p * 3], points[p * 3 + 1], height);
+            }
+        }
     }
     return true;
 }
@@ -183,13 +209,14 @@ int APS5_VABI VoiceControl(Ngs2Handle voice, const Ngs2VoiceParamHeader* params)
     std::vector<std::size_t> starts;
     for (const auto* param = params;; param = reinterpret_cast<const Ngs2VoiceParamHeader*>(
                                          reinterpret_cast<const std::uint8_t*>(param) + param->next)) {
-        if (SkipUnknown(param->id)) {
+        if (SkipUnknown(param)) {
             if (param->next == 0) break;
             continue;
         }
         const std::size_t at = list.size() * 8;
         starts.push_back(at);
-        if (param->id == SCE_NGS2_SAMPLER_VOICE_PARAM_FILTER && param->size == sizeof(Ps4SamplerFilterParam)) {
+        if ((param->id == SCE_NGS2_SAMPLER_VOICE_PARAM_FILTER || param->id == 0x20000006) &&
+            param->size == sizeof(Ps4SamplerFilterParam)) { // the submixer filter has the same layout
             const auto& in = *reinterpret_cast<const Ps4SamplerFilterParam*>(param);
             Ngs2SamplerVoiceFilterParam wide{};
             wide.header = in.header;
