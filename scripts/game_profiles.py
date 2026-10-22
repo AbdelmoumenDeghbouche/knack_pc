@@ -5,6 +5,8 @@ env: default environment for the run (run.py); a value already set wins.
 """
 from pathlib import Path
 
+KNACK_ENV = {'GOW3_NGS2_SKIP_UNKNOWN': '1', 'GOW3_DISABLED_OPTIMIZATIONS': str(4096 | 8192)}
+
 PROFILES = {
     # WipEout Omega Collection. NpToolkit2 is the game's own PSN toolkit. Red-zone protection
     # always: the startup probe sees no overwrite, but 2048 races run at 0.3 FPS without it (a
@@ -30,9 +32,11 @@ PROFILES = {
     # implement the sampler envelope (0x10000006), the submixer compressor (0x20000002) and
     # filter (0x20000006) yet: they are skipped and logged instead of stopping the game.
     # ponytail: mix without those effects, implement them in src/ngs2 to remove the skip.
-    'CUSA00068': {'name': 'Knack', 'modules': ('libc.prx', 'libSceFios2.prx'), 'env': {'GOW3_NGS2_SKIP_UNKNOWN': '1'}},
-    'CUSA00006': {'name': 'Knack', 'modules': ('libc.prx', 'libSceFios2.prx'), 'env': {'GOW3_NGS2_SKIP_UNKNOWN': '1'}},
-    'CUSA00202': {'name': 'Knack', 'modules': ('libc.prx', 'libSceFios2.prx'), 'env': {'GOW3_NGS2_SKIP_UNKNOWN': '1'}},
+    # The draw-preparation workers (prepared resources 4096, prepared draws 8192) read Knack's
+    # resource descriptors before the game has written them: gameplay geometry exploded.
+    'CUSA00068': {'name': 'Knack', 'modules': ('libc.prx', 'libSceFios2.prx'), 'env': KNACK_ENV},
+    'CUSA00006': {'name': 'Knack', 'modules': ('libc.prx', 'libSceFios2.prx'), 'env': KNACK_ENV},
+    'CUSA00202': {'name': 'Knack', 'modules': ('libc.prx', 'libSceFios2.prx'), 'env': KNACK_ENV},
 }
 DEFAULT = {'name': None, 'modules': ('libc.prx', 'libSceFios2.prx')}
 

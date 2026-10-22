@@ -772,6 +772,12 @@ static void *toggle_watcher(void *path) {
     return NULL;
 }
 void runtime_memory_set_gpu_hooks(GpuRange map, GpuRange unmap, GpuRange invalidate) {
+    /* GOW3_DISABLED_OPTIMIZATIONS: the mask at start (game profiles); a toggle file replaces it. */
+    const char *disabled=getenv("GOW3_DISABLED_OPTIMIZATIONS");
+    if (disabled && *disabled) {
+        __atomic_store_n(&runtime_disabled_optimizations,(uint64_t)strtoull(disabled,NULL,0),__ATOMIC_RELEASE);
+        printf("Runtime: disabled optimizations mask=%s (game profile)\n",disabled);
+    }
     const char *toggles=getenv("GOW3_TOGGLE_FILE");
     static pthread_t watcher;
     if (toggles && !watcher) pthread_create(&watcher,NULL,toggle_watcher,(void *)toggles);
