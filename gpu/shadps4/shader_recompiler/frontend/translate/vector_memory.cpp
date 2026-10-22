@@ -626,7 +626,10 @@ IR::Value EmitImageSample(IR::IREmitter& ir, const GcnInst& inst, const IR::Scal
         info.gather_comp.Assign(std::bit_width(mimg.dmask) - 1);
         info.is_gather.Assign(true);
     } else {
-        info.has_derivatives.Assign(flags.test(MimgModifier::Derivative));
+        // IMAGE_SAMPLE_CD* (coarse derivatives) pass their slopes in the same address registers
+        // as IMAGE_SAMPLE_D*: without them the slopes were read as the coordinates.
+        info.has_derivatives.Assign(flags.test(MimgModifier::Derivative) ||
+                                    flags.test(MimgModifier::CoarseDerivative));
     }
 
     // Load all dwords of T# and S#. We will use them as the handle that will guide
