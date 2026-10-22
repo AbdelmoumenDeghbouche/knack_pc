@@ -43,6 +43,8 @@ struct Ngs2Block {
     std::uint64_t availableFrames = 0;
     std::vector<Ngs2Piece> pieces;
     bool started = false;
+    // VAG data decoded to 16-bit PCM when the block was added; data points into it.
+    std::shared_ptr<const std::vector<std::int16_t>> decoded;
 };
 
 struct Ngs2Atrac9DecoderDeleter {
@@ -115,6 +117,7 @@ struct Ngs2Voice {
     std::uint32_t channels = 0;
     std::uint32_t sampleRate = 0;
     std::uint32_t waveformType = 0;
+    bool vag = false; // VAG waveform: blocks are decoded to 16-bit PCM (waveformType PCM_I16L)
     Ngs2Atrac9 atrac9;
     std::unique_ptr<Ngs2ReverbState, Ngs2ReverbDeleter> reverb;
     float pitch = 1.0f;

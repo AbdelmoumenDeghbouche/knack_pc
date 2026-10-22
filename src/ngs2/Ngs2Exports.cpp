@@ -58,6 +58,14 @@ struct Ps4SamplerVoiceState {
     const void* waveform_data;
 };
 static_assert(sizeof(Ps4SamplerVoiceState) == 48);
+// The cutoff form (fc, q, level) of the union; the coefficient form has no PS5 counterpart here.
+struct Ps4SamplerFilterParam {
+    Ngs2VoiceParamHeader header;
+    std::uint32_t index, location, type, channel_mask;
+    float frequency, q, level;
+    std::uint32_t reserved[3];
+};
+static_assert(sizeof(Ps4SamplerFilterParam) == 48);
 struct Ps4SubmixerVoiceState {
     std::uint32_t state_flags;
     float envelope_height, peak_height, compressor_height;
@@ -181,6 +189,23 @@ int APS5_VABI VoiceControl(Ngs2Handle voice, const Ngs2VoiceParamHeader* params)
         }
         const std::size_t at = list.size() * 8;
         starts.push_back(at);
+        if (param->id == SCE_NGS2_SAMPLER_VOICE_PARAM_FILTER && param->size == sizeof(Ps4SamplerFilterParam)) {
+            const auto& in = *reinterpret_cast<const Ps4SamplerFilterParam*>(param);
+            Ngs2SamplerVoiceFilterParam wide{};
+            wide.header = in.header;
+            wide.header.size = sizeof(wide);
+            wide.index = in.index;
+            wide.location = in.location;
+            wide.type = in.type;
+            wide.channel_mask = in.channel_mask;
+            wide.frequency = in.frequency;
+            wide.q = in.q;
+            wide.level = in.level;
+            list.resize(list.size() + sizeof(wide) / 8);
+            std::memcpy(reinterpret_cast<std::uint8_t*>(list.data()) + at, &wide, sizeof(wide));
+            if (param->next == 0) break;
+            continue;
+        }
         list.resize(list.size() + (param->size + 7) / 8);
         std::memcpy(reinterpret_cast<std::uint8_t*>(list.data()) + at, param, param->size);
         if (param->id == SCE_NGS2_SAMPLER_VOICE_PARAM_ADD_WAVEFORM_BLOCKS) {

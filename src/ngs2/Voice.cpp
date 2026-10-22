@@ -58,6 +58,7 @@ void Ngs2Voice::ResetSetup() {
     channels = 0;
     sampleRate = 0;
     waveformType = 0;
+    vag = false;
     atrac9 = {};
     pitch = 1.0f;
     phase = 0;
@@ -170,17 +171,43 @@ static void ApplyCommonParam(Ngs2Voice& voice, const Ngs2VoiceParamHeader& param
     }
 }
 
+// knack_pc: VAG (PS ADPCM, mono): 16-byte frames of 28 samples; byte 0 holds the predictor (high
+// nibble) and shift (low nibble), byte 1 the loop flags, bytes 2-15 the 4-bit samples, low first.
+static constexpr std::uint32_t WAVEFORM_TYPE_VAG = 0x1c;
+
+static std::vector<std::int16_t> DecodeVag(const std::uint8_t* data, std::uint64_t bytes) {
+    static constexpr int f0[5] = {0, 60, 115, 98, 122}, f1[5] = {0, 0, -52, -55, -60};
+    std::vector<std::int16_t> out;
+    out.reserve(bytes / 16 * 28);
+    int h1 = 0, h2 = 0;
+    for (std::uint64_t at = 0; at + 16 <= bytes; at += 16) {
+        const int predictor = std::min(data[at] >> 4, 4), shift = data[at] & 15;
+        for (int i = 0; i < 28; ++i) {
+            const int nibble = (data[at + 2 + i / 2] >> (i % 2 * 4)) & 15;
+            const int scaled = static_cast<std::int16_t>(nibble << 12) >> std::min(shift, 12);
+            const int sample = std::clamp(scaled + (h1 * f0[predictor] + h2 * f1[predictor] + 32) / 64, -32768, 32767);
+            out.push_back(static_cast<std::int16_t>(sample));
+            h2 = h1;
+            h1 = sample;
+        }
+    }
+    return out;
+}
+
 static void SetupSampler(Ngs2Voice& voice, const Ngs2WaveformFormat& format) {
     voice.ResetSetup();
     if (format.waveform_type == 0 && format.num_channels == 0 && format.sample_rate == 0) return;
-    if (format.waveform_type != SCE_NGS2_WAVEFORM_TYPE_PCM_I16L && format.waveform_type != SCE_NGS2_WAVEFORM_TYPE_ATRAC9) {
+    if (format.waveform_type != SCE_NGS2_WAVEFORM_TYPE_PCM_I16L && format.waveform_type != SCE_NGS2_WAVEFORM_TYPE_ATRAC9 &&
+        format.waveform_type != WAVEFORM_TYPE_VAG) {
         ngs2_stop("NGS2: waveform type " + Ngs2Hex(format.waveform_type) + " is not implemented");
     }
     if (format.frame_offset != 0 || format.frame_margin != 0) ngs2_stop("NGS2: waveform frame offset and margin are not implemented");
     if (format.num_channels == 0 || format.num_channels > NGS2_MAX_CHANNELS || format.sample_rate == 0) APS5_INVALID_ARG_EX;
+    if (format.waveform_type == WAVEFORM_TYPE_VAG && format.num_channels != 1) ngs2_stop("NGS2: multichannel VAG is not implemented");
     voice.channels = format.num_channels;
     voice.sampleRate = format.sample_rate;
-    voice.waveformType = format.waveform_type;
+    voice.vag = format.waveform_type == WAVEFORM_TYPE_VAG;
+    voice.waveformType = voice.vag ? SCE_NGS2_WAVEFORM_TYPE_PCM_I16L : format.waveform_type;
     if (format.waveform_type == SCE_NGS2_WAVEFORM_TYPE_ATRAC9) Ngs2SetupAtrac9(voice, format);
 }
 
@@ -226,6 +253,26 @@ static void AddWaveformBlocks(Ngs2Voice& voice, const Ngs2SamplerVoiceWaveformBl
         if (voice.waveformType == SCE_NGS2_WAVEFORM_TYPE_ATRAC9) Ngs2RestartAtrac9(voice);
     }
     const std::size_t frameBytes = voice.channels * sizeof(std::int16_t);
+    if (voice.vag) {
+        if ((param.flags & SCE_NGS2_WAVEFORM_BLOCKS_FLAG_APPEND) != 0) ngs2_stop("NGS2: streamed VAG is not implemented");
+        voice.acceptsBlocks = (param.flags & SCE_NGS2_WAVEFORM_BLOCKS_FLAG_CONTINUE) != 0;
+        for (std::uint32_t i = 0; i < param.num_blocks; i++) {
+            const auto& vag = param.blocks[i];
+            if (vag.num_samples == 0 && vag.data_size == 0) continue;
+            auto decoded = std::make_shared<const std::vector<std::int16_t>>(
+                DecodeVag(static_cast<const std::uint8_t*>(param.data) + vag.data_offset, vag.data_size));
+            auto block = vag;
+            block.data_offset = 0;
+            block.data_size = decoded->size() * sizeof(std::int16_t);
+            if (block.num_samples == 0 || static_cast<std::uint64_t>(block.num_skip_samples) + block.num_samples > decoded->size()) {
+                ngs2_stop("NGS2: VAG block " + std::to_string(i) + " does not fit its data");
+            }
+            Ngs2Block added{reinterpret_cast<const std::uint8_t*>(decoded->data()), block};
+            added.decoded = std::move(decoded);
+            voice.blocks.push_back(std::move(added));
+        }
+        return;
+    }
     if ((param.flags & SCE_NGS2_WAVEFORM_BLOCKS_FLAG_APPEND) != 0) {
         AppendStreamData(voice, param, frameBytes);
         voice.acceptsBlocks = (param.flags & SCE_NGS2_WAVEFORM_BLOCKS_FLAG_CONTINUE) != 0;

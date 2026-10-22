@@ -26,10 +26,13 @@ PROFILES = {
                   'env': {'GOW3_RED_ZONE': '1', 'GOW3_ENGINE_FPS': '240',
                           'GOW3_ALLOWED_RESOLUTIONS': 'native;2560x1080;5120x2160'}},
     'CUSA01623': {'name': 'God of War III', 'modules': ('libc.prx', 'libSceFios2.prx')},
-    # Knack (US 1.10, the development target; EU CUSA00006/CUSA00202 untested).
-    'CUSA00068': {'name': 'Knack', 'modules': ('libc.prx', 'libSceFios2.prx')},
-    'CUSA00006': {'name': 'Knack', 'modules': ('libc.prx', 'libSceFios2.prx')},
-    'CUSA00202': {'name': 'Knack', 'modules': ('libc.prx', 'libSceFios2.prx')},
+    # Knack (US 1.10, the development target; EU CUSA00006/CUSA00202 untested). NGS2 does not
+    # implement the sampler envelope (0x10000006), the submixer compressor (0x20000002) and
+    # filter (0x20000006) yet: they are skipped and logged instead of stopping the game.
+    # ponytail: mix without those effects, implement them in src/ngs2 to remove the skip.
+    'CUSA00068': {'name': 'Knack', 'modules': ('libc.prx', 'libSceFios2.prx'), 'env': {'GOW3_NGS2_SKIP_UNKNOWN': '1'}},
+    'CUSA00006': {'name': 'Knack', 'modules': ('libc.prx', 'libSceFios2.prx'), 'env': {'GOW3_NGS2_SKIP_UNKNOWN': '1'}},
+    'CUSA00202': {'name': 'Knack', 'modules': ('libc.prx', 'libSceFios2.prx'), 'env': {'GOW3_NGS2_SKIP_UNKNOWN': '1'}},
 }
 DEFAULT = {'name': None, 'modules': ('libc.prx', 'libSceFios2.prx')}
 
