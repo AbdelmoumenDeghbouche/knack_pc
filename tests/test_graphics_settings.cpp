@@ -103,6 +103,20 @@ int main() {
     }
 
     {
+        // GOW3_ALLOWED_RESOLUTIONS keeps only the listed built-ins (WipEout profile); extras still follow,
+        // repeated or unknown names are ignored, and an all-unknown list still shows native.
+        _putenv_s("GOW3_ALLOWED_RESOLUTIONS", "native;2560x1080;5120x2160");
+        _putenv_s("GOW3_EXTRA_RESOLUTIONS", "3440x1440");
+        const auto filtered = G::ResolutionNames();
+        assert(filtered.size() == 4 && filtered[0] == "native" && filtered[1] == "2560x1080" &&
+               filtered[2] == "5120x2160" && filtered[3] == "3440x1440");
+        _putenv_s("GOW3_ALLOWED_RESOLUTIONS", "nope");
+        assert(G::ResolutionNames().front() == "native" && G::ResolutionNames().size() == 2);
+        _putenv_s("GOW3_ALLOWED_RESOLUTIONS", "");
+        _putenv_s("GOW3_EXTRA_RESOLUTIONS", "");
+    }
+
+    {
         std::ofstream out(path);
         out << "display_mode=huge\nfps_limit=7\nrender_resolution=8K\nengine_fps=1\n"
                "rcas_strength=250\nframes_queued=9\n";

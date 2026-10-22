@@ -34,15 +34,30 @@ inline constexpr std::array<std::string_view, 22> Resolutions = {
     "5120x2160"};
 /// The resolutions to choose from: the built-in ones, then those of the enabled mods' patch files
 /// (GOW3_EXTRA_RESOLUTIONS, ";"-separated sizes such as "3440x1440"; run.py sets it at every start).
+/// GOW3_ALLOWED_RESOLUTIONS, when set, keeps only the built-in names it lists (same syntax); a per-game
+/// profile uses it to hide sizes whose resolution patch does nothing for that game.
 inline std::vector<std::string> ResolutionNames() {
-    std::vector<std::string> names(Resolutions.begin(), Resolutions.end());
-    const char* extra = std::getenv("GOW3_EXTRA_RESOLUTIONS");
-    for (std::string_view rest = extra ? extra : ""; !rest.empty();) {
-        const std::size_t end = rest.find(';');
-        const std::string_view name = rest.substr(0, end);
-        if (!name.empty() && std::find(names.begin(), names.end(), name) == names.end()) names.emplace_back(name);
-        rest = end == std::string_view::npos ? std::string_view() : rest.substr(end + 1);
+    const auto split = [](const char* value) {
+        std::vector<std::string_view> out;
+        for (std::string_view rest = value ? value : ""; !rest.empty();) {
+            const std::size_t end = rest.find(';');
+            if (const std::string_view name = rest.substr(0, end); !name.empty()) out.push_back(name);
+            rest = end == std::string_view::npos ? std::string_view() : rest.substr(end + 1);
+        }
+        return out;
+    };
+    std::vector<std::string> names;
+    const char* allowed = std::getenv("GOW3_ALLOWED_RESOLUTIONS");
+    if (allowed && allowed[0]) {
+        const std::vector<std::string_view> keep = split(allowed);
+        for (const auto& r : Resolutions)
+            if (std::find(keep.begin(), keep.end(), r) != keep.end()) names.emplace_back(r);
+        if (names.empty()) names.emplace_back(Resolutions[0]);  // never show an empty list
+    } else {
+        names.assign(Resolutions.begin(), Resolutions.end());
     }
+    for (const auto& name : split(std::getenv("GOW3_EXTRA_RESOLUTIONS")))
+        if (std::find(names.begin(), names.end(), name) == names.end()) names.emplace_back(name);
     return names;
 }
 /// The size in pixels of a resolution name: the built-in ones (as scripts/graphics_options.py SIZES)
