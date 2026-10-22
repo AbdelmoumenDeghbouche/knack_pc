@@ -320,7 +320,7 @@ static void AddWaveformBlocks(Ngs2Voice& voice, const Ngs2SamplerVoiceWaveformBl
     voice.acceptsBlocks = (param.flags & SCE_NGS2_WAVEFORM_BLOCKS_FLAG_CONTINUE) != 0;
     const bool allowsSilence = (param.flags & SCE_NGS2_WAVEFORM_BLOCKS_FLAG_SILENCE) != 0;
     for (std::uint32_t i = 0; i < param.num_blocks; i++) {
-        const auto& block = param.blocks[i];
+        auto block = param.blocks[i];
         if (block.num_samples == 0 && block.data_size == 0) continue;
         if (allowsSilence && block.data_size == 0) {
             if (voice.waveformType == SCE_NGS2_WAVEFORM_TYPE_ATRAC9) ngs2_stop("NGS2: a dataless waveform block under the silence flag is not implemented for ATRAC9 voices");
@@ -333,7 +333,27 @@ static void AddWaveformBlocks(Ngs2Voice& voice, const Ngs2SamplerVoiceWaveformBl
                                block.num_skip_samples == 0 && block.num_repeats == 0 && block.data_size >= frameBytes && block.data_size % frameBytes == 0;
         const bool compressedStream = voice.waveformType == SCE_NGS2_WAVEFORM_TYPE_ATRAC9 && voice.acceptsBlocks && block.num_repeats == 0;
         if (block.num_samples == 0 || (bytes > block.data_size && !streaming && !compressedStream)) {
-            ngs2_stop("NGS2: waveform block " + std::to_string(i) + " does not fit its data");
+            // knack_pc: Knack once passed a block whose samples ran past its data (after 13 minutes
+            // of play). The samples that fit play; a block with none is left out (logged once).
+            std::uint64_t fit = block.data_size / frameBytes;
+            if (voice.waveformType == SCE_NGS2_WAVEFORM_TYPE_ATRAC9) {
+                fit = voice.atrac9.superframeBytes == 0 ? 0
+                    : static_cast<std::uint64_t>(block.data_size) / voice.atrac9.superframeBytes *
+                          voice.atrac9.frameSamples * voice.atrac9.framesInSuperframe;
+            }
+            fit = fit > block.num_skip_samples ? fit - block.num_skip_samples : 0;
+            static bool logged = false;
+            if (!logged) {
+                logged = true;
+                std::printf("NGS2: waveform block %u (type %u, %u channels, flags %#x) has %u samples after %u "
+                            "skipped, %u repeats, %llu data bytes (needs %llu): %llu samples play\n",
+                            i, voice.waveformType, voice.channels, param.flags, block.num_samples,
+                            block.num_skip_samples, block.num_repeats, static_cast<unsigned long long>(block.data_size),
+                            static_cast<unsigned long long>(bytes),
+                            static_cast<unsigned long long>(std::min<std::uint64_t>(fit, block.num_samples)));
+            }
+            if (block.num_samples == 0 || fit == 0) continue;
+            block.num_samples = static_cast<std::uint32_t>(std::min<std::uint64_t>(fit, block.num_samples));
         }
         voice.blocks.push_back({static_cast<const std::uint8_t*>(param.data) + block.data_offset, block});
         if (streaming) {
