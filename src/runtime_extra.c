@@ -3,7 +3,7 @@
  *   - kernel event flags (full implementation), small kernel/libc queries;
  *   - POSIX names for rwlocks and scheduling;
  *   - sockets unavailable (network unplugged);
- *   - NGS2 renders silence (no voices play yet).
+ *   - NGS2: src/ngs2 (AnyPS5's implementation);
  * Every entry is an explicit contract; unknown functions still stop. */
 #define _GNU_SOURCE
 #define _CRT_RAND_S /* rand_s */
@@ -407,63 +407,6 @@ static ABI int32_t temp_space(const MountPoint *mount, uint64_t *kb) {
     *kb=1048576; return 0;
 }
 
-/* ---- NGS2: silent renderer. Handles are distinct non-null tokens; voices never play. ---- */
-static uintptr_t ngs2_next=0x1000;
-static pthread_mutex_t ngs2_lock=PTHREAD_MUTEX_INITIALIZER;
-static size_t ngs2_renders;
-static uintptr_t ngs2_token(void) {
-    pthread_mutex_lock(&ngs2_lock);
-    uintptr_t t=(ngs2_next+=0x10);
-    pthread_mutex_unlock(&ngs2_lock);
-    return t;
-}
-static ABI int32_t ngs2_system_create(const void *option, const void *allocator, uintptr_t *out) {
-    (void)option; (void)allocator;
-    if (!out) return (int32_t)0x804A0003;
-    *out=ngs2_token();
-    puts("Runtime: NGS2 system created (silent renderer)");
-    return 0;
-}
-static ABI int32_t ngs2_rack_create(uintptr_t system, uint32_t rack, const void *option, const void *allocator, uintptr_t *out) {
-    (void)system; (void)rack; (void)option; (void)allocator;
-    if (!out) return (int32_t)0x804A0003;
-    *out=ngs2_token(); return 0;
-}
-/* Knack: racks in a buffer the game allocates (OrbisNgs2ContextBufferInfo: host buffer, size, ...).
- * The silent renderer keeps no state there; one page is asked for. */
-typedef struct { void *buffer; uint64_t size; uintptr_t reserved[5], user; } Ngs2BufferInfo;
-static ABI int32_t ngs2_rack_buffer_size(uint32_t rack, const void *option, Ngs2BufferInfo *info) {
-    (void)rack; (void)option;
-    if (!info) return (int32_t)0x804A0003;
-    info->size=0x1000; return 0;
-}
-static ABI int32_t ngs2_rack_create_buffer(uintptr_t system, uint32_t rack, const void *option, const Ngs2BufferInfo *info, uintptr_t *out) {
-    (void)info;
-    return ngs2_rack_create(system,rack,option,NULL,out);
-}
-static ABI int32_t ngs2_voice_handle(uintptr_t rack, uint32_t index, uintptr_t *out) {
-    if (!out) return (int32_t)0x804A0003;
-    *out=rack+0x100000+(uintptr_t)index*0x10; return 0;
-}
-static ABI int32_t ngs2_voice_state(uintptr_t voice, void *state, uint64_t size) {
-    (void)voice;
-    if (state && size) memset(state,0,size); /* stopped, not in use */
-    return 0;
-}
-static ABI int32_t ngs2_voice_flags(uintptr_t voice, uint32_t *flags) {
-    (void)voice;
-    if (flags) *flags=0;
-    return 0;
-}
-typedef struct { void *buffer; uint64_t size; uint32_t waveform, channels; } Ngs2RenderBuffer;
-static ABI int32_t ngs2_render(uintptr_t system, Ngs2RenderBuffer *buffers, uint32_t count) {
-    (void)system;
-    for (uint32_t i=0;buffers && i<count;++i) if (buffers[i].buffer) memset(buffers[i].buffer,0,buffers[i].size);
-    ++ngs2_renders;
-    return 0;
-}
-static ABI int32_t ngs2_unsupported_waveform(void) { return (int32_t)0x804A0200; } /* invalid waveform */
-
 /* ---- PngDec (Knack): FFmpeg decodes (gow3gpu_png_decode); the header is read here. The handle
  * is the game's work memory holding the create parameters. 8-bit RGBA/BGRA output only. ---- */
 #define PNG_INVALID_ADDR ((int32_t)0x80690001)
@@ -749,13 +692,6 @@ static const RuntimeExport exports[]={
     {"sceCoredumpRegisterCoredumpHandler",ok_noop}, {"sceCoredumpWriteUserData",ok_noop},
     {"scePlayGoGetEta",playgo_eta}, {"scePlayGoGetToDoList",playgo_todo}, {"scePlayGoPrefetch",ok_noop},
     {"sceAppContentTemporaryDataMount2",temp_mount2},
-    {"sceNgs2SystemCreateWithAllocator",ngs2_system_create}, {"sceNgs2SystemDestroy",ok_noop},
-    {"sceNgs2RackCreateWithAllocator",ngs2_rack_create}, {"sceNgs2RackDestroy",ok_noop},
-    {"sceNgs2RackGetVoiceHandle",ngs2_voice_handle}, {"sceNgs2VoiceControl",ok_noop},
-    {"sceNgs2VoiceGetState",ngs2_voice_state}, {"sceNgs2VoiceGetStateFlags",ngs2_voice_flags},
-    {"sceNgs2SystemRender",ngs2_render}, {"sceNgs2PanInit",ok_noop}, {"sceNgs2PanGetVolumeMatrix",ok_noop},
-    {"sceNgs2ParseWaveformData",ngs2_unsupported_waveform}, {"sceNgs2CalcWaveformBlock",ngs2_unsupported_waveform},
-    {"sceNgs2RackQueryBufferSize",ngs2_rack_buffer_size}, {"sceNgs2RackCreate",ngs2_rack_create_buffer},
     /* Knack: CPU 0 for every thread, as shadPS4; temporary data always has 1 GB free. */
     {"sceKernelGetCurrentCpu",ok_noop}, {"sceAppContentTemporaryDataGetAvailableSpaceKb",temp_space},
     {"scePngDecQueryMemorySize",png_memory_size}, {"scePngDecCreate",png_create}, {"scePngDecDelete",png_delete},
@@ -825,5 +761,5 @@ void runtime_ue4_setres_poll(void) {
 
 uintptr_t runtime_extra_resolve(const char *name) { return RUNTIME_LOOKUP(exports,name); }
 void runtime_extra_report(void) {
-    printf("Runtime: event flags created=%zu, NGS2 silent renders=%zu\n",flags_created,ngs2_renders);
+    printf("Runtime: event flags created=%zu\n",flags_created);
 }

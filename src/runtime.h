@@ -107,6 +107,8 @@ void runtime_thread_attach_host(const char *name);
 /* Offline contracts added for MediEvil and WipEout (runtime_extra.c). */
 uintptr_t runtime_extra_resolve(const char *name);
 void runtime_extra_report(void);
+/* libSceNgs2 (src/ngs2, AnyPS5's implementation). */
+uintptr_t runtime_ngs2_resolve(const char *name);
 /* libSceJson2 (runtime_json.c). */
 uintptr_t runtime_json_resolve(const char *name);
 void runtime_json_report(void);

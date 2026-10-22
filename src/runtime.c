@@ -259,6 +259,8 @@ uintptr_t runtime_resolve(const char *name, int is_data) {
     if (extra) return extra;
     uintptr_t json = runtime_json_resolve(name);
     if (json) return json;
+    uintptr_t ngs2 = runtime_ngs2_resolve(name);
+    if (ngs2) return ngs2;
     return gow3gpu_resolve(name);
 }
 static const struct { const char *nid, *symbol; } import_names[]={

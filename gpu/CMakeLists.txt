@@ -193,14 +193,17 @@ if (WIN32)
     enable_language(RC)
     file(GLOB GOW3_RUNTIME CONFIGURE_DEPENDS ../src/runtime*.c)
     file(GLOB GOW3_ATRAC9 CONFIGURE_DEPENDS ../third_party/LibAtrac9/C/src/*.c)
+    file(GLOB GOW3_NGS2 CONFIGURE_DEPENDS ../src/ngs2/*.cpp)
     add_library(atrac9 STATIC ${GOW3_ATRAC9})
     target_compile_options(atrac9 PRIVATE -w)
     set_target_properties(atrac9 PROPERTIES C_STANDARD 99 INTERPROCEDURAL_OPTIMIZATION OFF)
     add_executable(gow3-probe ../src/probe.c ${GOW3_RUNTIME} ../src/compat_win.c ../src/cpu_check.c ../src/vulkan_smoke.c
-        ../src/isa_rewrite.c ../src/isa_emulate.c ../src/redzone.cpp
+        ../src/isa_rewrite.c ../src/isa_emulate.c ../src/redzone.cpp ${GOW3_NGS2}
         ../packaging/windows/gow3-probe.rc)
     # redzone.cpp: Zydis decodes the game's functions, xbyak writes the trampolines.
-    set_source_files_properties(../src/redzone.cpp PROPERTIES COMPILE_OPTIONS "-std=c++20")
+    set_source_files_properties(../src/redzone.cpp ${GOW3_NGS2} PROPERTIES COMPILE_OPTIONS "-std=c++20")
+    set_source_files_properties(${GOW3_NGS2} PROPERTIES INCLUDE_DIRECTORIES
+        "${CMAKE_CURRENT_SOURCE_DIR}/../third_party/LibAtrac9/C/src")
     set_target_properties(gow3-probe PROPERTIES C_STANDARD 11 C_EXTENSIONS OFF)
     target_compile_options(gow3-probe PRIVATE $<$<COMPILE_LANGUAGE:C>:-Wall -Wextra -Werror>)
     target_include_directories(gow3-probe PRIVATE .. ../src third_party/xbyak)
