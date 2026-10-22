@@ -24,7 +24,7 @@ void Translator::EmitVectorAlu(const GcnInst& inst) {
     case Opcode::V_SUBREV_F32:
         return V_SUBREV_F32(inst);
     case Opcode::V_MAC_LEGACY_F32:
-        return V_MAC_F32(inst);
+        return V_MAC_F32(inst, true);
     case Opcode::V_MUL_LEGACY_F32:
         return V_MUL_LEGACY_F32(inst);
     case Opcode::V_MUL_F32:
@@ -414,7 +414,7 @@ void Translator::EmitVectorAlu(const GcnInst& inst) {
 
         // VOP3a
     case Opcode::V_MAD_LEGACY_F32:
-        return V_MAD_F32(inst);
+        return V_MAD_F32(inst, true);
     case Opcode::V_MAD_F32:
         return V_MAD_F32(inst);
     case Opcode::V_MAD_I32_I24:
@@ -603,17 +603,17 @@ void Translator::V_MUL_F32(const GcnInst& inst) {
     SetDst(inst.dst[0], ir.FPMul(GetSrc<IR::F32>(inst.src[0]), GetSrc<IR::F32>(inst.src[1])));
 }
 
-void Translator::V_MUL_LEGACY_F32(const GcnInst& inst) {
-    // GCN V_MUL_LEGACY_F32: if either source is zero, the result is +0.0
-    // regardless of the other operand (even if NaN or Inf).
-    // Standard IEEE multiply would produce NaN for 0 * Inf.
-    const IR::F32 src0{GetSrc<IR::F32>(inst.src[0])};
-    const IR::F32 src1{GetSrc<IR::F32>(inst.src[1])};
+// GCN legacy (DX9) multiply, also in V_MAC_LEGACY_F32 and V_MAD_LEGACY_F32: if either source is
+// zero, the product is +0.0 regardless of the other operand (even if NaN or Inf). Standard IEEE
+// multiply would produce NaN for 0 * Inf.
+IR::F32 Translator::LegacyMul(const IR::F32& src0, const IR::F32& src1) {
     const IR::F32 zero{ir.Imm32(0.0f)};
-    const IR::U1 src0_zero{ir.FPEqual(src0, zero)};
-    const IR::U1 src1_zero{ir.FPEqual(src1, zero)};
-    const IR::U1 either_zero{ir.LogicalOr(src0_zero, src1_zero)};
-    SetDst(inst.dst[0], IR::F32{ir.Select(either_zero, zero, ir.FPMul(src0, src1))});
+    const IR::U1 either_zero{ir.LogicalOr(ir.FPEqual(src0, zero), ir.FPEqual(src1, zero))};
+    return IR::F32{ir.Select(either_zero, zero, ir.FPMul(src0, src1))};
+}
+
+void Translator::V_MUL_LEGACY_F32(const GcnInst& inst) {
+    SetDst(inst.dst[0], LegacyMul(GetSrc<IR::F32>(inst.src[0]), GetSrc<IR::F32>(inst.src[1])));
 }
 
 void Translator::V_MUL_I32_I24(const GcnInst& inst, bool is_signed) {
@@ -724,11 +724,11 @@ void Translator::V_BFM_B32(const GcnInst& inst) {
     SetDst(inst.dst[0], ir.ShiftLeftLogical(ones, src1));
 }
 
-void Translator::V_MAC_F32(const GcnInst& inst) {
+void Translator::V_MAC_F32(const GcnInst& inst, bool legacy) {
     const auto src0 = GetSrc<IR::F32>(inst.src[0]);
     const auto src1 = GetSrc<IR::F32>(inst.src[1]);
     const auto dst0 = GetSrc<IR::F32>(inst.dst[0]);
-    SetDst(inst.dst[0], ir.FPAdd(ir.FPMul(src0, src1), dst0));
+    SetDst(inst.dst[0], ir.FPAdd(legacy ? LegacyMul(src0, src1) : IR::F32{ir.FPMul(src0, src1)}, dst0));
 }
 
 void Translator::V_MADMK_F32(const GcnInst& inst) {
@@ -840,8 +840,18 @@ void Translator::V_CVT_PKNORM_I16_F32(const GcnInst& inst) {
 }
 
 void Translator::V_CVT_PKRTZ_F16_F32(const GcnInst& inst) {
-    const IR::Value vec_f32 =
-        ir.CompositeConstruct(GetSrc<IR::F32>(inst.src[0]), GetSrc<IR::F32>(inst.src[1]));
+    // Round toward zero: a finite value past the half range becomes +-65504, never infinity
+    // (the packing below rounds to nearest). knack_pc: Knack's smoke exports overflowed into its
+    // FP16 scene target as infinities; blending made them black and white noise that stayed.
+    const auto rtz_saturate = [&](const IR::F32& value) {
+        const IR::U1 overflow{ir.LogicalAnd(ir.FPGreaterThan(ir.FPAbs(value), ir.Imm32(65504.0f)),
+                                            ir.LogicalNot(ir.FPIsInf(value)))};
+        const IR::F32 max{ir.Select(ir.FPLessThan(value, ir.Imm32(0.0f)), ir.Imm32(-65504.0f),
+                                    ir.Imm32(65504.0f))};
+        return IR::F32{ir.Select(overflow, max, value)};
+    };
+    const IR::Value vec_f32 = ir.CompositeConstruct(rtz_saturate(GetSrc<IR::F32>(inst.src[0])),
+                                                    rtz_saturate(GetSrc<IR::F32>(inst.src[1])));
     SetDst(inst.dst[0], ir.Pack2x16(AmdGpu::NumberFormat::Float, vec_f32));
 }
 
@@ -1047,7 +1057,7 @@ void Translator::V_RCP_LEGACY_F32(const GcnInst& inst) {
     const auto result = ir.FPRecip(src0);
     const auto inf = ir.FPIsInf(result);
 
-    const auto raw_result = ir.ConvertFToU(32, result);
+    const auto raw_result = ir.BitCast<IR::U32>(IR::F32{result});
     const auto sign_bit = ir.ShiftRightLogical(raw_result, ir.Imm32(31u));
     const auto sign_bit_set = ir.INotEqual(sign_bit, ir.Imm32(0u));
     const IR::F32 inf_result{ir.Select(sign_bit_set, ir.Imm32(-0.0f), ir.Imm32(0.0f))};
@@ -1337,11 +1347,11 @@ void Translator::V_CMP_CLASS_F32(const GcnInst& inst) {
 
 // VOP3a
 
-void Translator::V_MAD_F32(const GcnInst& inst) {
+void Translator::V_MAD_F32(const GcnInst& inst, bool legacy) {
     const IR::F32 src0{GetSrc<IR::F32>(inst.src[0])};
     const IR::F32 src1{GetSrc<IR::F32>(inst.src[1])};
     const IR::F32 src2{GetSrc<IR::F32>(inst.src[2])};
-    SetDst(inst.dst[0], ir.FPAdd(ir.FPMul(src0, src1), src2));
+    SetDst(inst.dst[0], ir.FPAdd(legacy ? LegacyMul(src0, src1) : IR::F32{ir.FPMul(src0, src1)}, src2));
 }
 
 void Translator::V_MAD_I32_I24(const GcnInst& inst, bool is_signed) {

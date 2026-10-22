@@ -162,6 +162,7 @@ public:
     void V_SUBREV_F32(const GcnInst& inst);
     void V_MUL_F32(const GcnInst& inst);
     void V_MUL_LEGACY_F32(const GcnInst& inst);
+    IR::F32 LegacyMul(const IR::F32& src0, const IR::F32& src1);
     void V_MUL_I32_I24(const GcnInst& inst, bool is_signed);
     void V_MIN_F32(const GcnInst& inst, bool is_legacy = false);
     void V_MAX_F32(const GcnInst& inst, bool is_legacy = false);
@@ -177,7 +178,7 @@ public:
     void V_AND_B32(const GcnInst& inst);
     void V_OR_B32(bool is_xor, const GcnInst& inst);
     void V_BFM_B32(const GcnInst& inst);
-    void V_MAC_F32(const GcnInst& inst);
+    void V_MAC_F32(const GcnInst& inst, bool legacy = false);
     void V_MADMK_F32(const GcnInst& inst);
     void V_BCNT_U32_B32(const GcnInst& inst);
     void V_MBCNT_U32_B32(bool hi, const GcnInst& inst);
@@ -252,7 +253,7 @@ public:
     void V_CMP_CLASS_F32(const GcnInst& inst);
 
     // VOP3a
-    void V_MAD_F32(const GcnInst& inst);
+    void V_MAD_F32(const GcnInst& inst, bool legacy = false);
     void V_MAD_I32_I24(const GcnInst& inst, bool is_signed = true);
     void V_MAD_U32_U24(const GcnInst& inst);
     void V_CUBEID_F32(const GcnInst& inst);
