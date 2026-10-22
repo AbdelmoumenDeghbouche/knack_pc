@@ -40,7 +40,7 @@ Requirements: Windows 10 or 11 (64-bit), a CPU with AVX, a GPU with Vulkan 1.3. 
 | Launcher and settings | Done (`launcher/gow3_launcher_win.py`) |
 | Windows package (zip) | Done (`packaging/windows/package.sh`, Actions > Windows zip) |
 | Linux | Builds from source; no package yet |
-| PS4 Pro mode | Not yet: the shadPS4 texture cache stops on an image overlap |
+| PS4 Pro mode | Not yet: the texture cache stop is fixed (v0.2.1), the game now stops in a Pro-only guest path |
 | PSVR mode | Not planned for now (#7) |
 | Every game and event type (HD, HD Fury, 2048) | Not all tested yet |
 
