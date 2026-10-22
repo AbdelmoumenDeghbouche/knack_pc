@@ -494,9 +494,13 @@ bool PipelineCache::QueueShader(Program& program, HwStage stage, SwStage l_stage
             ++g_gow3_pool_reuses;
         }
         // gow3: the GPU thread waits until all guest reads and specialization are captured.
+        // knack_pc: the key is the runtime info before translation changes it (clip distance
+        // emulation adds an input): built from the changed one, no lookup ever matched it and
+        // every draw compiled the shader again (unbounded permutations, memory and frame time).
+        const Shader::RuntimeInfo key_runtime = build->runtime;
         build->ir.emplace(Shader::TranslateProgram(build->code, *build->pools, build->info,
                                                    build->runtime, profile));
-        build->spec = Shader::StageSpecialization(build->info, build->runtime, profile, binding);
+        build->spec = Shader::StageSpecialization(build->info, key_runtime, profile, binding);
         build->fetch.Capture(build->info);
         return true;
     })) {
@@ -1135,9 +1139,12 @@ bool PipelineCache::RefreshComputeKey() {
     return sel.infos[0] != nullptr;
 }
 
-vk::ShaderModule PipelineCache::CompileModule(Shader::Info& info, Shader::RuntimeInfo& runtime_info,
+vk::ShaderModule PipelineCache::CompileModule(Shader::Info& info, const Shader::RuntimeInfo& key_runtime_info,
                                               const std::span<const u32>& code, size_t perm_idx,
                                               Shader::Backend::Bindings& binding) {
+    // knack_pc: translation changes its runtime info (the clip distance pass adds an input); the
+    // caller's copy stays the permutation key, or no later lookup would find this permutation.
+    Shader::RuntimeInfo runtime_info = key_runtime_info;
     LOG_INFO(Render_Vulkan, "Compiling {} shader {:#x} {}", info.hw_stage, info.pgm_hash,
              perm_idx != 0 ? "(permutation)" : "");
     DumpShader(code, info.pgm_hash, info.hw_stage, perm_idx, "bin");
@@ -1293,6 +1300,67 @@ PipelineCache::Result PipelineCache::GetProgram(PipelineSelection& sel, HwStage 
         if (program->pending || std::ranges::find(program->failed_permutations, spec) !=
                                     program->failed_permutations.end()) {
             return {};
+        }
+        // knack_pc: GOW3_PERM_LOG=1 names what makes a program's permutations keep growing.
+        static const bool perm_log = std::getenv("GOW3_PERM_LOG") != nullptr;
+        if (perm_log && (program->modules.size() == 8 || program->modules.size() == 64 ||
+                         program->modules.size() == 512)) {
+            // The stored permutation closest to the new key, and what still differs.
+            const auto differences = [&spec](const Shader::StageSpecialization& last) {
+                std::string what;
+                if (spec.vs_attribs != last.vs_attribs) what += " vs_attribs";
+                if (spec.runtime_info != last.runtime_info) {
+                    what += " runtime_info";
+                    const auto &a = spec.runtime_info, &b = last.runtime_info;
+                    if (!(a.props == b.props)) what += " props";
+                    if (a.hw_stage == Shader::HwStage::Fragment) {
+                        const auto &x = a.hw.fs, &y = b.hw.fs;
+                        for (u32 c = 0; c < Shader::MaxColorBuffers; ++c)
+                            if (!(x.color_buffers[c] == y.color_buffers[c]))
+                                what += fmt::format(" cb{}(fmt {}/{} num {}/{} conv {}/{} export {}/{})", c,
+                                                    u32(x.color_buffers[c].data_format), u32(y.color_buffers[c].data_format),
+                                                    u32(x.color_buffers[c].num_format), u32(y.color_buffers[c].num_format),
+                                                    u32(x.color_buffers[c].num_conversion), u32(y.color_buffers[c].num_conversion),
+                                                    u32(x.color_buffers[c].export_format), u32(y.color_buffers[c].export_format));
+                        if (!(x.en_flags == y.en_flags)) what += " en_flags";
+                        if (!(x.addr_flags == y.addr_flags)) what += " addr_flags";
+                        if (x.num_inputs != y.num_inputs) what += fmt::format(" num_inputs {}/{}", x.num_inputs, y.num_inputs);
+                        if (x.z_export_format != y.z_export_format) what += " z_export";
+                        if (x.num_samples != y.num_samples) what += fmt::format(" samples {}/{}", x.num_samples, y.num_samples);
+                        if (x.mrtz_mask != y.mrtz_mask) what += " mrtz_mask";
+                        if (x.front_face_all_bits != y.front_face_all_bits) what += " front_face";
+                        if (x.dual_source_blending != y.dual_source_blending) what += " dual_source";
+                        if (x.clip_distance_emulation != y.clip_distance_emulation) what += " clip_distance";
+                        if (x.motion_vectors != y.motion_vectors) what += " motion_vectors";
+                        if (!std::ranges::equal(x.inputs, y.inputs)) what += " inputs";
+                    }
+                }
+                if (spec.fetch_shader_data != last.fetch_shader_data) what += " fetch_shader_data";
+                if (spec.fmasks != last.fmasks) {
+                    what += " fmasks";
+                    for (size_t f = 0; f < spec.fmasks.size() && f < last.fmasks.size(); ++f)
+                        what += fmt::format("[{}]{}x{}/{}x{}", f, spec.fmasks[f].width, spec.fmasks[f].height,
+                                            last.fmasks[f].width, last.fmasks[f].height);
+                }
+                if (spec.start != last.start) what += " start";
+                for (u32 b = 0; b < spec.buffers.size() && b < last.buffers.size(); ++b)
+                    if (!(spec.buffers[b] == last.buffers[b])) what += fmt::format(" buffer{}", b);
+                for (u32 i = 0; i < spec.images.size() && i < last.images.size(); ++i)
+                    if (!(spec.images[i] == last.images[i])) what += fmt::format(" image{}", i);
+                for (u32 s = 0; s < spec.samplers.size() && s < last.samplers.size(); ++s)
+                    if (!(spec.samplers[s] == last.samplers[s])) what += fmt::format(" sampler{}", s);
+                return what;
+            };
+            std::string what = "?";
+            size_t same = 0;
+            for (const auto& m : program->modules) {
+                auto d = differences(m.spec);
+                if (d.empty()) ++same;
+                else if (what == "?" || d.size() < what.size()) what = std::move(d);
+            }
+            if (same) what += fmt::format(" ({} stored keys show no difference)", same);
+            LOG_WARNING(Render_Vulkan, "program {:#x} stage {} has {} permutations; new one differs in:{}",
+                        params.hash, u32(hw_stage), program->modules.size(), what);
         }
         if (compile_async) {
             QueueShader(*program, hw_stage, sw_stage, params, runtime_info, binding, perm_idx, false,
