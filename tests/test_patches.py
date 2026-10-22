@@ -11,6 +11,7 @@ from patches import (compile_patches, external_patches, external_selection, comp
                      resolution_names, default_enabled)
 
 GOW3 = ROOT / 'patches/God_of_War_III_Remastered.xml'
+WIPEOUT = ROOT / 'patches/WipEout_Omega_Collection.xml'
 ULTRAWIDE = ROOT / 'extras/mods/Ultrawide/patches/Ultrawide.xml'
 GOW3_IDS = {'CUSA01623'}
 SEGMENTS = [(0, 0x6000000)]
@@ -411,6 +412,37 @@ class HalfResolutionTests(unittest.TestCase):
             half = (lines.get('0x007f2a3c'), lines.get('0x007f2a40'))
             self.assertTrue(all(half), meta.get('Name'))
             self.assertEqual((size(half[0]), size(half[1])), (width // 2, height // 2), meta.get('Name'))
+
+    def test_wipeout_profile_and_resolution_patches(self):
+        self.assertEqual(game_profile('CUSA07671')[1:3], (WIPEOUT, '01.00'))
+        self.assertEqual(game_profile('CUSA05670')[1], WIPEOUT)
+        names = [m.get('Name') for m in ET.parse(WIPEOUT).getroot().iter('Metadata')]
+        self.assertEqual(names, ['Resolution Patch - 2560x1080', 'Resolution Patch - 5120x2160',
+                                 'Native 4K rendering (no checkerboard)'])
+        # The resolution patches stay off until a resolution is chosen; native 4K rendering is on.
+        self.assertEqual(selected_patches(WIPEOUT, '01.00', ''), ['Native 4K rendering (no checkerboard)'])
+        self.assertTrue(compile_patches(WIPEOUT, names[1:], '01.00', SEGMENTS))
+
+    def test_wipeout_native_4k_keeps_the_4k_mode_flag_false(self):
+        # (field & 0xff00) > imm: 0xff00 can never be exceeded, the original 0xeff is from 3840 wide.
+        self.assertEqual(compile_patches(WIPEOUT, ['Native 4K rendering (no checkerboard)'], '01.00', SEGMENTS),
+                         [(0x7fb659, (0xff00).to_bytes(4, 'little'))])
+
+    def test_wipeout_resolution_patches_size_output_half_buffers_and_aspect(self):
+        size = lambda value: int.from_bytes(bytes.fromhex(value), 'little')
+        for meta in ET.parse(WIPEOUT).getroot().iter('Metadata'):
+            if not meta.get('Name').startswith('Resolution Patch'):
+                continue
+            width, height = (int(n) for n in meta.get('Name').split(' - ')[1].split('x'))
+            lines = {line.get('Address'): line.get('Value') for line in meta.iter('Line')}
+            self.assertEqual(size(lines['0x00bfa2e8']), width, meta.get('Name'))        # output width
+            self.assertEqual(size(lines['0x00bfa2f6']), height, meta.get('Name'))       # output height
+            self.assertEqual(size(lines['0x00a44654']), width // 2, meta.get('Name'))   # half width
+            self.assertEqual(size(lines['0x00a44659']), height // 2, meta.get('Name'))  # half height
+            # Both camera aspect floats, always together (one alone smears the picture).
+            for address in ('0x00c60d08', '0x00c60d48'):
+                aspect = struct.unpack('<f', bytes.fromhex(lines[address]))[0]
+                self.assertAlmostEqual(aspect, width / height, places=5, msg=meta.get('Name'))
 
 if __name__ == '__main__':
     unittest.main()

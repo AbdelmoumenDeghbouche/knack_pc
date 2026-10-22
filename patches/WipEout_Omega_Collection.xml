@@ -1,0 +1,131 @@
+<?xml version="1.0"?>
+<!-- WipEout Omega Collection (CUSA07671 01.07): render resolution patches, found on the US eboot.bin with sha256
+     3a52e910f6c450cc2f0c85ef994be5d8c951c326a362bcc4775f29e6ff7f644c. Each site is found by its signature
+     (Pattern/At); Address is that build's address.
+
+     How the game sizes its picture:
+     - The output size is chosen at 0x7fa2e4 from the video-out resolution status:
+         w = max(status.w, 1920); h = max(status.h, 1080); base PS4: w = min(w, 1920), h = min(h, 1080)
+       and stored to two 16-bit globals that the buffer setup at 0x7fbdd0 reads. The patch raises the
+       minimum, the cap and the compare of both.
+     - Half-resolution buffers are hardcoded 960x540 (0x6446xx, 0x64b5xx). They must stay half of the output:
+       0x7e29c0 picks one of four variants by (2*half < full) per axis from a table whose mismatch entries are
+       null, so without them the game crashes at start (null read at 0x7e2a0a).
+     - The cameras pick their aspect ratio from 16/9 (one player), 32/9 or 8/9 (split screen halves) next to
+       pi/360, at 0x3adb86 and 0x3af3e7. Both 16/9 floats must change together: changing one alone smears
+       the picture horizontally (presumably the motion blur reprojection). The vertical field of view is
+       fixed, so a wider aspect ratio widens the view (Hor+) with no camera code changes. The split screen
+       ratios are untouched.
+
+     - From 3840 pixels wide the game sets a "4K mode" flag (0x1212c39, at 0x7fb657: (field & 0xff00) > 0xeff),
+       read at about 55 sites. With it the scene renders at half width with checkerboard and a compute resolve
+       (the Pro path); without it, at full resolution with 4-sample depth as in the 1080p mode. The separate
+       "Native 4K rendering (no checkerboard)" patch keeps the flag false; with checkerboard, one R32Uint resolve
+       buffer stays 1920x2160 (half of 3840), which this file does not size.
+
+     Not handled: the 2D layer (HUD, menus) is a 1920x1080 canvas set up at three inlined sites
+     ([obj+0x2c]=1920.0f, [obj+0x30]=1080.0f, int16 rect at +0x34: 0x4f17c0, 0x5c6fad, 0x7515b4); its elements
+     sit at absolute 1920-space positions, so widening the canvas alone moves right-anchored elements.
+
+     Tested in game on Windows (RTX 4090) in single races (HD/2048 Metro Park, Campaign): 2560x1080 and
+     5120x2160. Not tested: CUSA05670 (EU), split screen, replays, every event type. -->
+<Patch>
+    <TitleID>
+        <ID>CUSA07671</ID>
+        <ID>CUSA05670</ID>
+    </TitleID>
+    <Metadata Title="WipEout Omega Collection" Name="Resolution Patch - 2560x1080" Note="Renders at 2560x1080 (2.370:1): output and half-resolution buffers at that size and the camera aspect ratio set to match. The camera keeps its vertical field of view, so the wider picture shows more at the sides (Hor+). HUD and menus are still laid out for 16:9 and appear stretched." Author="d4g" PatchVer="1.0" AppVer="01.00" AppElf="eboot.bin" isEnabled="false">
+        <PatchList>
+            <!-- camera aspect ratio (16/9) -->
+            <Line Type="bytes" Address="0x00c60d08" Value="26b41740" Pattern="00 00 00 bf f3 8e 63 3f f3 8e 63 40 39 8e e3 3f 35 fa 0e 3c 00 00 80 bf 9a 99" At="12"/>
+            <!-- camera aspect ratio (16/9) -->
+            <Line Type="bytes" Address="0x00c60d48" Value="26b41740" Pattern="00 00 00 bf f3 8e 63 3f f3 8e 63 40 39 8e e3 3f 35 fa 0e 3c 00 00 80 bf 00 00" At="12"/>
+            <!-- output size: minimum width -->
+            <Line Type="bytes" Address="0x00bfa2e8" Value="000a0000" Pattern="7a 00 00 8a 45 a0 b9 80 07 00 00 66 bf 80 07 bb" At="7"/>
+            <!-- output size: width cap -->
+            <Line Type="bytes" Address="0x00bfa2ee" Value="000a" Pattern="a0 b9 80 07 00 00 66 bf 80 07 bb ff ff ff ff ba" At="8"/>
+            <!-- output size: width compare -->
+            <Line Type="bytes" Address="0x00bfa31d" Value="000a0000" Pattern="a1 00 48 8b 45 90 3d 80 07 00 00 89 c6 41 89 c0" At="7"/>
+            <!-- output size: minimum height -->
+            <Line Type="bytes" Address="0x00bfa2f6" Value="38040000" Pattern="07 bb ff ff ff ff ba 38 04 00 00 66 41 b9 ff ff" At="7"/>
+            <!-- output size: height cap -->
+            <Line Type="bytes" Address="0x00bfa302" Value="3804" Pattern="00 66 41 b9 ff ff 66 41 ba 38 04 4c 8b 25 c5 8a" At="9"/>
+            <!-- output size: height compare -->
+            <Line Type="bytes" Address="0x00bfa367" Value="38040000" Pattern="8b 3d e2 87 9e 00 3d 38 04 00 00 44 0f b7 f1 b9" At="7"/>
+            <!-- half-resolution buffer width -->
+            <Line Type="bytes" Address="0x00a44654" Value="00050000" Pattern="a0 00 8b 44 24 14 ba c0 03 00 00 b9 1c 02 00 00" At="7"/>
+            <!-- half-resolution buffer height -->
+            <Line Type="bytes" Address="0x00a44659" Value="1c020000" Pattern="14 ba c0 03 00 00 b9 1c 02 00 00 45 31 c0 45 31" At="7"/>
+            <!-- half-resolution buffer width -->
+            <Line Type="bytes" Address="0x00a44708" Value="00050000" Pattern="b7 db 31 ff 31 f6 41 b9 c0 03 00 00 c7 04 24 1c" At="8"/>
+            <!-- half-resolution buffer height -->
+            <Line Type="bytes" Address="0x00a4470f" Value="1c020000" Pattern="41 b9 c0 03 00 00 c7 04 24 1c 02 00 00 45 31 e4" At="9"/>
+            <!-- half-resolution buffer width -->
+            <Line Type="bytes" Address="0x00a4473d" Value="00050000" Pattern="ff be 01 00 00 00 41 b9 c0 03 00 00 44 89 f1 41" At="8"/>
+            <!-- half-resolution buffer height -->
+            <Line Type="bytes" Address="0x00a4474a" Value="1c020000" Pattern="44 89 f1 41 89 d8 c7 04 24 1c 02 00 00 e8 bd 3a" At="9"/>
+            <!-- half-resolution default width -->
+            <Line Type="bytes" Address="0x00a4b51b" Value="0005" Pattern="ca b9 01 0f 00 00 66 41 ba c0 03 66 41 bd 1c 02" At="9"/>
+            <!-- half-resolution default height -->
+            <Line Type="bytes" Address="0x00a4b520" Value="1c02" Pattern="00 66 41 ba c0 03 66 41 bd 1c 02 c4 c2 70 f7 f0" At="9"/>
+            <!-- half-resolution default width -->
+            <Line Type="bytes" Address="0x00a4b52c" Value="00050000" Pattern="f7 f0 d1 ea 84 c0 b9 c0 03 00 00 0f 45 ce 66 44" At="7"/>
+            <!-- half-resolution default height -->
+            <Line Type="bytes" Address="0x00a4b539" Value="1c020000" Pattern="ce 66 44 0f 45 d6 be 1c 02 00 00 66 44 0f 45 ea" At="7"/>
+            <!-- half-resolution width multiple -->
+            <Line Type="bytes" Address="0x00a4b5b9" Value="00050000" Pattern="9c 00 01 0f 45 ce 69 d9 c0 03 00 00 20 c2 0f 44" At="8"/>
+            <!-- half-resolution height multiple -->
+            <Line Type="bytes" Address="0x00a4b5c4" Value="1c020000" Pattern="00 20 c2 0f 44 de 69 c1 1c 02 00 00 84 d2 89 9d" At="8"/>
+        </PatchList>
+    </Metadata>
+    <Metadata Title="WipEout Omega Collection" Name="Resolution Patch - 5120x2160" Note="Renders at 5120x2160 (2.370:1): output and half-resolution buffers at that size and the camera aspect ratio set to match. The camera keeps its vertical field of view, so the wider picture shows more at the sides (Hor+). HUD and menus are still laid out for 16:9 and appear stretched." Author="d4g" PatchVer="1.0" AppVer="01.00" AppElf="eboot.bin" isEnabled="false">
+        <PatchList>
+            <!-- camera aspect ratio (16/9) -->
+            <Line Type="bytes" Address="0x00c60d08" Value="26b41740" Pattern="00 00 00 bf f3 8e 63 3f f3 8e 63 40 39 8e e3 3f 35 fa 0e 3c 00 00 80 bf 9a 99" At="12"/>
+            <!-- camera aspect ratio (16/9) -->
+            <Line Type="bytes" Address="0x00c60d48" Value="26b41740" Pattern="00 00 00 bf f3 8e 63 3f f3 8e 63 40 39 8e e3 3f 35 fa 0e 3c 00 00 80 bf 00 00" At="12"/>
+            <!-- output size: minimum width -->
+            <Line Type="bytes" Address="0x00bfa2e8" Value="00140000" Pattern="7a 00 00 8a 45 a0 b9 80 07 00 00 66 bf 80 07 bb" At="7"/>
+            <!-- output size: width cap -->
+            <Line Type="bytes" Address="0x00bfa2ee" Value="0014" Pattern="a0 b9 80 07 00 00 66 bf 80 07 bb ff ff ff ff ba" At="8"/>
+            <!-- output size: width compare -->
+            <Line Type="bytes" Address="0x00bfa31d" Value="00140000" Pattern="a1 00 48 8b 45 90 3d 80 07 00 00 89 c6 41 89 c0" At="7"/>
+            <!-- output size: minimum height -->
+            <Line Type="bytes" Address="0x00bfa2f6" Value="70080000" Pattern="07 bb ff ff ff ff ba 38 04 00 00 66 41 b9 ff ff" At="7"/>
+            <!-- output size: height cap -->
+            <Line Type="bytes" Address="0x00bfa302" Value="7008" Pattern="00 66 41 b9 ff ff 66 41 ba 38 04 4c 8b 25 c5 8a" At="9"/>
+            <!-- output size: height compare -->
+            <Line Type="bytes" Address="0x00bfa367" Value="70080000" Pattern="8b 3d e2 87 9e 00 3d 38 04 00 00 44 0f b7 f1 b9" At="7"/>
+            <!-- half-resolution buffer width -->
+            <Line Type="bytes" Address="0x00a44654" Value="000a0000" Pattern="a0 00 8b 44 24 14 ba c0 03 00 00 b9 1c 02 00 00" At="7"/>
+            <!-- half-resolution buffer height -->
+            <Line Type="bytes" Address="0x00a44659" Value="38040000" Pattern="14 ba c0 03 00 00 b9 1c 02 00 00 45 31 c0 45 31" At="7"/>
+            <!-- half-resolution buffer width -->
+            <Line Type="bytes" Address="0x00a44708" Value="000a0000" Pattern="b7 db 31 ff 31 f6 41 b9 c0 03 00 00 c7 04 24 1c" At="8"/>
+            <!-- half-resolution buffer height -->
+            <Line Type="bytes" Address="0x00a4470f" Value="38040000" Pattern="41 b9 c0 03 00 00 c7 04 24 1c 02 00 00 45 31 e4" At="9"/>
+            <!-- half-resolution buffer width -->
+            <Line Type="bytes" Address="0x00a4473d" Value="000a0000" Pattern="ff be 01 00 00 00 41 b9 c0 03 00 00 44 89 f1 41" At="8"/>
+            <!-- half-resolution buffer height -->
+            <Line Type="bytes" Address="0x00a4474a" Value="38040000" Pattern="44 89 f1 41 89 d8 c7 04 24 1c 02 00 00 e8 bd 3a" At="9"/>
+            <!-- half-resolution default width -->
+            <Line Type="bytes" Address="0x00a4b51b" Value="000a" Pattern="ca b9 01 0f 00 00 66 41 ba c0 03 66 41 bd 1c 02" At="9"/>
+            <!-- half-resolution default height -->
+            <Line Type="bytes" Address="0x00a4b520" Value="3804" Pattern="00 66 41 ba c0 03 66 41 bd 1c 02 c4 c2 70 f7 f0" At="9"/>
+            <!-- half-resolution default width -->
+            <Line Type="bytes" Address="0x00a4b52c" Value="000a0000" Pattern="f7 f0 d1 ea 84 c0 b9 c0 03 00 00 0f 45 ce 66 44" At="7"/>
+            <!-- half-resolution default height -->
+            <Line Type="bytes" Address="0x00a4b539" Value="38040000" Pattern="ce 66 44 0f 45 d6 be 1c 02 00 00 66 44 0f 45 ea" At="7"/>
+            <!-- half-resolution width multiple -->
+            <Line Type="bytes" Address="0x00a4b5b9" Value="000a0000" Pattern="9c 00 01 0f 45 ce 69 d9 c0 03 00 00 20 c2 0f 44" At="8"/>
+            <!-- half-resolution height multiple -->
+            <Line Type="bytes" Address="0x00a4b5c4" Value="38040000" Pattern="00 20 c2 0f 44 de 69 c1 1c 02 00 00 84 d2 89 9d" At="8"/>
+        </PatchList>
+    </Metadata>
+    <Metadata Title="WipEout Omega Collection" Name="Native 4K rendering (no checkerboard)" Note="From 3840 pixels wide the game switches to its 4K mode, which renders the scene at half width with checkerboard reconstruction (the Pro path). This keeps the 1080p mode at any size: the scene renders at full resolution with 4-sample depth, sharper and heavier on the GPU (over 100 FPS at 5120x2160 on an RTX 4090). Untick it for checkerboard. It changes nothing below 3840 pixels wide." Author="d4g" PatchVer="1.0" AppVer="01.00" AppElf="eboot.bin" isEnabled="true">
+        <PatchList>
+            <!-- 4K mode flag 0x1212c39 = ((field & 0xff00) > 0xeff): 0xeff -> 0xff00 keeps it false -->
+            <Line Type="bytes" Address="0x00bfb659" Value="00ff0000" Pattern="8b 05 49 ef a1 00 b9 00 ff 00 00 23 48 3c 81 f9" At="16"/>
+        </PatchList>
+    </Metadata>
+</Patch>
