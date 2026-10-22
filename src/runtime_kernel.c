@@ -90,7 +90,11 @@ static ABI uint64_t process_time_frequency(void) { return 1000000000; }
  * TSC. The frequency is measured once against the monotonic clock (50 ms). Hosts whose TSC
  * differs per core (a Xeon E5-2680 v4, #42) make threads that move cores see time jump. */
 static uint64_t tsc_hz;
-__attribute__((constructor)) static void measure_tsc(void) {
+/* Lazy init: the probe modes (--cpu-features, --gamepad, --vulkan-only) never read the TSC, so
+ * their output stays one line. The game calls sceKernelGetTscFrequency and sceKernelReadTsc, so
+ * the first game call triggers the 50 ms measurement and the print. */
+static void measure_tsc(void) {
+    if (tsc_hz) return;
     struct timespec a,b;
     clock_gettime(CLOCK_MONOTONIC,&a);
     const uint64_t t0=__rdtsc();
@@ -103,7 +107,7 @@ __attribute__((constructor)) static void measure_tsc(void) {
     printf("Runtime: TSC %.4f GHz\n",(double)tsc_hz/1e9);
 }
 static ABI uint64_t read_tsc(void) { return __rdtsc(); }
-static ABI uint64_t tsc_frequency(void) { return tsc_hz; }
+static ABI uint64_t tsc_frequency(void) { measure_tsc(); return tsc_hz; }
 /* Shared with the GPU library so flip/label timestamps use the guest's clock. */
 uint64_t runtime_process_time_us(void) { return process_time(); }
 uint64_t runtime_process_time_counter(void) { return process_time_counter(); }
