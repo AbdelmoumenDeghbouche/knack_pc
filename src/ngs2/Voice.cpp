@@ -9,6 +9,7 @@
 
 #include "ngs2_compat.hpp"
 #include "Ngs2Internal.hpp"
+#include "hevag_coefs.h"
 
 static constexpr std::uint32_t COMMAND_EVENT = 2;
 static constexpr std::uint32_t COMMAND_MATRIX_LEVELS = 5;
@@ -171,24 +172,31 @@ static void ApplyCommonParam(Ngs2Voice& voice, const Ngs2VoiceParamHeader& param
     }
 }
 
-// knack_pc: VAG (PS ADPCM, mono): 16-byte frames of 28 samples; byte 0 holds the predictor (high
-// nibble) and shift (low nibble), byte 1 the loop flags, bytes 2-15 the 4-bit samples, low first.
+// knack_pc: VAG waveforms (type 0x1c) are HE-VAG (High Efficiency VAG, mono): 16-byte frames of 28
+// samples. Byte 0 holds the low predictor bits (high nibble) and the shift (low nibble), byte 1 the high
+// predictor bits (high nibble) and the flags (low nibble; 7 = silent frame); 4-bit samples follow, low
+// nibble first. 128 four-tap predictors (hevag_coefs.h); the first five are classic VAG's filters.
+// As vgmstream's decode_hevag (src/coding/psv_decoder.c); history is kept unclamped.
 static constexpr std::uint32_t WAVEFORM_TYPE_VAG = 0x1c;
 
 static std::vector<std::int16_t> DecodeVag(const std::uint8_t* data, std::uint64_t bytes) {
-    static constexpr int f0[5] = {0, 60, 115, 98, 122}, f1[5] = {0, 0, -52, -55, -60};
     std::vector<std::int16_t> out;
     out.reserve(bytes / 16 * 28);
-    int h1 = 0, h2 = 0;
+    std::int32_t h1 = 0, h2 = 0, h3 = 0, h4 = 0;
     for (std::uint64_t at = 0; at + 16 <= bytes; at += 16) {
-        const int predictor = std::min(data[at] >> 4, 4), shift = data[at] & 15;
+        std::uint32_t index = (data[at + 1] & 0xf0) | (data[at] >> 4);
+        if (index > 127) index = 0;
+        const int shift = data[at] & 15, flag = data[at + 1] & 15;
+        const float* c = HEVAG_COEFS[index];
         for (int i = 0; i < 28; ++i) {
-            const int nibble = (data[at + 2 + i / 2] >> (i % 2 * 4)) & 15;
-            const int scaled = static_cast<std::int16_t>(nibble << 12) >> std::min(shift, 12);
-            const int sample = std::clamp(scaled + (h1 * f0[predictor] + h2 * f1[predictor] + 32) / 64, -32768, 32767);
-            out.push_back(static_cast<std::int16_t>(sample));
-            h2 = h1;
-            h1 = sample;
+            std::int32_t sample = 0;
+            if (flag < 7) {
+                const std::int32_t code = ((static_cast<std::int32_t>(data[at + 2 + i / 2] >> (i % 2 * 4)) & 15) ^ 8) - 8;
+                sample = (code * (1 << 12)) >> shift;
+                sample += static_cast<std::int32_t>(h1 * c[0] + h2 * c[1] + h3 * c[2] + h4 * c[3]);
+            }
+            out.push_back(static_cast<std::int16_t>(std::clamp(sample, -32768, 32767)));
+            h4 = h3; h3 = h2; h2 = h1; h1 = sample;
         }
     }
     return out;
@@ -261,6 +269,20 @@ static void AddWaveformBlocks(Ngs2Voice& voice, const Ngs2SamplerVoiceWaveformBl
             if (vag.num_samples == 0 && vag.data_size == 0) continue;
             auto decoded = std::make_shared<const std::vector<std::int16_t>>(
                 DecodeVag(static_cast<const std::uint8_t*>(param.data) + vag.data_offset, vag.data_size));
+            // GOW3_NGS2_DUMP_VAG=<folder> (diagnostics): the first 40 blocks, raw and decoded.
+            static const char* dump = std::getenv("GOW3_NGS2_DUMP_VAG");
+            static int dumped = 0;
+            if (dump && dumped < 40) {
+                const std::string base = std::string(dump) + "/vag" + std::to_string(dumped++) + "_" + std::to_string(voice.sampleRate);
+                if (FILE* f = std::fopen((base + ".raw").c_str(), "wb")) {
+                    std::fwrite(static_cast<const std::uint8_t*>(param.data) + vag.data_offset, 1, vag.data_size, f);
+                    std::fclose(f);
+                }
+                if (FILE* f = std::fopen((base + ".s16").c_str(), "wb")) {
+                    std::fwrite(decoded->data(), 2, decoded->size(), f);
+                    std::fclose(f);
+                }
+            }
             auto block = vag;
             block.data_offset = 0;
             block.data_size = decoded->size() * sizeof(std::int16_t);
@@ -315,9 +337,12 @@ void Ngs2SetFilter(Ngs2Voice& voice, const Ngs2SamplerVoiceFilterParam& param) {
         return;
     }
     // knack_pc: location 0 (Knack's pause menu) runs at the same place as 1 (there is no envelope or
-    // distortion stage to come before or after); type 2 is taken as the high-pass, the type after
-    // AnyPS5's low-pass 1.
-    if (param.location > 1 || (param.type != 1 && param.type != 2)) {
+    // distortion stage to come before or after). Types follow the PS Vita NGS filter modes, whose
+    // low-pass 1 AnyPS5 implements: 1 low-pass, 2 high-pass, 3 band-pass (0 dB peak), 4 band-pass
+    // (skirt gain Q), 5 notch, 6 peak, 7 high shelf, 8 low shelf, 9/10 one-pole low/high-pass
+    // (RBJ cookbook biquads). Level scales the low/high/band-pass and notch output; for peak and
+    // shelves it is the band's linear gain.
+    if (param.location > 1 || param.type > 10) {
         ngs2_stop("NGS2: sampler filter location " + std::to_string(param.location) + " type " + std::to_string(param.type) + " is not implemented");
     }
     if (!std::isfinite(param.frequency) || param.frequency < 0.0f || !std::isfinite(param.q) || param.q <= 0.0f || !std::isfinite(param.level) || param.level < 0.0f) {
@@ -327,21 +352,42 @@ void Ngs2SetFilter(Ngs2Voice& voice, const Ngs2SamplerVoiceFilterParam& param) {
     filter.enabled = true;
     filter.bypassMask = param.channel_mask;
     filter.history.resize(voice.channels);
-    const bool highPass = param.type == 2;
+    const auto set = [&filter](double b0, double b1, double b2, double a0, double a1, double a2) {
+        filter.b0 = b0 / a0; filter.b1 = b1 / a0; filter.b2 = b2 / a0; filter.a1 = a1 / a0; filter.a2 = a2 / a0;
+    };
+    const double level = param.level;
     if (param.frequency == 0.0f || param.frequency >= rate * 0.5) {
-        filter.b0 = (param.frequency == 0.0f) != highPass ? 0.0 : param.level;
-        filter.b1 = filter.b2 = filter.a1 = filter.a2 = 0.0;
+        // Out of range: the low-pass passes all (or nothing at 0 Hz), the high-pass the reverse,
+        // the others pass the signal unchanged.
+        const bool passes = param.type == 1 ? param.frequency != 0.0f : param.type == 2 ? param.frequency == 0.0f : true;
+        set(passes ? (param.type <= 2 ? level : 1.0) : 0.0, 0, 0, 1, 0, 0);
         return;
     }
     const double omega = 2.0 * std::numbers::pi * param.frequency / rate;
-    const double cosine = std::cos(omega);
-    const double alpha = std::sin(omega) / (2.0 * param.q);
-    const double inverseA0 = 1.0 / (1.0 + alpha);
-    filter.b0 = (highPass ? 1.0 + cosine : 1.0 - cosine) * 0.5 * inverseA0 * param.level;
-    filter.b1 = highPass ? -2.0 * filter.b0 : 2.0 * filter.b0;
-    filter.b2 = filter.b0;
-    filter.a1 = -2.0 * cosine * inverseA0;
-    filter.a2 = (1.0 - alpha) * inverseA0;
+    const double cosine = std::cos(omega), alpha = std::sin(omega) / (2.0 * param.q);
+    const double gain = std::sqrt(std::max(level, 1e-6)); // RBJ "A" for peak and shelves
+    switch (param.type) {
+        case 1: set((1 - cosine) / 2 * level, (1 - cosine) * level, (1 - cosine) / 2 * level, 1 + alpha, -2 * cosine, 1 - alpha); break;
+        case 2: set((1 + cosine) / 2 * level, -(1 + cosine) * level, (1 + cosine) / 2 * level, 1 + alpha, -2 * cosine, 1 - alpha); break;
+        case 3: set(alpha * level, 0, -alpha * level, 1 + alpha, -2 * cosine, 1 - alpha); break;
+        case 4: set(param.q * alpha * level, 0, -param.q * alpha * level, 1 + alpha, -2 * cosine, 1 - alpha); break;
+        case 5: set(level, -2 * cosine * level, level, 1 + alpha, -2 * cosine, 1 - alpha); break;
+        case 6: set(1 + alpha * gain, -2 * cosine, 1 - alpha * gain, 1 + alpha / gain, -2 * cosine, 1 - alpha / gain); break;
+        case 7:
+        case 8: {
+            const double root = 2 * std::sqrt(gain) * alpha, sign = param.type == 7 ? 1.0 : -1.0;
+            const double ap = gain + 1, am = gain - 1;
+            set(gain * (ap + sign * am * cosine + root), -2 * sign * gain * (am + sign * ap * cosine),
+                gain * (ap + sign * am * cosine - root), ap - sign * am * cosine + root, 2 * sign * (am - sign * ap * cosine),
+                ap - sign * am * cosine - root);
+            break;
+        }
+        default: { // 9, 10: one pole
+            const double pole = std::exp(-omega);
+            if (param.type == 9) set((1 - pole) * level, 0, 0, 1, -pole, 0);
+            else set((1 + pole) / 2 * level, -(1 + pole) / 2 * level, 0, 1, -pole, 0);
+        }
+    }
 }
 
 static void ApplySamplerParam(Ngs2Voice& voice, const Ngs2VoiceParamHeader& param) {

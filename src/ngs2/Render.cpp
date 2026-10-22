@@ -272,16 +272,17 @@ static std::size_t SampleBytes(std::uint32_t waveformType) {
     ngs2_stop("NGS2: render waveform type " + Ngs2Hex(waveformType) + " is not implemented");
 }
 
-static bool IsStereoIntoSurround(const Ngs2Voice& voice, const Ngs2RenderBufferInfo& output) {
-    return voice.channels == 2 && (output.num_channels == 6 || output.num_channels == 8);
-}
-
 static std::vector<float>& OutputMix(std::vector<std::vector<float>>& mixes, const Ngs2RenderBufferInfo* bufferInfo, std::uint32_t numBufferInfo,
                                      const Ngs2Voice& voice, std::uint32_t grain) {
     if (voice.outputId >= numBufferInfo) ngs2_stop("NGS2: mastering output " + std::to_string(voice.outputId) + " has no render buffer");
     const auto& output = bufferInfo[voice.outputId];
     const auto sampleBytes = SampleBytes(output.waveform_type);
-    if (output.num_channels != voice.channels && !IsStereoIntoSurround(voice, output)) ngs2_stop("NGS2: mixing " + std::to_string(voice.channels) + " mastering channels into " + std::to_string(output.num_channels) + " is not implemented");
+    // knack_pc: other channel counts go through the default channel map (any into 1, 2, 6 or 8; Knack
+    // renders its 8-channel mastering voice into the 1-channel pad speaker buffer).
+    if (output.num_channels != voice.channels && output.num_channels != 1 && output.num_channels != 2 &&
+        output.num_channels != 6 && output.num_channels != 8) {
+        ngs2_stop("NGS2: mixing " + std::to_string(voice.channels) + " mastering channels into " + std::to_string(output.num_channels) + " is not implemented");
+    }
     if (output.buffer == nullptr || output.buffer_size < static_cast<std::size_t>(grain) * output.num_channels * sampleBytes) {
         ngs2_stop("NGS2: render buffer " + std::to_string(voice.outputId) + " is missing or too small");
     }
@@ -342,7 +343,12 @@ void Ngs2RenderSystem(Ngs2System& system, const Ngs2RenderBufferInfo* bufferInfo
         for (std::uint32_t channel = 0; channel < voice->channels; channel++) {
             const bool lfe = channel == 3 && (voice->channels == 6 || voice->channels == 8);
             const float level = lfe ? voice->lfeLevel : voice->fbwLevel;
-            for (std::uint32_t i = 0; i < grain; i++) mix[i * outputChannels + channel] += voice->samples[channel * grain + i] * level;
+            for (std::uint32_t out = 0; out < outputChannels; out++) {
+                const float gain = voice->channels == outputChannels ? (out == channel ? level : 0.0f)
+                                 : level * Ngs2DefaultLevel(voice->channels, channel, outputChannels, out);
+                if (gain == 0.0f) continue;
+                for (std::uint32_t i = 0; i < grain; i++) mix[i * outputChannels + out] += voice->samples[channel * grain + i] * gain;
+            }
         }
     }
     for (std::uint32_t i = 0; i < numBufferInfo; i++) {
