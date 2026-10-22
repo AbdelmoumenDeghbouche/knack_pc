@@ -132,7 +132,7 @@ void FsrPass::Create(vk::Device device, VmaAllocator allocator, u32 num_images) 
 
 vk::ImageView FsrPass::Render(vk::CommandBuffer cmdbuf, vk::ImageView input,
                               vk::Extent2D input_size, vk::Extent2D output_size, Settings settings,
-                              bool hdr) {
+                              bool /*hdr*/) {
     // gow3: FSR 1 upscales when the window is larger; RCAS alone also runs at the same size.
     if (!Gow3Graphics::FsrPassRuns(settings.enable, settings.use_rcas, int(input_size.width),
                                    int(input_size.height), int(output_size.width),
@@ -195,7 +195,8 @@ vk::ImageView FsrPass::Render(vk::CommandBuffer cmdbuf, vk::ImageView input,
                static_cast<AF1>(input_size.width), static_cast<AF1>(input_size.height),
                static_cast<AF1>(input_size.width), static_cast<AF1>(input_size.height), (AF1)width,
                (AF1)height);
-    consts.Sample[0] = hdr && !settings.use_rcas ? 1 : 0;
+    // gow3: Sample.x stays 0. It squares the result, which only undoes a square root taken
+    // before the pass; nothing takes one, and in HDR the PQ picture came out darker (#4).
 
     if (settings.use_rcas) {
 
@@ -273,7 +274,6 @@ vk::ImageView FsrPass::Render(vk::CommandBuffer cmdbuf, vk::ImageView input,
         { // rcas
             consts = {};
             FsrRcasCon(reinterpret_cast<AU1*>(&consts.Const0), settings.rcas_attenuation);
-            consts.Sample[0] = hdr ? 1 : 0;
 
             std::array<vk::DescriptorImageInfo, 3> img_info{{
                 {
