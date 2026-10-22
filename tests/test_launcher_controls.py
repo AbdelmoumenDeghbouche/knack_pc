@@ -729,8 +729,8 @@ class GpuChoiceTest(unittest.TestCase):
 
 class ReleaseVersionTest(unittest.TestCase):
     def test_first_wipeout_release(self):
-        self.assertEqual(launcher.VERSION, '0.2.0')
-        self.assertGreater(launcher.version_tuple('windows-v0.2.1'), launcher.version_tuple(launcher.VERSION))
+        self.assertEqual(launcher.VERSION, '0.2.1')
+        self.assertGreater(launcher.version_tuple('windows-v0.2.2'), launcher.version_tuple(launcher.VERSION))
         self.assertGreater(launcher.version_tuple(launcher.VERSION), launcher.version_tuple('windows-v0.1.9'))
 
     def test_first_start_is_in_english(self):
