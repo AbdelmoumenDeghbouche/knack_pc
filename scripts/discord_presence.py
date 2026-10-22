@@ -7,7 +7,7 @@ import threading
 import time
 import uuid
 
-CLIENT_ID = '1560048868677132431'
+CLIENT_ID = ''
 RETRY_SECONDS = 15
 JOIN_SECONDS = 3
 POLL_SECONDS = 0.1

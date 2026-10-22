@@ -15,7 +15,7 @@ import shutil
 import struct
 import subprocess
 
-APP_NAME = 'God of War III Remastered'
+APP_NAME = 'WipEout Omega Collection'
 CAPSULE = (600, 900)    # vertical capsule: <id>p.png
 WIDE = (920, 430)       # horizontal capsule: <id>.png
 HERO = (1920, 620)      # library background: <id>_hero.png

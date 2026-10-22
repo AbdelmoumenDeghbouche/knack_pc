@@ -21,7 +21,7 @@ body:
     id: game_version
     attributes:
       label: Game build / update version
-      description: e.g. 01.00, 01.02, region (CUSA01623, CUSA01715, CUSA01740...)
+      description: e.g. 01.00 + update 01.07, region (CUSA07671 US, CUSA05670 EU)
     validations:
       required: true
 

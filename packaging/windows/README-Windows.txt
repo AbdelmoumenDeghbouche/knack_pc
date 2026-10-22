@@ -1,92 +1,74 @@
-God of War III Remastered for PC (gow3_pc)
-==========================================
+WipEout Omega Collection for PC (wipeout_pc)
+============================================
 
-No game files are included. You need your own copy of God of War III Remastered as a folder
-containing eboot.bin, sce_module and sce_sys. Tested title IDs: CUSA01623 and CUSA01715;
-versions 01.00 and 01.02. Other builds may work, but are not guaranteed.
+An early version of a native PC port. Menus and races (HD and 2048) play; not every
+event type has been tested yet.
+
+No game files are included. You need your own copy of WipEout Omega Collection, dumped from
+your own PS4, as a folder containing eboot.bin, sce_module and sce_sys. Tested: CUSA07671 (US),
+version 01.00 with update 01.07, merged into one folder. CUSA05670 (EU) is listed but untested.
 
 Requirements
 - Windows 10 (1903 or newer) or Windows 11, 64-bit.
-- A 64-bit processor with AVX: Intel Sandy Bridge (2011) or newer, AMD FX or newer. Sandy/Ivy
-  Bridge and AMD FX run with emulated instructions (an "ISA:" log line; speed not measured yet).
+- A 64-bit processor with AVX: Intel Sandy Bridge (2011) or newer, AMD FX or newer.
   Older processors stop at start with a "STOP: this CPU lacks" line in the log.
 - A graphics card with Vulkan 1.3 and an up-to-date driver.
   Nothing else: Python and the libraries are inside this folder.
 
 Starting
-1. Extract this folder anywhere, for example C:\Games\gow3-windows (not inside the zip).
-2. Open "God of War III.exe". If Windows shows "Windows protected your PC", click More info,
-   then Run anyway: the program is not digitally signed.
+1. Extract this folder anywhere, for example C:\Games\wipeout-windows (not inside the zip).
+2. Open "WipEout.exe". If Windows shows "Windows protected your PC", click More info, then
+   Run anyway: the program is not digitally signed.
 3. Click "Choose the game folder", then Browse... next to Game folder, and select the folder
    with eboot.bin.
 4. Back on Home, adjust the quick settings if you like, then click PLAY. The first start takes
    a little longer while the game image is prepared.
 
-Patches and fixes are included and applied automatically: texture fix, skip videos with X and
-120 FPS are on by default. Change the resolution and frame rate on Home or Performance.
-The startup black-screen fix is always requested, even with older saved patch lists. Each
-patch applies only where its signature matches; a resolution patch replaces the texture fix.
-The launcher has Home, Graphics, Performance, Game and Advanced pages. Click Save to keep
-pending changes before playing. FSR 1 and temporal upscalers are disabled; RCAS remains available.
+Settings
+- Frame rate: the game runs on real time, so it can go above 60 FPS (up to 240). The Frame
+  rate limit on Home sets the cap.
+- Render resolution: 1920x1080 by default. 2560x1080 and 5120x2160 (21:9) are in the port's
+  in-game menu, under Performance, and apply on the next start. The other sizes in that list
+  come from the God of War III port and do nothing here yet. The HUD and menus stay 16:9 and
+  look stretched at 21:9.
+- "Native 4K rendering (no checkerboard)" on the Game page is on by default: from 3840 pixels
+  wide the game renders at full resolution instead of checkerboard.
 
 While playing
-- Insert on the keyboard, or R3 + L2 on the controller, opens the port's menu: cheats,
-  multipliers, image, performance and the performance overlay.
-- Saved pipelines load and compile in the background; a small note shows the progress.
-  Stutters, missing effects during compilation and temporary FPS drops can still occur.
-- Keyboard: WASD move, arrows camera, Space Cross, Left Shift Circle, E Square, Q Triangle,
-  1/3 L1/R1, R/F L2/R2, Z/C L3/R3, I/K/J/L d-pad, Enter Options, Tab photo mode and Backspace
-  pause menu. Change them under Game -> Controls. On controllers without a touchpad, View opens
-  pause and L1 + View opens photo mode.
-- Game -> Controls -> In-game button icons: Original (default), Match my controller, Xbox,
-  Nintendo or Keyboard (your keyboard mapping's keys; also Match my controller without a gamepad).
-  Generated copies do not change the game folder. Changing controllers needs a restart.
+- Insert on the keyboard, or R3 + L2 on the controller, opens the port's menu: image,
+  performance and the performance overlay.
+- Saved pipelines load in the background; a small note shows the progress. New areas can
+  stutter the first time while their shaders compile.
+- Keyboard keys: Game -> Controls in the launcher.
 
 Next time
-- "Play God of War III.exe" starts the game straight away with the saved settings. Make a
-  desktop shortcut to it (Advanced -> Desktop shortcut), or add it to Steam with "Add a
-  Non-Steam Game".
+- "Play WipEout.exe" starts the game straight away with the saved settings. Make a desktop
+  shortcut to it (Advanced -> Desktop shortcut), or add it to Steam with "Add a Non-Steam Game".
 - Advanced -> Check for updates downloads and installs a new version. Saves and settings are
   kept.
 
 Data
-- Saves, shader cache and the log: user\ next to God of War III.exe (keep it when updating).
-- Settings: gow3.ini next to God of War III.exe; launcher options in %APPDATA%\gow3-launcher.
+- Saves, shader cache and the log: user\ next to WipEout.exe (keep it when updating).
+- Settings: gow3.ini next to WipEout.exe; launcher options in %APPDATA%\wipeout-launcher.
 - Generated files (prepared game image, patches): out\.
 
+Known issues
+- PS4 Pro mode is not available yet.
+- Some event types and tracks have not been tested.
+
 Problems
-- Importing shadPS4 saves: see "Importing shadPS4 saves" in the project's README:
-  https://github.com/FelipePrado0/gow3_pc#importing-shadps4-saves
-  Destination: user\savedata\1\CUSA01623\ next to God of War III.exe, or
-  <custom Saves folder>\savedata\1\CUSA01623\. RPCS3 saves are not compatible.
-  Do not rename shadPS4's param.sfo to param.bin; the formats differ.
-  The save dialog displays at most 32 entries. If the imported slot is missing, test
-  with a separate Saves folder containing only that slot; keep the original saves.
-- RTSS/Afterburner and ReShade must target bin\gow3-probe.exe, not the launcher.
-  Select Vulkan in the ReShade installer. Report the overlay versions if it still fails.
-- Black screen at start: use the latest release, which includes the startup deadlock patch.
-  If it persists, report the GPU, driver, game build and Advanced -> Log output. Clearing the
-  shader cache is not a general fix and requires rebuilding it on the next launch.
-- Yellow/orange/white textures or wrong lighting: try disabling Performance -> GPU data ->
-  Deferred GPU readbacks and restart. This workaround can cause stutters.
+- The game does not open: check Advanced -> Log, and send user\last_run.log with your report.
+  With a custom Saves folder, last_run.log is in that folder instead.
 - Memory error (error 1450): increase the Windows page file. Win+R ->
   SystemPropertiesAdvanced -> Performance Settings -> Advanced -> Virtual memory Change ->
   set C: to 16384 MB initial, 24576 MB maximum -> Set -> OK, then restart your PC.
-- The game does not open: check Advanced -> Log, and send user\last_run.log with your report.
-  With a custom Saves folder, last_run.log is in that folder instead.
-- Other known GPU, audio, crash and progress issues are tracked in the release notes and issues:
-  https://github.com/FelipePrado0/gow3_pc/releases/latest
-  https://github.com/FelipePrado0/gow3_pc/issues
+- RTSS/Afterburner and ReShade must target bin\gow3-probe.exe, not the launcher. Select
+  Vulkan in the ReShade installer.
+- Report problems here, with your GPU, driver, CPU and the log:
+  https://github.com/AbdelmoumenDeghbouche/wipeout_pc/issues
 
-Documentation and other platforms
-- This text is maintained with the source; changes reach packaged copies in the next build.
-- The main README's Contents links work inside this package. Links to other documentation and
-  translated READMEs open the online repository and need an internet connection.
-- For differences between published packages and current source builds, including Discord
-  Rich Presence, see the feature availability table:
-  https://github.com/FelipePrado0/gow3_pc#feature-availability
-- An experimental Linux AppImage is also available on the Releases page. It requires Linux
-  x86-64, glibc 2.39 or newer, AVX and Vulkan 1.3; see the project's README for instructions.
+Some file names (gow3-probe.exe, gow3.ini) still come from the God of War III port this
+project is based on.
 
-This project is not affiliated with Sony Interactive Entertainment or Santa Monica Studio.
-God of War is a trademark of Sony Interactive Entertainment.
+This project is not affiliated with Sony Interactive Entertainment, XDev, Clever Beans or EPOS
+Game Studios. WipEout is a trademark of Sony Interactive Entertainment.

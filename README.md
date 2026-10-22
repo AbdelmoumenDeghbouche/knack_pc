@@ -5,8 +5,18 @@ style of [bbport](https://github.com/deadinside28/bloodborne_pc): the game's ori
 code runs directly on the PC's processor, a runtime replaces the PS4 system libraries, and the
 graphics are translated to Vulkan by the shadPS4 video core. There is no CPU emulator.
 
-> **Status: early development. Menus and races (HD and 2048) play above 60 FPS.** There
-> is no packaged release yet: build it from source. See [Progress](#progress).
+> **Status: early development. Menus and races (HD and 2048) play above 60 FPS.**
+> See [Progress](#progress).
+
+## Download and play (Windows)
+
+1. Download `wipeout-windows.zip` from the
+   [latest release](https://github.com/AbdelmoumenDeghbouche/wipeout_pc/releases/latest)
+   and extract it.
+2. Open `WipEout.exe`, choose your game folder (the one with `eboot.bin`) and click **PLAY**.
+
+Requirements: Windows 10 or 11 (64-bit), a CPU with AVX, a GPU with Vulkan 1.3. The
+`README-Windows.txt` in the zip has the details. Linux: build from source (below).
 
 > **No game files are included.** You need your own copy of the game, dumped from your own PS4.
 > This project is not affiliated with Sony Interactive Entertainment, XDev, Clever Beans or EPOS
@@ -21,11 +31,17 @@ graphics are translated to Vulkan by the shadPS4 video core. There is no CPU emu
 | PS4 system functions the game uses | Done for menus and races; PSN, VR and camera answer as an offline console |
 | Boot, menus, saves | Done |
 | Races (HD and 2048), race results | Done |
-| Frame rate above 60 FPS | Done: up to 240 FPS, set by the frame rate limit (90–120 FPS in 2048 races on an RTX 4070 Laptop) |
-| Sound: music | Done |
-| Sound: Audio3d objects and bed (effects) | New, being tested |
+| Game speed | Done: the game runs on real time at any frame rate |
+| Frame rate above 60 FPS | Done: up to 240 FPS, set by the frame rate limit (110–150 FPS in 2048 races on an RTX 4070 Laptop) |
+| Graphics: Metro Park terrain | Fixed (shader recompiler, #5) |
+| Render resolutions: 2560x1080, 5120x2160, native 4K without checkerboard | Done (`patches/WipEout_Omega_Collection.xml`, #2). HUD stays 16:9 |
+| HDR | Done; the darker picture when RCAS runs is fixed, waiting for a test (#4) |
+| Sound: music and effects (Audio3d) | Done; the effects are new, please report anything that sounds wrong |
 | Launcher and settings | Done (`launcher/gow3_launcher_win.py`) |
-| PS4 Pro mode (4K) | Not yet: the shadPS4 texture cache stops on an image overlap |
+| Windows package (zip) | Done (`packaging/windows/package.sh`, Actions > Windows zip) |
+| Linux | Builds from source; no package yet |
+| PS4 Pro mode | Not yet: the shadPS4 texture cache stops on an image overlap |
+| PSVR mode | Not planned for now (#7) |
 | Every game and event type (HD, HD Fury, 2048) | Not all tested yet |
 
 2048 races need red-zone protection on Windows (`src/redzone.cpp`): the game's profile turns
@@ -150,6 +166,9 @@ Windows port of deadinside28's original:
   the GNM blend rewrite, depth/stencil state and image aliasing fixes.
 - **shadPS4 team**: the [shadPS4](https://github.com/shadps4-emu/shadPS4) video core, the PKG
   format and the symbol names (`tools/aerolib.inl`).
+
+Contributors to this port: **d4g** (render resolution patches, the Metro Park terrain fix),
+**benhaslett** (game clock measurements, Linux build fix) and **iannitram** (PS4 FPU state).
 
 Also used: [LibAtrac9](https://github.com/Thealexbarney/LibAtrac9), [FFmpeg](https://ffmpeg.org),
 [SDL3](https://github.com/libsdl-org/SDL), [Dear ImGui](https://github.com/ocornut/imgui),

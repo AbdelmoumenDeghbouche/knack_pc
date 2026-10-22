@@ -209,9 +209,9 @@ class LinuxShortcutTest(unittest.TestCase):
         self.desktop.mkdir()
         for _ in range(2):
             created = self.click()
-            self.assertEqual(created, [str(self.applications / 'gow3.desktop'), str(self.desktop / 'God of War III.desktop')])
+            self.assertEqual(created, [str(self.applications / 'gow3.desktop'), str(self.desktop / 'WipEout Omega Collection.desktop')])
             shutil.rmtree(self.applications)
-            (self.desktop / 'God of War III.desktop').unlink()
+            (self.desktop / 'WipEout Omega Collection.desktop').unlink()
         self.assertTrue((self.home / '.local' / 'share' / 'icons' / 'gow3.png').is_file())
 
     def test_the_desktop_folder_is_not_made_when_it_does_not_exist(self):
@@ -222,14 +222,14 @@ class LinuxShortcutTest(unittest.TestCase):
         self.applications.mkdir(parents=True)
         (self.applications / 'tool.desktop').write_text(f'[Desktop Entry]\nExec=env DESKTOPINTEGRATION=1 {self.appimage}\n')
         self.desktop.mkdir()
-        self.assertEqual(self.click(), [str(self.desktop / 'God of War III.desktop')])
+        self.assertEqual(self.click(), [str(self.desktop / 'WipEout Omega Collection.desktop')])
         self.assertFalse((self.applications / 'gow3.desktop').exists())
 
     def test_a_broken_entry_of_another_program_does_not_stop_the_button(self):
         self.applications.mkdir(parents=True)
         (self.applications / 'broken.desktop').write_bytes(b'[Desktop Entry]\nExec=/a/\x00b\n')
         self.desktop.mkdir()
-        self.assertEqual(self.click(), [str(self.applications / 'gow3.desktop'), str(self.desktop / 'God of War III.desktop')])
+        self.assertEqual(self.click(), [str(self.applications / 'gow3.desktop'), str(self.desktop / 'WipEout Omega Collection.desktop')])
 
     def test_the_files_run_the_appimage_with_its_icon(self):
         self.desktop.mkdir()
@@ -261,7 +261,7 @@ class LinuxShortcutTest(unittest.TestCase):
             self.assertEqual(self.click(), [str(self.applications / 'gow3.desktop')])
 
     def test_the_environment_variable_of_gear_lever_does_the_same(self):
-        self.assertEqual(self.click({'DESKTOPINTEGRATION': '1'}), [str(self.desktop / 'God of War III.desktop')])
+        self.assertEqual(self.click({'DESKTOPINTEGRATION': '1'}), [str(self.desktop / 'WipEout Omega Collection.desktop')])
         self.assertTrue(self.desktop.is_dir())
         self.assertFalse((self.applications / 'gow3.desktop').exists())
 

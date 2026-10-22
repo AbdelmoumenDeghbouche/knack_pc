@@ -416,7 +416,7 @@ class GameFilesTest(unittest.TestCase):
             self.assertEqual(launcher.describe_missing(missing)[2], 'sce_module/libc.prx (unreadable)')
 
     def test_ready_to_play_needs_a_complete_dump(self):
-        # The --play role (Steam, "Play God of War III.exe") opens the launcher instead of
+        # The --play role (Steam, "Play WipEout.exe") opens the launcher instead of
         # starting a dump the Play button would refuse.
         import tempfile
         from pathlib import Path
@@ -729,9 +729,9 @@ class GpuChoiceTest(unittest.TestCase):
 
 class ReleaseVersionTest(unittest.TestCase):
     def test_first_wipeout_release(self):
-        self.assertEqual(launcher.VERSION, '0.1.0')
-        self.assertGreater(launcher.version_tuple('windows-v0.1.1'), launcher.version_tuple(launcher.VERSION))
-        self.assertGreater(launcher.version_tuple(launcher.VERSION), launcher.version_tuple('windows-v0.0.9'))
+        self.assertEqual(launcher.VERSION, '0.2.0')
+        self.assertGreater(launcher.version_tuple('windows-v0.2.1'), launcher.version_tuple(launcher.VERSION))
+        self.assertGreater(launcher.version_tuple(launcher.VERSION), launcher.version_tuple('windows-v0.1.9'))
 
     def test_first_start_is_in_english(self):
         # The translations are partial; 'System' stays a choice in Advanced.

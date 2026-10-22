@@ -1,4 +1,4 @@
-"""Draws the port's icon (an omega on a dark red field) as .ico and .png. Needs Pillow.
+"""Draws the port's icon (an omega, for Omega Collection, on a dark blue field) as .ico and .png. Needs Pillow.
 usage: make_icon.py launcher/gow3.ico launcher/gow3.png"""
 import sys
 from PIL import Image, ImageDraw, ImageFilter
@@ -15,10 +15,10 @@ def draw():
     fd = ImageDraw.Draw(field)
     for y in range(S):
         t = y / S
-        fd.line((0, y, S, y), fill=(int(96 - 66 * t), int(14 - 8 * t), int(12 - 6 * t), 255))
+        fd.line((0, y, S, y), fill=(int(14 - 8 * t), int(40 - 26 * t), int(96 - 60 * t), 255))
 
     glow = Image.new('RGBA', (S, S), (0, 0, 0, 0))
-    ImageDraw.Draw(glow).ellipse((200, 160, 824, 784), fill=(210, 60, 30, 120))
+    ImageDraw.Draw(glow).ellipse((200, 160, 824, 784), fill=(30, 150, 230, 120))
     field.alpha_composite(glow.filter(ImageFilter.GaussianBlur(90)))
 
     # The omega: a thick ring open at the bottom, standing on two feet.
@@ -42,7 +42,7 @@ def draw():
 
     image.paste(field, (0, 0), mask)
     border = ImageDraw.Draw(image)
-    border.rounded_rectangle((24, 24, S - 24, S - 24), radius=190, outline=(200, 169, 106, 255), width=22)
+    border.rounded_rectangle((24, 24, S - 24, S - 24), radius=190, outline=(150, 200, 235, 255), width=22)
     return image
 
 

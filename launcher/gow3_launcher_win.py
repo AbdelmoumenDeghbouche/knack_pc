@@ -7,7 +7,7 @@ preset, output, effects), start-up options passed to run.py as environment varia
 (frame rate, presentation, HDR, ...), mods, third-party patches and controls.
 Launcher options live in %APPDATA%/gow3-launcher/settings.json (~/.config/gow3-launcher on Linux).
 
-Frozen with PyInstaller (packaging/windows/package.sh) the same God of War III.exe also runs the
+Frozen with PyInstaller (packaging/windows/package.sh) the same WipEout.exe also runs the
 game without the window (`--play`), run.py (`--run`) and the preparation scripts (`--script`),
 so a packaged port needs no Python installation.
 """
@@ -61,7 +61,7 @@ NO_WINDOW = getattr(subprocess, 'CREATE_NO_WINDOW', 0)
 NEW_GROUP = {} if WINDOWS else {'start_new_session': True}
 UI_FONT, MONO_FONT, SERIF_FONT = 'Segoe UI', 'Consolas', 'Georgia'
 # This build; GitHub release tags are windows-v<VERSION>.
-VERSION = '0.1.0'
+VERSION = '0.2.0'
 RELEASES_API = 'https://api.github.com/repos/AbdelmoumenDeghbouche/wipeout_pc/releases/latest'
 RELEASES_PAGE = 'https://github.com/AbdelmoumenDeghbouche/wipeout_pc/releases/latest'
 UPDATE_DIR = Path(tempfile.gettempdir()) / 'gow3-update'
@@ -846,7 +846,7 @@ def describe_missing(missing):
 
 
 def ready_to_play(game_dir, update_dir=''):
-    """Whether --play (Steam, "Play God of War III.exe") may start the game at once; anything
+    """Whether --play (Steam, "Play WipEout.exe") may start the game at once; anything
     the Play button would refuse opens the launcher window instead."""
     if update_dir and same_folder(update_dir, game_dir or '.'):
         return False
@@ -938,7 +938,7 @@ DESKTOP_MARKER = 'X-GOW3-Integration=true'
 
 def desktop_entry(command, icon, marker=False):
     """The menu entry; its StartupWMClass is the application id of the launcher and of the game window."""
-    return ('[Desktop Entry]\nType=Application\nName=God of War III Remastered\n'
+    return ('[Desktop Entry]\nType=Application\nName=WipEout Omega Collection\n'
             f'Exec={command}\nIcon={icon}\nTerminal=false\nCategories=Game;\nStartupWMClass=gow3\n'
             + (DESKTOP_MARKER + '\n' if marker else ''))
 
@@ -1040,7 +1040,7 @@ def write_linux_shortcut(command, appimage, icon_source, desktop, home=None, env
             continue
         folder.mkdir(parents=True, exist_ok=True)
         # In the applications menu the file is named after the window's application id.
-        target = folder / ('gow3.desktop' if folder == applications else 'God of War III.desktop')
+        target = folder / ('gow3.desktop' if folder == applications else 'WipEout Omega Collection.desktop')
         target.write_text(entry, encoding='utf-8')
         target.chmod(0o755)
         created.append(str(target))
@@ -2296,9 +2296,6 @@ class Launcher:
                  _('Applies when the launcher opens again.', 'Применится при следующем открытии лаунчера.'))
         self.row(f, _('GUI Scale'), self.choice(f, 'ui_scale', 'app', UI_SCALES),
                  _('For launcher only. Applies after Save.'))
-        self.check(f, 'discord_rpc', 'app', _('Show Discord Rich Presence', 'Показывать Discord Rich Presence'),
-                   _('Shows only the game name and the time played on your Discord profile.',
-                     'Показывает в профиле Discord только название игры и время в игре.'))
         self.check(f, 'close_on_play', 'app', _('Close the launcher when the game starts', 'Закрывать лаунчер при запуске игры'))
         if WINDOWS:
             self.check(f, 'check_updates', 'app', _('Check for updates when the launcher opens',
@@ -3023,11 +3020,11 @@ class Launcher:
                 with zipfile.ZipFile(archive) as package:
                     package.extractall(UPDATE_DIR / 'new')
                 archive.unlink()
-                new = next((p.parent for p in (UPDATE_DIR / 'new').rglob('God of War III.exe')), None)
+                new = next((p.parent for p in (UPDATE_DIR / 'new').rglob('WipEout.exe')), None)
                 if not new:
-                    raise OSError('God of War III.exe is missing from the download')
+                    raise OSError('WipEout.exe is missing from the download')
                 # The new launcher copies itself over this installation once this one has closed.
-                subprocess.Popen([str(new / 'God of War III.exe'), '--install-update', str(PORT_DIR), str(os.getpid())],
+                subprocess.Popen([str(new / 'WipEout.exe'), '--install-update', str(PORT_DIR), str(os.getpid())],
                                  cwd=str(new), stdin=subprocess.DEVNULL, creationflags=NO_WINDOW)
                 self.ui_calls.put(self.root.destroy)
             except (OSError, zipfile.BadZipFile) as failure:
@@ -3273,7 +3270,7 @@ def install_update(target, wait_pid):
             'Не удалось установить обновление. Скачайте его со страницы релизов.'), APP_NAME, 0x10)
         open_url(RELEASES_PAGE)
         return 1
-    subprocess.Popen([str(target / 'God of War III.exe')], cwd=str(target))
+    subprocess.Popen([str(target / 'WipEout.exe')], cwd=str(target))
     return 0
 
 
