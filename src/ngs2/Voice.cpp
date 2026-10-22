@@ -314,7 +314,10 @@ void Ngs2SetFilter(Ngs2Voice& voice, const Ngs2SamplerVoiceFilterParam& param) {
         filter = {};
         return;
     }
-    if (param.location != 1 || param.type != 1) {
+    // knack_pc: location 0 (Knack's pause menu) runs at the same place as 1 (there is no envelope or
+    // distortion stage to come before or after); type 2 is taken as the high-pass, the type after
+    // AnyPS5's low-pass 1.
+    if (param.location > 1 || (param.type != 1 && param.type != 2)) {
         ngs2_stop("NGS2: sampler filter location " + std::to_string(param.location) + " type " + std::to_string(param.type) + " is not implemented");
     }
     if (!std::isfinite(param.frequency) || param.frequency < 0.0f || !std::isfinite(param.q) || param.q <= 0.0f || !std::isfinite(param.level) || param.level < 0.0f) {
@@ -324,8 +327,9 @@ void Ngs2SetFilter(Ngs2Voice& voice, const Ngs2SamplerVoiceFilterParam& param) {
     filter.enabled = true;
     filter.bypassMask = param.channel_mask;
     filter.history.resize(voice.channels);
+    const bool highPass = param.type == 2;
     if (param.frequency == 0.0f || param.frequency >= rate * 0.5) {
-        filter.b0 = param.frequency == 0.0f ? 0.0 : param.level;
+        filter.b0 = (param.frequency == 0.0f) != highPass ? 0.0 : param.level;
         filter.b1 = filter.b2 = filter.a1 = filter.a2 = 0.0;
         return;
     }
@@ -333,8 +337,8 @@ void Ngs2SetFilter(Ngs2Voice& voice, const Ngs2SamplerVoiceFilterParam& param) {
     const double cosine = std::cos(omega);
     const double alpha = std::sin(omega) / (2.0 * param.q);
     const double inverseA0 = 1.0 / (1.0 + alpha);
-    filter.b0 = (1.0 - cosine) * 0.5 * inverseA0 * param.level;
-    filter.b1 = 2.0 * filter.b0;
+    filter.b0 = (highPass ? 1.0 + cosine : 1.0 - cosine) * 0.5 * inverseA0 * param.level;
+    filter.b1 = highPass ? -2.0 * filter.b0 : 2.0 * filter.b0;
     filter.b2 = filter.b0;
     filter.a1 = -2.0 * cosine * inverseA0;
     filter.a2 = (1.0 - alpha) * inverseA0;
