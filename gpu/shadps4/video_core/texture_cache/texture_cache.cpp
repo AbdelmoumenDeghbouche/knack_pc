@@ -847,6 +847,21 @@ std::tuple<ImageId, int, int> TextureCache::ResolveOverlap(const ImageInfo& imag
             return {merged_image_id, -1, -1};
         }
 
+        // gow3: same image, bigger guest footprint (seen in WipEout Pro mode after a frame-buffer
+        // reallocation: dimensions, format, pitch and tile mode match, only the guest size grew).
+        // Treat it the same as the tiling-mode mismatch above: free the cached image when safe
+        // and let the caller allocate a fresh one at the new size.
+        if (image_info.type == cache_image.info.type &&
+            image_info.pixel_format == cache_image.info.pixel_format &&
+            image_info.size == cache_image.info.size &&
+            image_info.resources == cache_image.info.resources &&
+            image_info.pitch == cache_image.info.pitch) {
+            if (safe_to_delete) {
+                FreeImage(cache_image_id);
+            }
+            return {merged_image_id, -1, -1};
+        }
+
         // Enhanced debug logging for unreachable case
         // Calculate expected size based on format and dimensions
         u64 expected_size =
