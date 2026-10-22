@@ -422,6 +422,14 @@ ImageId TextureCache::FeedbackCopy(ImageId target_id, u64 epoch) {
 
 void TextureCache::DiagDumpImage(ImageId image_id, const char* tag) {
     Image& image = slot_images[image_id];
+    // GOW3_DIAG_ADDR=<hex>: only the image at that guest address (draws: first draw only).
+    static const VAddr only = [] {
+        const char* v = std::getenv("GOW3_DIAG_ADDR");
+        return v ? VAddr(std::strtoull(v, nullptr, 16)) : VAddr(0);
+    }();
+    if (only && image.info.guest_address != only) {
+        return;
+    }
     const u32 bytes_per_pixel = image.info.num_bits / 8;
     if (image.info.props.is_depth || bytes_per_pixel == 0) {
         return;

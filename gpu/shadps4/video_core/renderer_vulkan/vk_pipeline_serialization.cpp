@@ -34,9 +34,9 @@
 
 namespace Serialization {
 /* You should increment versions below once corresponding serialization scheme is changed. */
-static constexpr u32 ShaderBinaryVersion = 9u; // knack_pc: legacy multiply-add, pkrtz saturates
-static constexpr u32 ShaderMetaVersion = 7u; // gow3: ImageResource::needs_native
-static constexpr u32 PipelineKeyVersion = 5u; // gow3: Info layout (ImageResource::needs_native)
+static constexpr u32 ShaderBinaryVersion = 16u; // knack_pc: alpha as the second blend source
+static constexpr u32 ShaderMetaVersion = 13u; // knack_pc: HwFragmentRuntimeInfo::alpha_to_src1
+static constexpr u32 PipelineKeyVersion = 11u; // knack_pc: GraphicsPipelineKey::alpha_to_src1
 } // namespace Serialization
 
 namespace Vulkan {

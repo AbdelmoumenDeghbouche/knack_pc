@@ -226,6 +226,8 @@ struct HwFragmentRuntimeInfo {
     u8 mrtz_mask{};
     bool front_face_all_bits{false};
     bool dual_source_blending{false};
+    /// knack_pc: MRT0's alpha is also the second blend source (AlphaToSrc1, vk_pipeline_cache.cpp).
+    bool alpha_to_src1{false};
     bool clip_distance_emulation{false};
     /// gow3: writes the object motion vector to MotionVectors::Output.
     bool motion_vectors{false};
@@ -237,6 +239,7 @@ struct HwFragmentRuntimeInfo {
                num_samples == other.num_samples && mrtz_mask == other.mrtz_mask &&
                front_face_all_bits == other.front_face_all_bits &&
                dual_source_blending == other.dual_source_blending &&
+               alpha_to_src1 == other.alpha_to_src1 &&
                clip_distance_emulation == other.clip_distance_emulation &&
                motion_vectors == other.motion_vectors &&
                std::ranges::equal(inputs.begin(), inputs.begin() + num_inputs, other.inputs.begin(),

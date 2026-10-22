@@ -249,6 +249,8 @@ const Shader::RuntimeInfo& PipelineCache::BuildRuntimeInfo(PipelineSelection& se
         } else {
             info.hw.fs.dual_source_blending = false;
         }
+        info.hw.fs.alpha_to_src1 = sel.graphics_key.alpha_to_src1 != 0;
+        info.hw.fs.dual_source_blending |= info.hw.fs.alpha_to_src1;
         const auto& ps_inputs = regs.ps_inputs;
         for (u32 i = 0; i < regs.num_interp; i++) {
             info.hw.fs.inputs[i] = {
@@ -818,6 +820,45 @@ const ComputePipeline* PipelineCache::GetComputePipeline() {
     return it->second.get();
 }
 
+/// knack_pc: GCN blends before the color buffer's component swap; Vulkan blends the stored
+/// components and takes source alpha from the 4th. When a four-component swap stores a color
+/// component there (StandardReverse, AlternateReverse), the shader also writes its alpha as
+/// the dual-source second output and SrcAlpha factors read that (Src1Alpha). Knack's HDR target
+/// is StandardReverse: with red as alpha, 1 - alpha went negative, and the smoke, which samples
+/// a copy of that target, grew it to +-65504 within a few frames ("TV static", 2026-10-23).
+/// The shader may export only MRT0 (dual-source blending allows one attachment); draws using
+/// src1 natively are left alone.
+static bool AlphaToSrc1(const AmdGpu::Regs& regs, const Shader::PsColorBuffer& cb0) {
+    using Factor = AmdGpu::BlendControl::BlendFactor;
+    const auto& control = regs.blend_control[0];
+    const auto stored_4th = cb0.swizzle.a;
+    if (!regs.color_buffers[0] || !regs.color_target_mask.GetMask(0) || !control.enable ||
+        regs.color_buffers[0].info.blend_bypass ||
+        (stored_4th != AmdGpu::CompSwizzle::Red && stored_4th != AmdGpu::CompSwizzle::Green &&
+         stored_4th != AmdGpu::CompSwizzle::Blue)) {
+        return false;
+    }
+    // The pipeline attaches only the targets the shader exports (mrt_mask), so another bound
+    // target counts only when the shader also exports to it.
+    for (u32 cb = 1; cb < AmdGpu::NUM_COLOR_BUFFERS; ++cb) {
+        if (regs.color_export_format.GetFormat(cb) != AmdGpu::ShaderExportFormat::Zero) {
+            return false;
+        }
+    }
+    const auto src_alpha = [](Factor f) {
+        return f == Factor::SrcAlpha || f == Factor::OneMinusSrcAlpha;
+    };
+    bool uses = src_alpha(control.color_src_factor) || src_alpha(control.color_dst_factor);
+    bool native = LiverpoolToVK::IsDualSourceBlendFactor(control.color_src_factor) ||
+                  LiverpoolToVK::IsDualSourceBlendFactor(control.color_dst_factor);
+    if (control.separate_alpha_blend) {
+        uses |= src_alpha(control.alpha_src_factor) || src_alpha(control.alpha_dst_factor);
+        native |= LiverpoolToVK::IsDualSourceBlendFactor(control.alpha_src_factor) ||
+                  LiverpoolToVK::IsDualSourceBlendFactor(control.alpha_dst_factor);
+    }
+    return uses && !native;
+}
+
 bool PipelineCache::RefreshGraphicsKey(PipelineSelection& sel) {
     std::memset(&sel.graphics_key, 0, sizeof(GraphicsPipelineKey));
     const auto& regs = (*sel.regs);
@@ -882,6 +923,7 @@ bool PipelineCache::RefreshGraphicsKey(PipelineSelection& sel) {
         color_buffer.swizzle = col_buf.Swizzle();
 
     }
+    key.alpha_to_src1 = !skip_cb_binding && AlphaToSrc1(regs, key.color_buffers[0]);
 
     // Compile and bind shader stages
     if (!RefreshGraphicsStages(sel)) {

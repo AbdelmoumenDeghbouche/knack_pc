@@ -6,7 +6,7 @@ env: default environment for the run (run.py); a value already set wins.
 from pathlib import Path
 
 KNACK_ENV = {'GOW3_NGS2_SKIP_UNKNOWN': '1', 'GOW3_DISABLED_OPTIMIZATIONS': str(4096 | 8192),
-             'GOW3_SKIP_PS': '7ce10a50/9b043ce0/3,7ce10a50/73cc6623/2280', 'GOW3_VBLANK_HZ': '120'}
+             'GOW3_VBLANK_HZ': '120'}
 
 PROFILES = {
     # WipEout Omega Collection. NpToolkit2 is the game's own PSN toolkit. Red-zone protection
@@ -34,10 +34,6 @@ PROFILES = {
     # later level plays on with that one effect missing.
     # The draw-preparation workers (prepared resources 4096, prepared draws 8192) read Knack's
     # resource descriptors before the game has written them: gameplay geometry exploded.
-    # The dust of a broken robot is dropped: a 3-index triangle (pixel shader 7ce10a50, vertex
-    # shader 9b043ce0) and a 2280-index cloud mesh (vertex shader 73cc6623) turned to black and
-    # white noise, often above 60 FPS, rarely at 60 (cause not found yet). The shader's other
-    # draws (wall lasers, sparks) stay.
     # Vblank 120 Hz: the game steps by elapsed time, so it runs up to 120 FPS at normal speed.
     'CUSA00068': {'name': 'Knack', 'modules': ('libc.prx', 'libSceFios2.prx'), 'env': KNACK_ENV},
     'CUSA00006': {'name': 'Knack', 'modules': ('libc.prx', 'libSceFios2.prx'), 'env': KNACK_ENV},

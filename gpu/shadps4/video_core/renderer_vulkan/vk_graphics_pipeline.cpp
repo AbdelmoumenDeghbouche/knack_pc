@@ -399,6 +399,22 @@ GraphicsPipeline::GraphicsPipeline(
                                                      ? vk::BlendFactor::eOne
                                                      : vk::BlendFactor::eZero; // 1-A
         }
+        if (i == 0 && key.alpha_to_src1) {
+            // knack_pc: alpha comes from the second source. The stored 4th component is one of
+            // the color channels, so it blends with the color equation (as Vulkan's alpha
+            // factors read the 4th component, SrcColor there is that channel).
+            const auto to_src1 = [](vk::BlendFactor f) {
+                return f == vk::BlendFactor::eSrcAlpha           ? vk::BlendFactor::eSrc1Alpha
+                       : f == vk::BlendFactor::eOneMinusSrcAlpha ? vk::BlendFactor::eOneMinusSrc1Alpha
+                                                                 : f;
+            };
+            auto& a = attachments[0];
+            a.srcColorBlendFactor = to_src1(a.srcColorBlendFactor);
+            a.dstColorBlendFactor = to_src1(a.dstColorBlendFactor);
+            a.srcAlphaBlendFactor = a.srcColorBlendFactor;
+            a.dstAlphaBlendFactor = a.dstColorBlendFactor;
+            a.alphaBlendOp = a.colorBlendOp;
+        }
     }
 
     const vk::PipelineColorBlendStateCreateInfo color_blending = {

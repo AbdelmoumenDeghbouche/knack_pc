@@ -109,7 +109,15 @@ Knack's sound engine (Sony's Sndx) plays everything through libSceNgs2.
   - `V_CVT_PKRTZ_F16_F32` rounds toward zero like the hardware: a value past the half-float range
     becomes ±65504, never infinity;
   - `V_RCP_LEGACY_F32` takes the sign of an infinite result from its bits.
-- **Robot dust skipped** (game profile, `GOW3_SKIP_PS`): see [Known issues](#known-issues).
+- **Blending on swapped color targets** (`AlphaToSrc1` in `vk_pipeline_cache.cpp`): fixed the
+  black and white "TV static" in smoke, dust, explosions and super moves. Knack's HDR target
+  stores its channels reversed (A, B, G, R). GCN blends before that swap, so `SrcAlpha` is the
+  shader's alpha; Vulkan blends the stored order and took red as alpha. Bright smoke made
+  1 − "alpha" negative. The smoke also samples a half-size copy of that target (heat haze), so the
+  error grew each frame up to ±65504 (found by dumping the copy: `GOW3_DIAG_ADDR`). Now such
+  draws also write their alpha as the dual-source second output, and the blend reads it
+  (`Src1Alpha`). Test: 0 noisy screenshots in 3 × 126 (before: 2–6 per run), game clock at half
+  speed (`GOW3_TSC_SCALE=2`), where the static came most often.
 
 ### Frame rate
 
@@ -118,15 +126,9 @@ The Knack profile sets the vblank to 120 Hz (`GOW3_VBLANK_HZ=120`): up to 120 FP
 
 ## Known issues
 
-- **The dust of a broken robot is hidden.** Two draws of the soft smoke shader (pixel shader
-  `7ce10a50`) drew black and white "TV static" that stayed on screen: a 3-index dust triangle
-  (vertex shader `9b043ce0`) and a 2280-index dust cloud mesh (vertex shader `73cc6623`). It
-  happens often above 60 FPS and rarely at 60. Every noisy frame recorded had the dust triangle.
-  Checked and clean: their constants, vertex data, the GPU particle-light table, the
-  eye-adaptation luminance and the shader translator's half-float and legacy operations. Not
-  checked yet: the textures they sample and the shader's own math (needs a GPU debugger). Until
-  then, the profile skips only these two draws; the shader's other effects (wall lasers, sparks)
-  stay.
+- **Separate alpha blending on swapped targets**: the stored 4th channel is a color, so it now
+  uses the color equation; a draw with a different alpha equation gets that on its alpha channel
+  too. None seen in Knack so far.
 - **Menu text** can glitch for the first frames after boot.
 - **Later levels** may send NGS2 parameters that are not implemented: they are skipped and logged
   as `NGS2: voice param ... skipped`.
@@ -190,7 +192,9 @@ Added while porting Knack. All are environment variables for `run.py`.
 | `GOW3_TSC_SCALE=<n>` | The game's clock runs 1/n: a 60 FPS run steps the game like n × 60 FPS (finds high frame rate bugs on a slow or busy GPU) |
 | `GOW3_SKIP_PS=<ps>[/<vs>[/<index count>]][,...]` | Drops the draws of a pixel shader, optionally only with that vertex shader and index count |
 | `GOW3_CAPTURE_TRIGGER=<file>`, `GOW3_CAPTURE_DIR=<dir>` | Creating the trigger file records the next frame: passes, shaders, textures, constants |
-| `GOW3_CAPTURE_PS=<hash>` | The recording keeps every draw of that pixel shader, with its constants, vertex streams and attribute formats |
+| `GOW3_CAPTURE_PS=<hash>` | The recording keeps every draw of that pixel shader, with its constants, vertex streams, attribute formats and the image each texture slot resolved to |
+| `GOW3_DIAG_IMAGES=1`, `GOW3_DIAG_DIR=<dir>` | With `GOW3_CAPTURE_PS`: a recording also writes the raw textures of that shader's first draws |
+| `GOW3_DIAG_ADDR=<address>` | Only the image at that guest address, first draw only (the full dumps can fill a disk in minutes) |
 | `GOW3_CAPTURE_FULL=<address>` | That buffer is dumped whole, once per recording |
 | `GOW3_CAPTURE_DOWNLOAD=<address>:<bytes>:<cs hash>` | The GPU's own copy of a region after compute dispatches (data the CPU never sees) |
 | `GOW3_PATCH_SHADERS=1` | `user/shader/patch/<stage>_<hash>_<perm>.spv` replaces that shader when it is compiled |

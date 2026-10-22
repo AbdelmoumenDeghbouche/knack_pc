@@ -916,6 +916,15 @@ bool Rasterizer::FilterDrawPasses() const {
 // shader, optionally only with that vertex shader and index count (0 or left out: any).
 // `num_indices` is 0 for indirect draws (the count is in GPU memory): only entries without an
 // index count drop them.
+/// knack_pc diagnostic: the pixel shader GOW3_CAPTURE_PS names (hex hash), or 0.
+static u64 CapturedPs() {
+    static const u64 hash = [] {
+        const char* v = std::getenv("GOW3_CAPTURE_PS");
+        return v ? std::strtoull(v, nullptr, 16) : 0;
+    }();
+    return hash;
+}
+
 static bool SkippedDraw(const GraphicsPipeline* pipeline, u32 num_indices) {
     struct Entry {
         u64 ps, vs;
@@ -1086,25 +1095,23 @@ void Rasterizer::DrawRecord(const GraphicsPipeline* pipeline, const PreparedDraw
         return;
     }
     // knack_pc diagnostic: GOW3_DIAG_IMAGES=1 with GOW3_CAPTURE_PS: a recorded frame also writes
-    // the textures of that pixel shader's first draws (out/diag, or GOW3_DIAG_DIR).
+    // the textures of that pixel shader's first draws (out/diag, or GOW3_DIAG_DIR). With
+    // GOW3_DIAG_ADDR only that image, first draw only (TextureCache::DiagDumpImage).
     if (FrameCapture::IsRecording()) {
         static const bool diag = [] {
             const char* env = std::getenv("GOW3_DIAG_IMAGES");
             return env && *env == '1';
         }();
-        static const u64 watched = [] {
-            const char* v = std::getenv("GOW3_CAPTURE_PS");
-            return v ? std::strtoull(v, nullptr, 16) : 0;
-        }();
+        static const u32 max_dumps = std::getenv("GOW3_DIAG_ADDR") ? 1u : 16u;
         static u64 frame = ~u64(0);
         static u32 dumped = 0;
         const auto* ps = pipeline->GetStages()[u32(Shader::SwStage::Fragment)];
-        if (diag && watched && ps && ps->pgm_hash == watched) {
+        if (diag && ps && ps->pgm_hash == CapturedPs() && CapturedPs()) {
             if (frame != FrameCapture::Flips()) {
                 frame = FrameCapture::Flips();
                 dumped = 0;
             }
-            if (dumped < 16) {
+            if (dumped < max_dumps) {
                 char tag[32];
                 std::snprintf(tag, sizeof(tag), "d%02u_n%u", dumped++, Regs().num_indices);
                 const auto images = bound_images;
@@ -1264,12 +1271,20 @@ void Rasterizer::DrawRecord(const GraphicsPipeline* pipeline, const PreparedDraw
                                        u32(regs.vs_output_control.use_vtx_point_size), is_indexed));
         FrameCapture::Draw(vs_info.pgm_hash, ps ? ps->pgm_hash : 0, num_indices, num_instances);
         if (const auto& bc = regs.blend_control[0]; bc.enable && regs.color_buffers[0]) {
-            char note[128];
-            std::snprintf(note, sizeof(note), "\n  blend ps %08x idx %u: src %u dst %u func %u z %u%u",
+            const auto& key = pipeline->GetGraphicsKey();
+            char note[320];
+            std::snprintf(note, sizeof(note),
+                          "\n  blend ps %08x idx %u: src %u dst %u func %u z %u%u | alpha %u %u/%u/%u "
+                          "swap4th %u fmt %u/%u exp %u mask %x att %u src1 %u",
                           u32(ps ? ps->pgm_hash : 0), num_indices, u32(bc.color_src_factor),
                           u32(bc.color_dst_factor), u32(bc.color_func),
                           u32(regs.depth_control.depth_enable),
-                          u32(regs.depth_control.depth_write_enable));
+                          u32(regs.depth_control.depth_write_enable), u32(bc.separate_alpha_blend),
+                          u32(bc.alpha_src_factor), u32(bc.alpha_dst_factor), u32(bc.alpha_func),
+                          u32(key.color_buffers[0].swizzle.a), u32(key.color_buffers[0].data_format),
+                          u32(key.color_buffers[0].num_format),
+                          u32(key.color_buffers[0].export_format), key.cb_shader_mask.GetMask(0),
+                          key.num_color_attachments, key.alpha_to_src1);
             FrameCapture::Note(note);
         }
     }
@@ -2637,6 +2652,18 @@ void Rasterizer::BindTextures(const Shader::Info& stage, const PreparedStage* pr
             auto& image_view = texture_cache.FindTexture(
                 image_id, desc, memo_entry ? &memo_entry->view_memo : nullptr, !on_helper);
             const auto binding = image.binding;
+            // knack_pc diagnostic: the image each binding of a GOW3_CAPTURE_PS shader resolves to.
+            if (FrameCapture::Active() && stage.pgm_hash == CapturedPs()) {
+                FrameCapture::Text(fmt::format(
+                    "  image {:08x} slot {}: wants {:#x} {} {}x{} tile {} | got #{} {:#x} {} {}x{} "
+                    "tile {} flags {:#x} target {} proxy-ok {}",
+                    u32(stage.pgm_hash), binding_index, desc.info.guest_address,
+                    vk::to_string(desc.info.pixel_format), desc.info.size.width,
+                    desc.info.size.height, u32(desc.info.tile_mode), image_id.index,
+                    image.info.guest_address, vk::to_string(image.info.pixel_format),
+                    image.info.size.width, image.info.size.height, u32(image.info.tile_mode),
+                    u32(image.flags), u32(binding.is_target), u32(binding_proxy_ok[binding_index])));
+            }
 
             // gow3: a proxied scene image sampled with normalized coordinates reads the proxy:
             // no resample to the native size (the native image is not touched).
