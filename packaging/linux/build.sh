@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Builds dist/wipeout-x86_64.AppImage from the Linux build (run `bash build.sh` in the repo root first).
+# Builds dist/knack-x86_64.AppImage from the Linux build (run `bash build.sh` in the repo root first).
 # Libraries are bundled with their dependencies, except the ones that must come from the host
 # (glibc, Vulkan loader and drivers, X11/Wayland, GL). The Tk launcher is frozen with PyInstaller, so
 # players need no Python. Needs: ldd, patchelf, curl (appimagetool), python-pyinstaller, tk, pillow, iced-x86.
@@ -92,6 +92,6 @@ if [[ -z $tool ]]; then
 fi
 mkdir -p dist
 # Written aside and moved over: replacing a running AppImage in place fails ("Text file busy").
-ARCH=x86_64 "$tool" --appimage-extract-and-run "$appdir" dist/wipeout-x86_64.AppImage.new
-mv -f dist/wipeout-x86_64.AppImage.new dist/wipeout-x86_64.AppImage
-ls -lh dist/wipeout-x86_64.AppImage
+ARCH=x86_64 "$tool" --appimage-extract-and-run "$appdir" dist/knack-x86_64.AppImage.new
+mv -f dist/knack-x86_64.AppImage.new dist/knack-x86_64.AppImage
+ls -lh dist/knack-x86_64.AppImage

@@ -1,6 +1,6 @@
 # Knack for PC (knack_pc)
 
-A native PC port of **Knack** (PlayStation 4, 2013) for Windows 10/11, in the style of
+A native PC port of **Knack** (PlayStation 4, 2013) for Windows 10/11 and Linux, in the style of
 [bbport](https://github.com/deadinside28/bloodborne_pc): the game's original x86-64 code runs
 directly on the PC's processor, a runtime replaces the PS4 system libraries, and the graphics are
 translated to Vulkan by the shadPS4 video core. There is no CPU emulator.
@@ -9,13 +9,30 @@ This repository started as a copy of [wipeout_pc](https://github.com/Abdelmoumen
 (the WipEout Omega Collection port). Everything below the WipEout layer is shared; this README
 lists what was added for Knack.
 
-> **Status: early development. The game boots, saves, plays its story videos and the first level
-> (the training rooms) at up to 120 FPS, with music and sound effects.** Later levels are not
-> tested yet. See [Progress](#progress) and [Known issues](#known-issues).
+> **Status: playable early version (v0.1.0). The first chapters play from start to end at up to
+> 120 FPS: fights, super moves, story videos, music, sound effects and saves.** Later chapters are
+> not tested yet. See [Progress](#progress) and [Known issues](#known-issues).
 
 > **No game files are included.** You need your own copy of the game, dumped from your own PS4.
 > This project is not affiliated with Sony Interactive Entertainment or Japan Studio. Knack is a
 > trademark of Sony Interactive Entertainment.
+
+## Download and play
+
+Get the newest version from [Releases](https://github.com/AbdelmoumenDeghbouche/knack_pc/releases/latest):
+
+- **Windows 10/11:** download `knack-windows.zip`, extract it and open `Knack.exe`. Choose your
+  game folder (the one with `eboot.bin`) and, if the update is in its own folder, the Update
+  folder. Then click **PLAY**. More in `README-Windows.txt` inside the zip.
+- **Linux:** download `knack-x86_64.AppImage`, run `chmod +x knack-x86_64.AppImage` and start
+  it. It needs glibc 2.39 or newer (SteamOS, Bazzite, Fedora 42, Debian 13, Ubuntu 24.04+). It is
+  built and opened on these systems by GitHub Actions, but nobody has played it on Linux yet.
+
+Requirements: a 64-bit CPU with AVX, a GPU with Vulkan 1.3, 16 GB of RAM recommended (the game
+uses about 5 to 6 GB).
+
+Tested dump: CUSA00068 (US) with update 01.10. The EU versions (CUSA00006, CUSA00202) are listed
+but untested.
 
 ## Progress
 
@@ -28,12 +45,14 @@ lists what was added for Knack.
 | Boot, menus, saves, story videos | Done |
 | Sound: music and effects (NGS2) | Done for the first level |
 | First level (training rooms) | Plays: fights, doors, the next rooms |
+| First chapters | Play from start to end: smoke, explosions and super moves draw correctly, no crashes |
 | Game speed | Done: the game steps by elapsed time, so it runs at normal speed at any frame rate |
 | Frame rate above 60 FPS | Done: vblank 120 Hz, 71–120 FPS in the first fight on an RTX 4070 Laptop |
 | Long play without slowdown or memory growth | Done: flat 60 FPS and about 4.4 GB over long runs (was 55 → 4 FPS) |
-| Later levels | Not tested yet |
+| Later chapters | Not tested yet |
 | EU versions (CUSA00006, CUSA00202) | Not tested yet |
-| Windows package and launcher for Knack | Not yet: start it with `run.py` |
+| Windows package and launcher for Knack | Done: `knack-windows.zip` with `Knack.exe` (v0.1.0) |
+| Linux AppImage | Built and opened by GitHub Actions; not played on Linux yet |
 
 ## Supported game versions
 
@@ -137,6 +156,10 @@ The Knack profile sets the vblank to 120 Hz (`GOW3_VBLANK_HZ=120`): up to 120 FP
 
 ## Known issues
 
+- **Dust puffs** can show as squares with hard edges.
+- **Memory use** can grow during long play (about 6 GB after 20 minutes, 4.4 GB in shorter
+  tests); not confirmed yet.
+
 - **Separate alpha blending on swapped targets**: the stored 4th channel is a color, so it now
   uses the color equation; a draw with a different alpha equation gets that on its alpha channel
   too. None seen in Knack so far.
@@ -159,7 +182,13 @@ The Knack profile sets the vblank to 120 Hz (`GOW3_VBLANK_HZ=120`): up to 120 FP
 
    ```bash
    bash build.sh
+   bash packaging/windows/package.sh   # dist/knack-windows.zip with Knack.exe
    ```
+
+On Linux (Ubuntu 24.04, as GitHub Actions does): `bash packaging/linux/ci-deps.sh`, then
+`bash build.sh` and `PATH="$PWD/out/venv/bin:$PATH" bash packaging/linux/build.sh`
+(`dist/knack-x86_64.AppImage`). The release builds come from the **Windows zip** and **Linux
+AppImage** workflows (Actions > Run workflow, with the release tag).
 
 ## Preparing your game
 

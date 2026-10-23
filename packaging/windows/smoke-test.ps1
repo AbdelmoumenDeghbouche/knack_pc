@@ -1,14 +1,14 @@
-# Opens dist/wipeout-windows.zip as a player gets it, on a Windows without MSYS2: no game or player
+# Opens dist/knack-windows.zip as a player gets it, on a Windows without MSYS2: no game or player
 # file ships, gow3-probe.exe finds every DLL it links, the frozen launcher imports what the
 # preparation scripts need and its window stays open (.github/workflows/windows-zip.yml).
-# Usage: powershell -File smoke-test.ps1 path\to\wipeout-windows.zip
+# Usage: powershell -File smoke-test.ps1 path\to\knack-windows.zip
 param([Parameter(Mandatory)][string]$Package)
 $ErrorActionPreference = 'Stop'
 # A player's PATH: a DLL found only in MSYS2 or another toolchain must not hide a missing one.
 $env:PATH = "$env:SystemRoot\System32;$env:SystemRoot;$env:SystemRoot\System32\WindowsPowerShell\v1.0"
 $work = Join-Path ([IO.Path]::GetTempPath()) ("gow3-smoke-" + [guid]::NewGuid())
 Expand-Archive -LiteralPath $Package -DestinationPath $work
-$tree = Join-Path $work 'wipeout-windows'
+$tree = Join-Path $work 'knack-windows'
 $failed = @()
 
 # The same names package.sh refuses to ship: game files and anything a player makes.
@@ -32,7 +32,7 @@ if (-not $probe.WaitForExit(60000)) {
 }
 Get-Content (Join-Path $work 'probe.log')
 
-$launcher = Join-Path $tree 'WipEout.exe'
+$launcher = Join-Path $tree 'Knack.exe'
 $check = Join-Path $work 'imports.py'
 # An exception left to the windowed launcher opens an error dialog that waits for a click: the
 # check reports it and exits instead, and a launcher still running after a minute is stopped.
@@ -51,9 +51,9 @@ $null = $script.Handle
 if (-not $script.WaitForExit(60000)) {
     Stop-Process -Id $script.Id -Force
     $script.WaitForExit()
-    $failed += 'WipEout.exe --script did not finish in 60 s'
+    $failed += 'Knack.exe --script did not finish in 60 s'
 } elseif ($script.ExitCode -ne 0) {
-    $failed += "WipEout.exe --script could not import PIL or iced_x86 ($($script.ExitCode))"
+    $failed += "Knack.exe --script could not import PIL or iced_x86 ($($script.ExitCode))"
 }
 Get-Content (Join-Path $work 'script.log'), (Join-Path $work 'script.err')
 

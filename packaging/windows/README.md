@@ -25,7 +25,7 @@ Then, in the repository, build with MSYS2 CLANG64:
 ```bash
 git submodule update --init --recursive
 bash build.sh                      # out/gow3-probe.exe, out/gow3-gpu-capabilities.exe
-bash packaging/windows/package.sh  # dist/wipeout-windows/ and .zip: WipEout.exe + DLLs
+bash packaging/windows/package.sh  # dist/knack-windows/ and .zip: Knack.exe + DLLs
 ```
 
 For a source launcher, install Windows Python 3.10+ from python.org with Tk support. In
@@ -42,12 +42,12 @@ test targets; `bash build.sh --test` runs additional runtime tests only on Linux
 
 `run.py` is the Windows `run.sh` (same variables; works from a plain Windows Python too).
 The package freezes the launcher with PyInstaller (a private venv in `out/pyenv`, from a
-python.org Python) into `WipEout.exe`, which also runs `run.py` (`--run`), the preparation
+python.org Python) into `Knack.exe`, which also runs `run.py` (`--run`), the preparation
 scripts (`--script`) and the game without the window (`--play`): players need no Python.
 The venv also receives `iced-x86`, which `scripts/isa_rewrite.py` uses for CPUs without MOVBE,
 BMI1 or LZCNT.
-`Play WipEout.exe` (`packaging/windows/play.c`) is a small native program that runs
-`WipEout.exe --play` from its folder and waits for it, for players who want to start the
+`Play Knack.exe` (`packaging/windows/play.c`) is a small native program that runs
+`Knack.exe --play` from its folder and waits for it, for players who want to start the
 game directly with the saved settings.
 `scripts/patches.py` identifies God of War III by title ID or title and finds built-in patch
 sites by signature, rather than requiring one `eboot.bin` hash. Each unmatched patch is skipped
@@ -67,7 +67,7 @@ for differences between published packages and current source builds, including 
 The launcher texts are written in English with the Russian beside them; the other languages
 are in `launcher/gow3_lang.py` (one list per language in the order of `KEYS`; a missing or
 empty text falls back to English). The icon (`launcher/gow3.ico`/`.png`) is drawn by
-`packaging/windows/make_icon.py` and built into `WipEout.exe`, `gow3-probe.exe` (the game
+`packaging/windows/make_icon.py` and built into `Knack.exe`, `gow3-probe.exe` (the game
 window) and `gow3-gpu-capabilities.exe`.
 
 ## What is different from Linux

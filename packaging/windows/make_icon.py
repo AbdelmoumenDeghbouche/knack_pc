@@ -1,4 +1,4 @@
-"""Draws the port's icon (an omega, for Omega Collection, on a dark blue field) as .ico and .png. Needs Pillow.
+"""Draws the port's icon (a K, for Knack, on a dark blue field) as .ico and .png. Needs Pillow.
 usage: make_icon.py launcher/gow3.ico launcher/gow3.png"""
 import sys
 from PIL import Image, ImageDraw, ImageFilter
@@ -21,24 +21,19 @@ def draw():
     ImageDraw.Draw(glow).ellipse((200, 160, 824, 784), fill=(30, 150, 230, 120))
     field.alpha_composite(glow.filter(ImageFilter.GaussianBlur(90)))
 
-    # The omega: a thick ring open at the bottom, standing on two feet.
-    omega = Image.new('RGBA', (S, S), (0, 0, 0, 0))
-    od = ImageDraw.Draw(omega)
+    # A bold K: a stem and two arms.
+    glyph = Image.new('RGBA', (S, S), (0, 0, 0, 0))
+    od = ImageDraw.Draw(glyph)
     ash = (236, 226, 208, 255)
-    cx, cy, r, w = 512, 450, 270, 92
-    od.ellipse((cx - r, cy - r, cx + r, cy + r), outline=ash, width=w)
-    od.polygon([(cx - 120, cy + 120), (cx + 120, cy + 120), (cx + 150, cy + r + 10), (cx - 150, cy + r + 10)],
-               fill=(0, 0, 0, 0))
-    for side in (-1, 1):
-        foot_x = cx + side * 150
-        od.rectangle((min(foot_x, foot_x + side * 170), 760, max(foot_x, foot_x + side * 170), 842), fill=ash)
-        od.rectangle((foot_x - 46, cy + 150, foot_x + 46, 842), fill=ash)
-    shadow = omega.copy()
-    shadow.putalpha(omega.getchannel('A').point(lambda a: a * 0.6))
+    od.rectangle((250, 200, 400, 824), fill=ash)
+    od.polygon([(400, 470), (640, 200), (820, 200), (520, 540), (400, 640)], fill=ash)
+    od.polygon([(470, 560), (600, 450), (830, 824), (650, 824)], fill=ash)
+    shadow = glyph.copy()
+    shadow.putalpha(glyph.getchannel('A').point(lambda a: a * 0.6))
     shadow = Image.composite(Image.new('RGBA', (S, S), (0, 0, 0, 255)), Image.new('RGBA', (S, S), (0, 0, 0, 0)),
                              shadow.getchannel('A')).filter(ImageFilter.GaussianBlur(18))
     field.alpha_composite(shadow, (0, 14))
-    field.alpha_composite(omega)
+    field.alpha_composite(glyph)
 
     image.paste(field, (0, 0), mask)
     border = ImageDraw.Draw(image)

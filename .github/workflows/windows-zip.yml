@@ -60,11 +60,11 @@ jobs:
           PYTHON_EXE: ${{ steps.python.outputs.python-path }}
         run: |
           WINPYTHON=$(cygpath -u "$PYTHON_EXE") bash packaging/windows/package.sh
-          cd dist && sha256sum -b wipeout-windows.zip > wipeout-windows.zip.sha256
+          cd dist && sha256sum -b knack-windows.zip > knack-windows.zip.sha256
       - uses: actions/upload-artifact@v4
         with:
-          name: wipeout-windows.zip
-          path: dist/wipeout-windows.zip*
+          name: knack-windows.zip
+          path: dist/knack-windows.zip*
           if-no-files-found: error
 
   smoke:
@@ -74,11 +74,11 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
         with:
-          name: wipeout-windows.zip
+          name: knack-windows.zip
           path: dist
       - name: Open the package without MSYS2
         shell: powershell
-        run: powershell -NoProfile -ExecutionPolicy Bypass -File packaging/windows/smoke-test.ps1 dist/wipeout-windows.zip
+        run: powershell -NoProfile -ExecutionPolicy Bypass -File packaging/windows/smoke-test.ps1 dist/knack-windows.zip
 
   publish:
     needs: smoke
@@ -87,7 +87,7 @@ jobs:
     steps:
       - uses: actions/download-artifact@v4
         with:
-          name: wipeout-windows.zip
+          name: knack-windows.zip
           path: dist
       - name: Release
         env:
@@ -97,6 +97,6 @@ jobs:
         run: |
           if ! gh release view "$TAG" >/dev/null 2>&1; then
             gh release create "$TAG" --prerelease --target "$GITHUB_SHA" --title "Windows test build $TAG" \
-              --notes "Windows test build from \`${GITHUB_SHA::7}\`. Download \`wipeout-windows.zip\`, extract it and run \`WipEout.exe\`. Not a final release: please report in the linked issue whether it opens and runs."
+              --notes "Windows test build from \`${GITHUB_SHA::7}\`. Download \`knack-windows.zip\`, extract it and run \`Knack.exe\`. Not a final release: please report in the linked issue whether it opens and runs."
           fi
-          gh release upload "$TAG" dist/wipeout-windows.zip dist/wipeout-windows.zip.sha256 --clobber
+          gh release upload "$TAG" dist/knack-windows.zip dist/knack-windows.zip.sha256 --clobber

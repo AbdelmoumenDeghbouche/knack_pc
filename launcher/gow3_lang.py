@@ -14,7 +14,7 @@ KEYS = [
     '✗ No Vulkan 1.3 graphics card found (update the driver)', 'Choose the game folder first.',
     'Preparing the game; it opens in its own window…', 'The game is running.',
     'Restarting with the new settings…', '\nThe game exited (code {}).\n', 'Could not start: {}',
-    'Choose the game folder with eboot.bin (CUSA01623).',
+    'Choose the game folder with eboot.bin (CUSA00068).',
     'Stored in gow3.ini; the in-game menu (Insert or R3+L2) changes the same values.',
     'Upscaling',
     "Temporal upscaling with the game's own motion vectors. FSR 4 needs its assets (below) and a GPU with INT8 dot products; otherwise the game falls back to FSR 3.1 by itself.",
@@ -82,7 +82,7 @@ TRANSLATIONS = {
         '✗ لم يتم العثور على بطاقة رسومات تدعم Vulkan 1.3 (حدّث التعريف)',
         'اختر مجلد اللعبة أولًا.', 'جارٍ تجهيز اللعبة؛ ستفتح في نافذتها الخاصة…', 'اللعبة تعمل.',
         'إعادة التشغيل بالإعدادات الجديدة…', '\nأُغلقت اللعبة (الرمز {}).\n', 'تعذّر التشغيل: {}',
-        'اختر مجلد اللعبة الذي يحتوي eboot.bin (CUSA01623).',
+        'اختر مجلد اللعبة الذي يحتوي eboot.bin (CUSA00068).',
         'محفوظة في gow3.ini؛ قائمة اللعبة (Insert أو R3+L2) تغيّر القيم نفسها.', 'التكبير',
         'تكبير زمني باستخدام متجهات الحركة الخاصة باللعبة. يحتاج FSR 4 إلى ملفاته (بالأسفل) وبطاقة تدعم INT8؛ وإلا تعود اللعبة تلقائيًا إلى FSR 3.1.',
         'إعداد الجودة', 'مقياس الرسم لكل محور: Quality يرسم بـ 1/1.5 من دقة الإخراج.',
@@ -142,7 +142,7 @@ TRANSLATIONS = {
         'Primero elige la carpeta del juego.',
         'Preparando el juego; se abrirá en su propia ventana…', 'El juego está en marcha.',
         'Reiniciando con los nuevos ajustes…', '\nEl juego se cerró (código {}).\n',
-        'No se pudo iniciar: {}', 'Elige la carpeta del juego con eboot.bin (CUSA01623).',
+        'No se pudo iniciar: {}', 'Elige la carpeta del juego con eboot.bin (CUSA00068).',
         'Se guarda en gow3.ini; el menú del juego (Insert o R3+L2) cambia los mismos valores.',
         'Escalado',
         'Escalado temporal con los vectores de movimiento del propio juego. FSR 4 necesita sus archivos (abajo) y una GPU con INT8; si no, el juego vuelve solo a FSR 3.1.',
@@ -218,7 +218,7 @@ TRANSLATIONS = {
         'Escolha a pasta do jogo primeiro.', 'Preparando o jogo; ele abrirá em sua própria janela…',
         'O jogo está rodando.', 'Reiniciando com as novas configurações…',
         '\nO jogo foi fechado (código {}).\n', 'Não foi possível iniciar: {}',
-        'Escolha a pasta do jogo com eboot.bin (CUSA01623).',
+        'Escolha a pasta do jogo com eboot.bin (CUSA00068).',
         'Salvo em gow3.ini; o menu do jogo (Insert ou R3+L2) altera os mesmos valores.',
         'Upscaling',
         'Upscaling temporal com os vetores de movimento do próprio jogo. O FSR 4 precisa de seus arquivos (abaixo) e de uma GPU com INT8; senão o jogo volta sozinho para o FSR 3.1.',
@@ -293,7 +293,7 @@ TRANSLATIONS = {
         'Préparation du jeu ; il s’ouvrira dans sa propre fenêtre…', 'Le jeu est lancé.',
         'Redémarrage avec les nouveaux réglages…', '\nLe jeu s’est fermé (code {}).\n',
         'Impossible de lancer : {}',
-        'Choisissez le dossier du jeu contenant eboot.bin (CUSA01623).',
+        'Choisissez le dossier du jeu contenant eboot.bin (CUSA00068).',
         'Enregistré dans gow3.ini ; le menu en jeu (Insert ou R3+L2) modifie les mêmes valeurs.',
         'Upscaling',
         'Upscaling temporel avec les vecteurs de mouvement du jeu. FSR 4 nécessite ses fichiers (ci-dessous) et un GPU avec INT8 ; sinon le jeu repasse seul à FSR 3.1.',
@@ -431,7 +431,7 @@ TRANSLATIONS = {
         'Scegli prima la cartella del gioco.',
         'Preparazione del gioco; si aprirà nella sua finestra…', 'Il gioco è in esecuzione.',
         'Riavvio con le nuove impostazioni…', '\nIl gioco è stato chiuso (codice {}).\n',
-        'Impossibile avviare: {}', 'Scegli la cartella del gioco con eboot.bin (CUSA01623).',
+        'Impossibile avviare: {}', 'Scegli la cartella del gioco con eboot.bin (CUSA00068).',
         'Salvato in gow3.ini; il menu nel gioco (Ins o R3+L2) modifica gli stessi valori.',
         'Upscaling',
         'Upscaling temporale con i vettori di movimento del gioco. FSR 4 richiede i suoi file (sotto) e una GPU con INT8; altrimenti il gioco torna da solo a FSR 3.1.',
@@ -502,7 +502,7 @@ TRANSLATIONS = {
         'Najpierw wybierz folder gry.', 'Przygotowywanie gry; otworzy się we własnym oknie…',
         'Gra działa.', 'Ponowne uruchamianie z nowymi ustawieniami…',
         '\nGra została zamknięta (kod {}).\n', 'Nie udało się uruchomić: {}',
-        'Wybierz folder gry z eboot.bin (CUSA01623).',
+        'Wybierz folder gry z eboot.bin (CUSA00068).',
         'Zapisywane w gow3.ini; menu w grze (Insert lub R3+L2) zmienia te same wartości.',
         'Skalowanie',
         'Skalowanie czasowe z wektorami ruchu samej gry. FSR 4 wymaga swoich plików (poniżej) i GPU z INT8; w przeciwnym razie gra sama wraca do FSR 3.1.',
@@ -926,8 +926,8 @@ EXTRA = {
         'Fast screen effects': 'Efeitos de tela rápidos',
         'Keeps screen effects at full FPS. Switch it off if a screen effect (blur, distortion, a color change) looks stretched, shifted or wrong.':
             'Mantém os efeitos de tela no FPS máximo. Desative se um efeito de tela (desfoque, distorção, uma mudança de cor) parecer esticado, deslocado ou errado.',
-        'Your own dump of the game (eboot.bin, sce_module, sce_sys): WipEout Omega Collection, with or without its update.':
-            'O seu próprio dump do jogo (eboot.bin, sce_module, sce_sys): WipEout Omega Collection, com ou sem a atualização.',
+        'Your own dump of the game (eboot.bin, sce_module, sce_sys): Knack, with or without its update.':
+            'O seu próprio dump do jogo (eboot.bin, sce_module, sce_sys): Knack, com ou sem a atualização.',
         'L1 + Touchpad right': 'L1 + Touchpad direito',
         "Keys use SDL names: letters, digits, Space, Return, Tab, Left Shift, Left Ctrl, Left Alt, Backspace, Up, Down, Left, Right, F1 to F12. A name the game does not know keeps the default (the log says which). L2/R2 on the gamepad stay on the triggers. Touchpad right opens the game's pause menu; Touchpad left (photo mode) is L1 + Touchpad right on the gamepad. Insert and R3+L2 always open the port's menu. Applied when the game starts.":
             'As teclas usam os nomes do SDL: letras, números, Space, Return, Tab, Left Shift, Left Ctrl, Left Alt, Backspace, Up, Down, Left, Right, F1 a F12. Um nome que o jogo não conhece mantém o padrão (o registro diz qual). L2/R2 no controle ficam nos gatilhos. Touchpad direito abre o menu de pausa do jogo; Touchpad esquerdo (modo foto) é L1 + Touchpad direito no controle. Insert e R3+L2 sempre abrem o menu do port. Vale quando o jogo inicia.',
@@ -1401,8 +1401,8 @@ EXTRA['es'].update({
         'Triángulo',
     'Xbox button':
         'Botón Xbox',
-    'Your own dump of the game (eboot.bin, sce_module, sce_sys): WipEout Omega Collection, with or without its update.':
-        'Tu propio volcado del juego (eboot.bin, sce_module, sce_sys): WipEout Omega Collection, con o sin su actualización.',
+    'Your own dump of the game (eboot.bin, sce_module, sce_sys): Knack, with or without its update.':
+        'Tu propio volcado del juego (eboot.bin, sce_module, sce_sys): Knack, con o sin su actualización.',
     '{} not found in this eboot.bin at the last start (see Log)':
         '{} no se encontró en este eboot.bin en el último inicio (ver Registro)',
     '{} · 60 FPS · no patches for this game':

@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: GPL-2.0-or-later
-"""WipEout Omega Collection launcher for Windows and Linux (Tkinter), from gow3_pc's launcher.
+"""Knack launcher for Windows and Linux (Tkinter), from gow3_pc's launcher.
 
 Every setting of the port in one window: the game folder and saves, gow3.ini (upscaler,
 preset, output, effects), start-up options passed to run.py as environment variables
 (frame rate, presentation, HDR, ...), mods, third-party patches and controls.
 Launcher options live in %APPDATA%/gow3-launcher/settings.json (~/.config/gow3-launcher on Linux).
 
-Frozen with PyInstaller (packaging/windows/package.sh) the same WipEout.exe also runs the
+Frozen with PyInstaller (packaging/windows/package.sh) the same Knack.exe also runs the
 game without the window (`--play`), run.py (`--run`) and the preparation scripts (`--script`),
 so a packaged port needs no Python installation.
 """
@@ -51,19 +51,19 @@ from patches import game_profile, game_sfo  # noqa: E402  (scripts/)
 from prepare import load_sfo  # noqa: E402  (scripts/)
 DATA_DIR = Path(os.environ.get('GOW3_DATA_DIR', PORT_DIR))
 CONFIG_DIR = (Path(os.environ.get('APPDATA', Path.home())) if WINDOWS else
-              Path(os.environ.get('XDG_CONFIG_HOME') or Path.home() / '.config')) / 'wipeout-launcher'
+              Path(os.environ.get('XDG_CONFIG_HOME') or Path.home() / '.config')) / 'knack-launcher'
 CONFIG_FILE = CONFIG_DIR / 'settings.json'
 MOD_PRESETS = DATA_DIR / 'mods_presets.json'
-APP_NAME = 'WipEout Omega Collection'
+APP_NAME = 'Knack'
 MAX_LOG_LINES = 6000
 NO_WINDOW = getattr(subprocess, 'CREATE_NO_WINDOW', 0)
 # The game and everything it starts form one process group, ended together (GameJob).
 NEW_GROUP = {} if WINDOWS else {'start_new_session': True}
 UI_FONT, MONO_FONT, SERIF_FONT = 'Segoe UI', 'Consolas', 'Georgia'
-# This build; GitHub release tags are windows-v<VERSION>.
-VERSION = '0.2.1'
-RELEASES_API = 'https://api.github.com/repos/AbdelmoumenDeghbouche/wipeout_pc/releases/latest'
-RELEASES_PAGE = 'https://github.com/AbdelmoumenDeghbouche/wipeout_pc/releases/latest'
+# This build; GitHub release tags are v<VERSION>.
+VERSION = '0.1.0'
+RELEASES_API = 'https://api.github.com/repos/AbdelmoumenDeghbouche/knack_pc/releases/latest'
+RELEASES_PAGE = 'https://github.com/AbdelmoumenDeghbouche/knack_pc/releases/latest'
 UPDATE_DIR = Path(tempfile.gettempdir()) / 'gow3-update'
 # Never copied over an installation by an update (the package does not hold them either).
 USER_FILES = ('user', 'out', 'mods', 'gow3.ini', 'mods.json', 'mods_presets.json', 'patches.json', 'last_run.log')
@@ -404,7 +404,7 @@ FPS_LIMITS = [('30', ('30',)), ('60', ('60',)), ('100', ('100',)), ('120', ('120
 PAGES = ('home', 'graphics', 'performance', 'game', 'controls', 'mods', 'advanced')
 PAGE_REFRESH = {'home': ('refresh_status',), 'game': ('refresh_game_patches',), 'mods': ('refresh_lists',)}
 UI_SCALES = [('auto', ('Auto',)), ('1', ('1x',)), ('2', ('2x',))]
-APP_DEFAULTS = {'ui_language': 'en', 'ui_scale': 'auto', 'game_dir': os.environ.get('GOW3_GAME_DIR', str(PORT_DIR.parent / 'CUSA07671') if WINDOWS else ''), 'update_dir': '', 'experimental_upscaler': False,
+APP_DEFAULTS = {'ui_language': 'en', 'ui_scale': 'auto', 'game_dir': os.environ.get('GOW3_GAME_DIR', str(PORT_DIR.parent / 'CUSA00068') if WINDOWS else ''), 'update_dir': '', 'experimental_upscaler': False,
                 'video_backend': 'auto', 'gamemode': False, 'mangohud': False, 'desktop_integration': True, 'user_dir': '',
                 'mods_dir': '', 'mods_enabled': True, 'patches_dir': '', 'language': '1',
                 'hdr': False, 'draw_pipe': '', 'readbacks': '', 'no_msaa': '', 'stream_memory': 'cached',
@@ -846,7 +846,7 @@ def describe_missing(missing):
 
 
 def ready_to_play(game_dir, update_dir=''):
-    """Whether --play (Steam, "Play WipEout.exe") may start the game at once; anything
+    """Whether --play (Steam, "Play Knack.exe") may start the game at once; anything
     the Play button would refuse opens the launcher window instead."""
     if update_dir and same_folder(update_dir, game_dir or '.'):
         return False
@@ -938,7 +938,7 @@ DESKTOP_MARKER = 'X-GOW3-Integration=true'
 
 def desktop_entry(command, icon, marker=False):
     """The menu entry; its StartupWMClass is the application id of the launcher and of the game window."""
-    return ('[Desktop Entry]\nType=Application\nName=WipEout Omega Collection\n'
+    return ('[Desktop Entry]\nType=Application\nName=Knack\n'
             f'Exec={command}\nIcon={icon}\nTerminal=false\nCategories=Game;\nStartupWMClass=gow3\n'
             + (DESKTOP_MARKER + '\n' if marker else ''))
 
@@ -1040,7 +1040,7 @@ def write_linux_shortcut(command, appimage, icon_source, desktop, home=None, env
             continue
         folder.mkdir(parents=True, exist_ok=True)
         # In the applications menu the file is named after the window's application id.
-        target = folder / ('gow3.desktop' if folder == applications else 'WipEout Omega Collection.desktop')
+        target = folder / ('gow3.desktop' if folder == applications else 'Knack.desktop')
         target.write_text(entry, encoding='utf-8')
         target.chmod(0o755)
         created.append(str(target))
@@ -1142,7 +1142,7 @@ def game_environment(s):
 # ---------------------------------------------------------------------------------------------
 # The window.
 
-# WipEout's colors: near black, steel and the cyan of the Omega Collection menus.
+# The launcher's colors: near black, steel and cyan.
 BG, PANEL, CARD, LINE = '#0b0d10', '#12161b', '#181d23', '#232a32'
 TEXT, MUTED, ACCENT, ACCENT_HI = '#e2e8ee', '#7f8a94', '#0a7fc0', '#1fa8e6'
 CONFLICT = '#e0a0a0'
@@ -1649,7 +1649,7 @@ class Launcher:
         ttk.Label(quick, text=_('Quick settings', 'Основное').upper(), style='Section.TLabel').grid(
             row=0, column=0, columnspan=4, sticky='w')
         tk.Frame(quick, bg=LINE, height=self.px(1)).grid(row=1, column=0, columnspan=4, sticky='we', pady=self.px((2, 6)))
-        # WipEout renders 1080p at 60 FPS: no engine frame rate or render resolution patches.
+        # No engine frame rate or render resolution patches for this game.
         items = ((0, 0, _('Display mode'), 'display_mode', DISPLAY_MODES),
                  (1, 0, _('Frame rate limit'), 'fps_limit', FPS_LIMITS),
                  (0, 2, _('Frames queued'), 'frames_queued', FRAMES_QUEUED),
@@ -1666,7 +1666,7 @@ class Launcher:
         w, h, bar = max(c.winfo_width(), self.px(400)), int(c['height']), self.px(44)
         folder = self.meta_dir()
         info = game_info(folder)
-        art = self.artwork_file('pic0.png')  # WipEout's cover art; its pic1.png is a plain background
+        art = self.artwork_file('pic0.png')  # the cover art; pic1.png is the fallback
         if not art.is_file():
             art = self.artwork_file('pic1.png')
         if self.banner_source != art:
@@ -1814,9 +1814,9 @@ class Launcher:
         self.section(f, _('Folders'), top=4)
         self.folder(f, 'game_dir', _('Game folder', 'Папка игры'),
                     _('Choose the folder with eboot.bin', 'Выберите папку с eboot.bin'),
-                    _('Your own dump of the game (eboot.bin, sce_module, sce_sys): WipEout Omega Collection, '
+                    _('Your own dump of the game (eboot.bin, sce_module, sce_sys): Knack, '
                       'with or without its update.',
-                      'Ваш дамп игры (eboot.bin, sce_module, sce_sys): WipEout Omega Collection, '
+                      'Ваш дамп игры (eboot.bin, sce_module, sce_sys): Knack, '
                       'с обновлением или без.'), on_change=self.game_changed)
         self.folder(f, 'update_dir', _('Update folder (optional)'),
                     _('Choose the folder of the update (eboot.bin, sce_sys)'),
@@ -2803,8 +2803,8 @@ class Launcher:
         if not self.collect():
             return
         if not game_info(self.app['game_dir']):
-            self.messagebox.showerror(APP_NAME, _('Choose the game folder with eboot.bin (CUSA01623).',
-                                                  'Выберите папку игры с eboot.bin (CUSA01623).'))
+            self.messagebox.showerror(APP_NAME, _('Choose the game folder with eboot.bin (CUSA00068).',
+                                                  'Выберите папку игры с eboot.bin (CUSA00068).'))
             self.show('game')
             return
         if not self.offer_system_files():
@@ -3020,11 +3020,11 @@ class Launcher:
                 with zipfile.ZipFile(archive) as package:
                     package.extractall(UPDATE_DIR / 'new')
                 archive.unlink()
-                new = next((p.parent for p in (UPDATE_DIR / 'new').rglob('WipEout.exe')), None)
+                new = next((p.parent for p in (UPDATE_DIR / 'new').rglob('Knack.exe')), None)
                 if not new:
-                    raise OSError('WipEout.exe is missing from the download')
+                    raise OSError('Knack.exe is missing from the download')
                 # The new launcher copies itself over this installation once this one has closed.
-                subprocess.Popen([str(new / 'WipEout.exe'), '--install-update', str(PORT_DIR), str(os.getpid())],
+                subprocess.Popen([str(new / 'Knack.exe'), '--install-update', str(PORT_DIR), str(os.getpid())],
                                  cwd=str(new), stdin=subprocess.DEVNULL, creationflags=NO_WINDOW)
                 self.ui_calls.put(self.root.destroy)
             except (OSError, zipfile.BadZipFile) as failure:
@@ -3091,8 +3091,8 @@ class Launcher:
             return
         game = self.var('game_dir', 'app').get()
         if not game_info(game):
-            self.messagebox.showerror(APP_NAME, _('Choose the game folder with eboot.bin (CUSA01623).',
-                                                  'Выберите папку игры с eboot.bin (CUSA01623).'))
+            self.messagebox.showerror(APP_NAME, _('Choose the game folder with eboot.bin (CUSA00068).',
+                                                  'Выберите папку игры с eboot.bin (CUSA00068).'))
             return
         self.root.configure(cursor='watch')
         self.root.update_idletasks()
@@ -3270,7 +3270,7 @@ def install_update(target, wait_pid):
             'Не удалось установить обновление. Скачайте его со страницы релизов.'), APP_NAME, 0x10)
         open_url(RELEASES_PAGE)
         return 1
-    subprocess.Popen([str(target / 'WipEout.exe')], cwd=str(target))
+    subprocess.Popen([str(target / 'Knack.exe')], cwd=str(target))
     return 0
 
 
