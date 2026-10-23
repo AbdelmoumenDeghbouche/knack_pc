@@ -152,7 +152,7 @@ static ABI int32_t rtc_rfc3339_local(char *out, const uint64_t *utc_tick) {
     DateTime t; from_tick((uint64_t)((int64_t)utc+offset),&t);
     char zone[8]="Z";
     if (minutes) snprintf(zone,sizeof(zone),"%c%02d:%02d",minutes<0 ? '-' : '+',(int)(size/60),(int)(size%60));
-    char text[40];
+    char text[96]; /* room for any field width (GCC -Wformat-truncation) */
     snprintf(text,sizeof(text),"%04u-%02u-%02uT%02u:%02u:%02u.%02u%s",t.year,t.month,t.day,t.hour,t.minute,t.second,
              t.microsecond/10000,zone);
     memcpy(out,text,strlen(text)+1);
