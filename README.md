@@ -68,6 +68,17 @@ Knack maps its direct memory at the fixed address 0x7f0000000, inside the PS4's 
 range. On Windows the loader now also reserves 0x400000000–0x800000000 at start, so that address
 is free when the game asks for it.
 
+### Red zones (`src/redzone.cpp`)
+
+Some game functions keep values in the 128 bytes below the stack pointer (the SysV red zone).
+A GPU write fault on Windows can overwrite them. Knack crashed this way after trophy 22: a
+function at 0x55c410 lost a pointer it kept there and wrote to address 0. The Knack profile
+turns the protection on (`GOW3_RED_ZONE=1`). The patcher now also reads a jump table whose
+bounds check is on the register the index is copied from (`mov ebp, eax; cmp eax, 3; ja`). Its
+liveness analysis follows the jump table targets. Before, 18 accesses were left unprotected,
+and after the first change the analysis saw the function's red zone as unused. Now all 1488
+faultable accesses are rerouted.
+
 ### Sound: NGS2 (`src/ngs2/`)
 
 Knack's sound engine (Sony's Sndx) plays everything through libSceNgs2.

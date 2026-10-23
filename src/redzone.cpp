@@ -133,6 +133,7 @@ struct DecodedCodeInstruction {
 struct DecodedFunction {
     std::map<uintptr_t, DecodedCodeInstruction> instructions;
     std::set<uintptr_t> branch_targets;
+    std::map<uintptr_t, std::vector<uintptr_t>> jump_tables; // resolved `jmp reg`: its targets
     bool uses_red_zone{};
     bool has_indirect_branch{};
     bool requires_conservative_red_zone_tracking{};
@@ -360,16 +361,44 @@ std::optional<std::vector<uintptr_t>> ResolveBoundedJumpTable(
     constexpr size_t MaxPatternInstructions = 64;
     std::optional<size_t> table_size;
     std::optional<uintptr_t> guarded_path_start;
+    // The check can be on the register the index is copied from (`mov ebp, eax; cmp eax, 3; ja`,
+    // Knack 0x55c4b0); then no path may enter between the copy and the jump either.
+    const DecodedCodeInstruction* source_check = nullptr;
+    uintptr_t copy_end = 0;
     auto cursor = load;
     for (size_t count = 0; count < MaxPatternInstructions; ++count) {
         cursor = previous_contiguous(cursor);
         if (cursor == function.instructions.end()) {
             break;
         }
-        const auto& decoded = cursor->second;
+        const DecodedCodeInstruction* check = &cursor->second;
+        const auto& o = check->operands;
+        if (source_check && WritesRegister(*check, index_reg)) {
+            const auto& source = source_check->operands[0];
+            if (check->instruction.mnemonic != ZYDIS_MNEMONIC_MOV ||
+                o[0].type != ZYDIS_OPERAND_TYPE_REGISTER || o[1].type != ZYDIS_OPERAND_TYPE_REGISTER ||
+                o[1].reg.value != source.reg.value || o[0].size != source.size) {
+                return std::nullopt;
+            }
+            copy_end = check->address + check->instruction.length;
+            check = source_check;
+        } else if (source_check && WritesRegister(*check, source_check->operands[0].reg.value)) {
+            source_check = nullptr;
+        } else if (!source_check && check->instruction.mnemonic == ZYDIS_MNEMONIC_CMP &&
+                   o[0].type == ZYDIS_OPERAND_TYPE_REGISTER && o[1].type == ZYDIS_OPERAND_TYPE_IMMEDIATE &&
+                   !IsSameRegister(o[0].reg.value, index_reg)) {
+            const auto next = function.instructions.find(check->address + check->instruction.length);
+            if (next != function.instructions.end() &&
+                (next->second.instruction.mnemonic == ZYDIS_MNEMONIC_JNBE ||
+                 next->second.instruction.mnemonic == ZYDIS_MNEMONIC_JNB)) {
+                source_check = check;
+            }
+            continue;
+        }
+        const auto& decoded = *check;
         if (decoded.instruction.mnemonic == ZYDIS_MNEMONIC_CMP &&
             decoded.operands[0].type == ZYDIS_OPERAND_TYPE_REGISTER &&
-            IsSameRegister(decoded.operands[0].reg.value, index_reg) &&
+            (check == source_check || IsSameRegister(decoded.operands[0].reg.value, index_reg)) &&
             decoded.operands[1].type == ZYDIS_OPERAND_TYPE_IMMEDIATE) {
             const uintptr_t next_address = decoded.address + decoded.instruction.length;
             const auto bounds_branch = function.instructions.find(next_address);
@@ -400,7 +429,7 @@ std::optional<std::vector<uintptr_t>> ResolveBoundedJumpTable(
         return std::nullopt;
     }
     if (std::ranges::any_of(function.branch_targets, [&](uintptr_t target) {
-            return target >= *guarded_path_start && target <= branch_address;
+            return target >= (copy_end ? copy_end : *guarded_path_start) && target <= branch_address;
         })) {
         return std::nullopt;
     }
@@ -549,6 +578,7 @@ DecodedFunction DecodeFunction(uintptr_t function_start, uintptr_t function_end,
                 continue;
             }
             resolved_indirect_branches.insert(branch_address);
+            function.jump_tables[branch_address] = *targets;
             for (const uintptr_t target : *targets) {
                 function.branch_targets.insert(target);
                 if (!visited.contains(target)) {
@@ -624,6 +654,12 @@ void AnalyzeRedZoneLiveness(DecodedFunction& function) {
                 add_successor(branch_target);
             } else if (decoded.instruction.meta.category == ZYDIS_CATEGORY_UNCOND_BR) {
                 add_successor(branch_target);
+                if (const auto table = function.jump_tables.find(decoded.address);
+                    table != function.jump_tables.end()) {
+                    for (const uintptr_t target : table->second) {
+                        add_successor(target);
+                    }
+                }
             } else if (!IsControlFlowTerminator(decoded.instruction)) {
                 add_successor(next_address);
             }
