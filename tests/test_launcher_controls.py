@@ -727,11 +727,27 @@ class GpuChoiceTest(unittest.TestCase):
         self.assertEqual(launcher.APP_DEFAULTS['gpu_id'], '')
 
 
+class PortableTest(unittest.TestCase):
+    def test_a_settings_file_next_to_the_launcher_keeps_its_options_there(self):
+        import importlib
+        with tempfile.TemporaryDirectory() as folder:
+            try:
+                with mock.patch.dict(os.environ, {'GOW3_DATA_DIR': folder}):
+                    importlib.reload(launcher)
+                    self.assertNotEqual(launcher.CONFIG_FILE.parent, Path(folder))
+                    (Path(folder) / 'settings.json').write_text('', encoding='utf-8')  # empty: defaults
+                    importlib.reload(launcher)
+                    self.assertEqual(launcher.CONFIG_FILE, Path(folder) / 'settings.json')
+                    self.assertEqual(launcher.load_json(launcher.CONFIG_FILE, {}), {})
+            finally:
+                importlib.reload(launcher)
+
+
 class ReleaseVersionTest(unittest.TestCase):
     def test_knack_release(self):
-        self.assertEqual(launcher.VERSION, '0.1.1')
-        self.assertGreater(launcher.version_tuple('v0.1.2'), launcher.version_tuple(launcher.VERSION))
-        self.assertGreater(launcher.version_tuple(launcher.VERSION), launcher.version_tuple('v0.1.0'))
+        self.assertEqual(launcher.VERSION, '0.1.2')
+        self.assertGreater(launcher.version_tuple('v0.1.3'), launcher.version_tuple(launcher.VERSION))
+        self.assertGreater(launcher.version_tuple(launcher.VERSION), launcher.version_tuple('v0.1.1'))
 
     def test_first_start_is_in_english(self):
         # The translations are partial; 'System' stays a choice in Advanced.

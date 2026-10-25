@@ -47,6 +47,8 @@ Data
 - Saves, trophies (trophies.txt), shader cache and the log: user\ next to Knack.exe (keep it
   when updating).
 - Settings: gow3.ini next to Knack.exe; launcher options in %APPDATA%\knack-launcher.
+  Portable: put a settings.json next to Knack.exe (an empty file, or a copy of the one in
+  %APPDATA%\knack-launcher) and the launcher keeps its options there instead.
 - Generated files (prepared game image): out\.
 
 Known issues

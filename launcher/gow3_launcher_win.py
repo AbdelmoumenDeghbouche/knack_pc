@@ -52,6 +52,8 @@ from prepare import load_sfo  # noqa: E402  (scripts/)
 DATA_DIR = Path(os.environ.get('GOW3_DATA_DIR', PORT_DIR))
 CONFIG_DIR = (Path(os.environ.get('APPDATA', Path.home())) if WINDOWS else
               Path(os.environ.get('XDG_CONFIG_HOME') or Path.home() / '.config')) / 'knack-launcher'
+if (DATA_DIR / 'settings.json').is_file():  # portable: the launcher's settings stay next to it
+    CONFIG_DIR = DATA_DIR
 CONFIG_FILE = CONFIG_DIR / 'settings.json'
 MOD_PRESETS = DATA_DIR / 'mods_presets.json'
 APP_NAME = 'Knack'
@@ -61,7 +63,7 @@ NO_WINDOW = getattr(subprocess, 'CREATE_NO_WINDOW', 0)
 NEW_GROUP = {} if WINDOWS else {'start_new_session': True}
 UI_FONT, MONO_FONT, SERIF_FONT = 'Segoe UI', 'Consolas', 'Georgia'
 # This build; GitHub release tags are v<VERSION>.
-VERSION = '0.1.1'
+VERSION = '0.1.2'
 RELEASES_API = 'https://api.github.com/repos/AbdelmoumenDeghbouche/knack_pc/releases/latest'
 RELEASES_PAGE = 'https://github.com/AbdelmoumenDeghbouche/knack_pc/releases/latest'
 UPDATE_DIR = Path(tempfile.gettempdir()) / 'gow3-update'
