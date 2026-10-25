@@ -158,7 +158,9 @@ def link(game, out, module_names=DEFAULT_MODULES):
                 relocs.append((target, 0, base + addend, 0))
             elif kind == 16:
                 symbol = m['symbols'][symid]
-                if symbol['name'] or symbol['type'] != 3 or addend or not module_id:
+                # Knack 1.00's libc names some of its own TLS variables (type 6) here.
+                own = not symbol['name'] and symbol['type'] == 3 or symbol['section'] and symbol['type'] == 6
+                if not own or addend or not module_id:
                     raise ValueError(f'{filename}: unsupported external TLS relocation')
                 struct.pack_into('<Q', image, target, module_id)
                 tls_relocations += 1

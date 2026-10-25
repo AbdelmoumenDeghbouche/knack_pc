@@ -125,8 +125,10 @@ def link(game, out):
         elif kind == 16:
             # libc is module 2 in this probe. Descriptor offset is already stored
             # in the adjacent word; __tls_get_addr will use a separate TLS block.
+            # Knack 1.00's libc names some of its own TLS variables (type 6) here.
             symbol = libc['symbols'][symid]
-            if symbol['name'] or symbol['type'] != 3 or addend:
+            own = not symbol['name'] and symbol['type'] == 3 or symbol['section'] and symbol['type'] == 6
+            if not own or addend:
                 raise ValueError('unsupported external TLS relocation')
             struct.pack_into('<Q',image,target,2)
             tls_count += 1
@@ -137,6 +139,12 @@ def link(game, out):
                     struct.pack_into('<Q',image,target,symbol['value']+addend)
                 else:
                     relocs.append((target,0,base+symbol['value']+addend,0))
+            elif symbol['identity'] is None:
+                # A weak import with a plain name stays 0, as on the PS4: Knack 1.00's libc
+                # refers to compilerrt_abort_impl this way.
+                if symbol['binding'] != 2:
+                    raise ValueError(f'unsupported libc import {symbol["name"]!r}')
+                struct.pack_into('<Q',image,target,0)
             else:
                 rk = 2 if symbol['type']==1 else 1
                 if (rk==1 and addend) or not 0 <= addend < 4096:

@@ -108,6 +108,18 @@ class LinkTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError,'unsupported external TLS'):
             self.run_link(*self.fixture(relocs=[(64,16,1,0)]))
 
+    def test_weak_plain_name_import_is_zero(self):
+        main,libc=self.fixture(relocs=[(64,7,2,0)])
+        libc['symbols'].append(dict(name='compilerrt_abort_impl',type=0,binding=2,section=0,
+                                    value=0,size=0,identity=None))
+        libc['elf']=libc['elf'][:64]+b'\xff'*8+libc['elf'][72:]
+        data,_=self.run_link(main,libc)
+        image=data[-struct.unpack_from('<Q',data,8)[0]:]
+        self.assertEqual(struct.unpack_from('<Q',image,65536+64)[0],0)
+        libc['symbols'][2]['binding']=1
+        with self.assertRaisesRegex(ValueError,'compilerrt_abort_impl'):
+            self.run_link(main,libc)
+
     def test_relocation_outside_segments_rejected(self):
         with self.assertRaisesRegex(ValueError,'relocation outside image'):
             self.run_link(*self.fixture(relocs=[(4092,8,0,0)]))
