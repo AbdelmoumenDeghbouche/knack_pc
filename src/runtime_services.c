@@ -40,6 +40,8 @@
 #define PLAYGO_BAD_CHUNK ((int32_t)0x80B2000C)
 #define AUDIO_IN_NOT_OPENED ((int32_t)0x80260109)
 #define TROPHY_INVALID ((int32_t)0x80551604)
+#define TROPHY_INVALID_ID ((int32_t)0x8055160A)
+#define TROPHY_ALREADY_UNLOCKED ((int32_t)0x8055160C)
 
 static pthread_mutex_t lock=PTHREAD_MUTEX_INITIALIZER;
 static int next_id=1;
@@ -428,7 +430,31 @@ static ABI int32_t ime_result(uint32_t *result) {
 }
 static ABI int32_t ime_term(void) { memset(&ime,0,sizeof(ime)); return 0; }
 
-/* ---- Trophies: accepted locally, recorded in the log ---- */
+/* ---- Trophies: unlocks are kept in <user>/trophies.txt (one id per line) and shown on screen.
+ * ponytail: no names (TROPCONF.ESFM needs Sony's trophy key) and no automatic platinum. ---- */
+static uint32_t trophy_flags[4]; /* SceNpTrophyFlagArray: trophy n is bit n%32 of word n/32 */
+static int trophies_loaded, trophy_count;
+static char trophy_path[1024];
+/* Reads the unlocks and counts the trophies (one TROPnnn.PNG icon each in trophy00.trp); lock held. */
+static void trophies_load(void) {
+    if (trophies_loaded) return;
+    trophies_loaded=1;
+    snprintf(trophy_path,sizeof(trophy_path),"%s/trophies.txt",runtime_file_user_dir());
+    FILE *file=fopen(trophy_path,"r");
+    for (int id; file && fscanf(file,"%d",&id)==1;) if (id>=0 && id<128) trophy_flags[id/32]|=1u<<id%32;
+    if (file) fclose(file);
+    static unsigned char trp[0x60+256*64];
+    const int fd=(int)runtime_file_open("/app0/sce_sys/trophy/trophy00.trp",0,0);
+    if (fd<0) return;
+    const int64_t size=runtime_file_read(fd,trp,sizeof(trp));
+    runtime_file_close(fd);
+    const uint32_t entries=(uint32_t)trp[0x10]<<24|trp[0x11]<<16|trp[0x12]<<8|trp[0x13];
+    for (uint32_t i=0; i<entries && 0x60+(i+1)*64<=(uint64_t)(size>0 ? size : 0); ++i) {
+        const char *name=(const char *)trp+0x60+i*64;
+        if (!strncmp(name,"TROP",4) && !strncmp(name+7,".PNG",5)) ++trophy_count;
+    }
+}
+
 static ABI int32_t trophy_context(int32_t *ctx,int32_t user,uint32_t label,uint64_t options) {
     (void)user; (void)label; (void)options;
     if (!ctx) return TROPHY_INVALID;
@@ -438,8 +464,20 @@ static ABI int32_t trophy_handle(int32_t *handle) { if (!handle) return TROPHY_I
 static ABI int32_t trophy_register(int32_t ctx,int32_t handle,uint64_t options) { (void)ctx; (void)handle; (void)options; return 0; }
 static ABI int32_t trophy_unlock(int32_t ctx,int32_t handle,int32_t id,int32_t *platinum) {
     (void)ctx; (void)handle;
-    printf("Runtime: trophy %d unlocked\n",id);
     if (platinum) *platinum=-1;
+    if (id<0 || id>=128) return TROPHY_INVALID_ID;
+    pthread_mutex_lock(&lock);
+    trophies_load();
+    const int unlocked=(trophy_flags[id/32]>>id%32)&1;
+    trophy_flags[id/32]|=1u<<id%32;
+    FILE *file=unlocked ? NULL : fopen(trophy_path,"a");
+    if (file) { fprintf(file,"%d\n",id); fclose(file); }
+    pthread_mutex_unlock(&lock);
+    if (unlocked) return TROPHY_ALREADY_UNLOCKED;
+    printf("Runtime: trophy %d unlocked\n",id);
+    char text[64];
+    snprintf(text,sizeof(text),"Trophy unlocked (%d)",id);
+    gow3gpu_notice(text);
     return 0;
 }
 static ABI int32_t trophy_game_info(int32_t ctx,int32_t handle,void *details,void *data) {
@@ -451,11 +489,14 @@ static ABI int32_t trophy_game_info(int32_t ctx,int32_t handle,void *details,voi
 static ABI int32_t trophy_info(int32_t ctx,int32_t handle,int32_t id,void *details,void *data) {
     (void)id; return trophy_game_info(ctx,handle,details,data);
 }
-/* Nothing is unlocked on this console: an empty 128-trophy flag set. */
+/* The saved unlocks; count is the number of trophies in the game. */
 static ABI int32_t trophy_unlock_state(int32_t ctx,int32_t handle,uint32_t *flags,uint32_t *count) {
     if (!flags || !count) return TROPHY_INVALID;
     if (ctx<=0 || handle<=0) return TROPHY_INVALID;
-    memset(flags,0,16); *count=0;
+    pthread_mutex_lock(&lock);
+    trophies_load();
+    memcpy(flags,trophy_flags,16); *count=(uint32_t)trophy_count;
+    pthread_mutex_unlock(&lock);
     return 0;
 }
 static ABI int32_t trophy_release(int32_t id) { return id>0 ? 0 : TROPHY_INVALID; }

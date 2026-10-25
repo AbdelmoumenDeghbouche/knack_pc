@@ -376,6 +376,10 @@ extern "C" void gow3gpu_request_screenshot(void) {
     VideoCore::RequestScreenshot(VideoCore::ScreenshotRequest::GameOnly);
 }
 
+extern "C" void gow3gpu_notice(const char* utf8) {
+    Gow3Overlay::ShowNotice(utf8, 5000);
+}
+
 extern "C" int gow3gpu_mouse_prompt_distance(void) {
     return Gow3Settings::Get().mouse_prompt_distance.load(std::memory_order_relaxed);
 }

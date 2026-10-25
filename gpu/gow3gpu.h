@@ -46,6 +46,8 @@ int gow3gpu_vibration_percent(void);
 void gow3gpu_movie_picture(void);
 /* Saves the game's next frame to the screenshots folder, as F12 does. */
 void gow3gpu_request_screenshot(void);
+/* A short message in the lower right corner for a few seconds (a trophy unlock). */
+void gow3gpu_notice(const char *utf8);
 /* Mouse movement in px that counts as one step of a stick prompt, set in the menu. */
 int gow3gpu_mouse_prompt_distance(void);
 /* The pause key (touchpad right) was pressed: it lets go of the mouse lock, or takes it back. */

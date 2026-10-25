@@ -49,6 +49,7 @@ but untested.
 | Game speed | Done: the game steps by elapsed time, so it runs at normal speed at any frame rate |
 | Frame rate above 60 FPS | Done: vblank 120 Hz, 71–120 FPS in the first fight on an RTX 4070 Laptop |
 | Long play without slowdown or memory growth | Done: flat 60 FPS and about 4.4 GB over long runs (was 55 → 4 FPS) |
+| Trophies | Kept in `user/trophies.txt` and shown on screen as "Trophy unlocked (n)"; no names (they are encrypted with Sony's trophy key) and no platinum yet |
 | Later chapters | Not tested yet |
 | EU versions (CUSA00006, CUSA00202) | Not tested yet |
 | Windows package and launcher for Knack | Done: `knack-windows.zip` with `Knack.exe` (v0.1.0) |

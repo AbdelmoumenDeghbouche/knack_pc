@@ -44,7 +44,8 @@ Next time
   kept.
 
 Data
-- Saves, shader cache and the log: user\ next to Knack.exe (keep it when updating).
+- Saves, trophies (trophies.txt), shader cache and the log: user\ next to Knack.exe (keep it
+  when updating).
 - Settings: gow3.ini next to Knack.exe; launcher options in %APPDATA%\knack-launcher.
 - Generated files (prepared game image): out\.
 
@@ -52,6 +53,7 @@ Known issues
 - Dust puffs can show as squares with hard edges.
 - Menu text can glitch for the first frames after the game starts.
 - Memory use can grow during long play (about 6 GB after 20 minutes); not confirmed yet.
+- Trophies show as "Trophy unlocked (n)" without their names; the platinum does not unlock.
 - PS4 Pro mode is not available.
 - Later chapters and the EU versions are not tested.
 

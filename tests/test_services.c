@@ -6,8 +6,13 @@
 uintptr_t runtime_lookup(const RuntimeExport *table, size_t count, const char *nid) { (void)table; (void)count; (void)nid; return 0; }
 int gow3gpu_text_input_begin(const char *text, const char *prompt) { (void)text; (void)prompt; return 0; }
 int gow3gpu_text_input_poll(char *text, uint64_t size) { (void)text; (void)size; return 0; }
-int64_t runtime_file_open(const char *path, int flags, int mode) { (void)path; (void)flags; (void)mode; return -1; }
-int64_t runtime_file_read(int fd, void *buffer, uint64_t size) { (void)fd; (void)buffer; (void)size; return -1; }
+/* trophy00.trp with 3 entries: a config and two trophy icons. */
+static unsigned char trp[0x60+3*64];
+int64_t runtime_file_open(const char *path, int flags, int mode) { (void)flags; (void)mode; return strstr(path,"trophy00.trp") ? 7 : -1; }
+int64_t runtime_file_read(int fd, void *buffer, uint64_t size) { if (fd!=7) return -1; size=size<sizeof(trp) ? size : sizeof(trp); memcpy(buffer,trp,size); return (int64_t)size; }
+const char *runtime_file_user_dir(void) { return "out"; }
+static int notices;
+void gow3gpu_notice(const char *text) { (void)text; ++notices; }
 int64_t runtime_file_close(int fd) { (void)fd; return 0; }
 static int choice_next=-1;
 int gow3gpu_choice_begin(const char *title, const char *const *items, const char *const *images, int count, int focus) { (void)title; (void)items; (void)images; (void)focus; return count>0; }
@@ -76,9 +81,17 @@ int main(void) {
     assert(playgo_todo(handle,&chunk,1)==0 && playgo_todo(handle,NULL,1)==PLAYGO_BAD_POINTER);
     assert(playgo_close(handle)==0 && playgo_close(handle)==PLAYGO_BAD_HANDLE && playgo_terminate()==0);
 
-    /* Trophies: nothing unlocked. */
+    /* Trophies: none at first; an unlock is shown once and kept in out/trophies.txt. */
+    remove("out/trophies.txt");
+    trp[0x13]=3; strcpy((char *)trp+0x60,"TROPCONF.ESFM"); strcpy((char *)trp+0xa0,"TROP000.PNG"); strcpy((char *)trp+0xe0,"TROP001.PNG");
     uint32_t flags[4]={~0u,~0u,~0u,~0u}, count=7;
-    assert(trophy_unlock_state(1,1,flags,&count)==0 && !flags[0] && !flags[3] && count==0);
+    assert(trophy_unlock_state(1,1,flags,&count)==0 && !flags[0] && !flags[3] && count==2);
+    int32_t platinum=0;
+    assert(trophy_unlock(1,1,33,&platinum)==0 && platinum==-1 && notices==1);
+    assert(trophy_unlock(1,1,33,&platinum)==TROPHY_ALREADY_UNLOCKED && notices==1);
+    assert(trophy_unlock(1,1,128,&platinum)==TROPHY_INVALID_ID);
+    trophies_loaded=0; trophy_count=0; memset(trophy_flags,0,sizeof(trophy_flags)); /* a new start */
+    assert(trophy_unlock_state(1,1,flags,&count)==0 && flags[1]==2u && !flags[0] && count==2);
     assert(trophy_unlock_state(1,1,NULL,&count)==TROPHY_INVALID && trophy_release(0)==TROPHY_INVALID);
 
     float ratio=0; assert(safe_area(&ratio)==0 && ratio==1.0f && safe_area(NULL)==SYSTEM_PARAMETER);
