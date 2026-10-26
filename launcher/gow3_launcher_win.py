@@ -63,7 +63,7 @@ NO_WINDOW = getattr(subprocess, 'CREATE_NO_WINDOW', 0)
 NEW_GROUP = {} if WINDOWS else {'start_new_session': True}
 UI_FONT, MONO_FONT, SERIF_FONT = 'Segoe UI', 'Consolas', 'Georgia'
 # This build; GitHub release tags are v<VERSION>.
-VERSION = '0.1.3'
+VERSION = '0.1.4'
 RELEASES_API = 'https://api.github.com/repos/AbdelmoumenDeghbouche/knack_pc/releases/latest'
 RELEASES_PAGE = 'https://github.com/AbdelmoumenDeghbouche/knack_pc/releases/latest'
 UPDATE_DIR = Path(tempfile.gettempdir()) / 'gow3-update'
@@ -635,9 +635,13 @@ OUTPUTS = [('1280x720', ('1280 × 720 (Steam Deck)',)), ('1920x1080', ('1920 × 
            ('2560x1440', ('2560 × 1440',)), ('3840x2160', ('3840 × 2160 (4K)',))]
 LIVE = [('auto', ('Auto (by graphics card)', 'Авто (по видеокарте)')), ('0', ('Off (faster)', 'Выключена (быстрее)')),
         ('1', ('On (change without restarting)', 'Включена (без перезапуска)'))]
-LANGUAGES = [('1', ('English', 'Английский')), ('8', ('Russian', 'Русский')), ('0', ('Japanese', 'Японский')),
-             ('2', ('French', 'Французский')), ('3', ('Spanish', 'Испанский')), ('4', ('German', 'Немецкий')),
-             ('5', ('Italian', 'Итальянский'))]
+# The PS4 system language numbers of Knack's languages (its data/raw/lang folders); a copy of the
+# game has only some of them and shows English for the others.
+LANGUAGES = [('1', ('English', 'Английский')), ('2', ('French', 'Французский')), ('20', ('Spanish (Latin America)',)),
+             ('3', ('Spanish (Spain)',)), ('17', ('Portuguese (Brazil)',)), ('7', ('Portuguese (Portugal)',)),
+             ('4', ('German', 'Немецкий')), ('5', ('Italian', 'Итальянский')), ('6', ('Dutch',)),
+             ('8', ('Russian', 'Русский')), ('16', ('Polish',)), ('19', ('Turkish',)), ('14', ('Danish',)),
+             ('12', ('Finnish',)), ('15', ('Norwegian',)), ('13', ('Swedish',)), ('0', ('Japanese', 'Японский'))]
 DRAW_PIPE = [('', ('Auto (8+ threads)', 'Авто (8+ потоков)')), ('1', ('On', 'Включён')),
              ('0', ('Off (more stable)', 'Выключен (стабильнее)'))]
 READBACKS = [('', ('Relaxed (default)', 'Relaxed (по умолчанию)')), ('0', ('Off', 'Выключены')),
@@ -1793,7 +1797,9 @@ class Launcher:
         self.section(f, _('Saves'))
         self.build_save_backups(f)
         self.section(f, _('Language'))
-        self.row(f, _('Game language', 'Язык игры'), self.choice(f, 'language', 'app', LANGUAGES))
+        self.row(f, _('Game language', 'Язык игры'), self.choice(f, 'language', 'app', LANGUAGES),
+                 _('Only the languages in your copy of the game work; the others show English. The US version '
+                   '(CUSA00068) has English, French, Spanish (Latin America) and Portuguese (Brazil).'))
         self.build_patches(f)
 
     def user_dir(self):
