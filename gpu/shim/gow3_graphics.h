@@ -140,9 +140,10 @@ inline int EffectiveFps(int limit, int engine_fps) {
 }
 
 /// The present thread's frame limit: never above the engine rate the patches applied, since the
-/// engine steps a fixed time per frame and faster flips speed the game up. 0 stays vblank paced.
+/// engine steps a fixed time per frame and faster flips speed the game up. Unlimited (0) is the
+/// engine rate; only a 60 FPS engine stays vblank paced (0), as the vblank is 60 Hz anyway.
 inline int PresentLimit(int limit, int engine_fps) {
-    return limit == 0 ? 0 : EffectiveFps(limit, engine_fps);
+    return limit == 0 && engine_fps <= 60 ? 0 : EffectiveFps(limit, engine_fps);
 }
 
 } // namespace Gow3Graphics

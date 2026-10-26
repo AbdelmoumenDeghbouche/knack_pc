@@ -42,6 +42,7 @@ int main() {
     // An unpatched engine steps 1/60 s per frame: presenting faster speeds the game up.
     assert(G::PresentLimit(120, 60) == 60 && G::PresentLimit(240, 120) == 120 && G::PresentLimit(240, 240) == 240);
     assert(G::PresentLimit(0, 60) == 0 && G::PresentLimit(30, 60) == 30);  // 0: paced by vblank
+    assert(G::PresentLimit(0, 240) == 240);  // Unlimited at a faster engine is not held at the vblank
 
     const char* path = "graphics-settings-test.ini";
     {

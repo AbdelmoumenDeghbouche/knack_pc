@@ -15,7 +15,8 @@ import shutil
 import struct
 import subprocess
 
-APP_NAME = 'WipEout Omega Collection'
+APP_NAME = 'Knack'
+TITLE, SUBTITLE = 'KNACK', 'PC PORT'  # the logo's two lines
 CAPSULE = (600, 900)    # vertical capsule: <id>p.png
 WIDE = (920, 430)       # horizontal capsule: <id>.png
 HERO = (1920, 620)      # library background: <id>_hero.png
@@ -186,14 +187,14 @@ def usable_emblem(image):
 
 
 def make_logo(emblem, width):
-    """Transparent logo: the emblem (when there is one) over GOD OF WAR III and REMASTERED, `width` px wide."""
+    """Transparent logo: the emblem (when there is one) over KNACK and PC PORT, `width` px wide."""
     from PIL import Image, ImageDraw, ImageFilter
     scale = 2
     w = width * scale
     emblem_size = round(w * 0.30) if emblem is not None else 0
     probe = ImageDraw.Draw(Image.new('RGBA', (1, 1)))
-    title_face, title_gap = fit_face(probe, 'GOD OF WAR III', w * 0.94, 0.04)
-    sub_face, sub_gap = fit_face(probe, 'REMASTERED', w * 0.60, 0.45)
+    title_face, title_gap = fit_face(probe, TITLE, w * 0.94, 0.04)
+    sub_face, sub_gap = fit_face(probe, SUBTITLE, w * 0.60, 0.45)
     title_y = emblem_size + (w * 0.03 if emblem is not None else 0)
     sub_y = title_y + title_face.size * 1.35
     height = round(sub_y + sub_face.size * 1.5)
@@ -204,8 +205,8 @@ def make_logo(emblem, width):
     shadow = Image.new('RGBA', canvas.size, (0, 0, 0, 0))
     for layer, fill, offset in ((shadow, (0, 0, 0, 220), 3 * scale), (canvas, GOLD + (255,), 0)):
         draw = ImageDraw.Draw(layer)
-        spaced(draw, w / 2 + offset, title_y + offset, 'GOD OF WAR III', title_face, fill, title_gap)
-        spaced(draw, w / 2 + offset, sub_y + offset, 'REMASTERED', sub_face, fill, sub_gap)
+        spaced(draw, w / 2 + offset, title_y + offset, TITLE, title_face, fill, title_gap)
+        spaced(draw, w / 2 + offset, sub_y + offset, SUBTITLE, sub_face, fill, sub_gap)
     blurred = shadow.filter(ImageFilter.GaussianBlur(2 * scale))
     blurred.alpha_composite(canvas)
     return blurred.resize((width, round(height / scale)), Image.LANCZOS)

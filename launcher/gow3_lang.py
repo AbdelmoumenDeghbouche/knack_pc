@@ -364,7 +364,7 @@ TRANSLATIONS = {
         'Zuerst den Spielordner wählen.',
         'Spiel wird vorbereitet; es öffnet sich in einem eigenen Fenster…', 'Das Spiel läuft.',
         'Neustart mit den neuen Einstellungen…', '\nDas Spiel wurde beendet (Code {}).\n',
-        'Start fehlgeschlagen: {}', 'Spielordner mit eboot.bin wählen (CUSA01623).',
+        'Start fehlgeschlagen: {}', 'Spielordner mit eboot.bin wählen (CUSA00068).',
         'Gespeichert in gow3.ini; das Menü im Spiel (Einfg oder R3+L2) ändert dieselben Werte.',
         'Hochskalierung',
         'Temporale Hochskalierung mit den Bewegungsvektoren des Spiels. FSR 4 braucht seine Dateien (unten) und eine GPU mit INT8; sonst wechselt das Spiel selbst zu FSR 3.1.',
@@ -569,7 +569,7 @@ TRANSLATIONS = {
         '✗ Vulkan 1.3 destekli ekran kartı bulunamadı (sürücüyü güncelleyin)',
         'Önce oyun klasörünü seçin.', 'Oyun hazırlanıyor; kendi penceresinde açılacak…',
         'Oyun çalışıyor.', 'Yeni ayarlarla yeniden başlatılıyor…', '\nOyun kapandı (kod {}).\n',
-        'Başlatılamadı: {}', 'eboot.bin içeren oyun klasörünü seçin (CUSA01623).',
+        'Başlatılamadı: {}', 'eboot.bin içeren oyun klasörünü seçin (CUSA00068).',
         'gow3.ini içinde saklanır; oyun içi menü (Insert veya R3+L2) aynı değerleri değiştirir.',
         'Ölçekleme',
         'Oyunun kendi hareket vektörleriyle zamansal ölçekleme. FSR 4 için dosyaları (aşağıda) ve INT8 destekli bir GPU gerekir; aksi halde oyun kendiliğinden FSR 3.1’e döner.',
@@ -628,7 +628,7 @@ TRANSLATIONS = {
         '未设置游戏文件夹', '请选择游戏文件夹（游戏与效果）', '✗ 游戏文件夹中没有 eboot.bin（游戏与效果）', '✓ 在 {} 找到存档',
         '• 暂无存档：游戏会在 {} 中创建', '✓ 显卡：{}', '• 显卡：未检查', '• 正在检查显卡…', '✗ 未找到支持 Vulkan 1.3 的显卡（请更新驱动）',
         '请先选择游戏文件夹。', '正在准备游戏，将在单独的窗口中打开…', '游戏正在运行。', '正在以新设置重新启动…', '\n— 游戏已退出（代码 {}）—\n',
-        '无法启动：{}', '请选择包含 eboot.bin 的游戏文件夹（CUSA01623）。',
+        '无法启动：{}', '请选择包含 eboot.bin 的游戏文件夹（CUSA00068）。',
         '保存在 gow3.ini 中；游戏内菜单（Insert 或 R3+L2）会修改相同的值。', '超分辨率',
         '使用游戏自身运动矢量的时间性超分辨率。FSR 4 需要其文件（见下方）和支持 INT8 的显卡；否则游戏会自动改用 FSR 3.1。', '画质预设',
         '每轴渲染比例：Quality 以输出尺寸的 1/1.5 渲染。', '输出分辨率', '超分辨率生成的尺寸；界面也以此尺寸绘制。', '实时切换分辨率',
@@ -661,7 +661,7 @@ TRANSLATIONS = {
         '• セーブデータはまだありません：ゲームが {} に作成します', '✓ グラフィックカード：{}', '• グラフィックカード：未確認', '• グラフィックカードを確認中…',
         '✗ Vulkan 1.3 対応のグラフィックカードが見つかりません（ドライバーを更新してください）', '先にゲームフォルダーを選択してください。',
         'ゲームを準備しています。専用のウィンドウで開きます…', 'ゲーム実行中。', '新しい設定で再起動しています…', '\n— ゲームが終了しました（コード {}）—\n',
-        '起動できませんでした：{}', 'eboot.bin のあるゲームフォルダーを選択してください（CUSA01623）。',
+        '起動できませんでした：{}', 'eboot.bin のあるゲームフォルダーを選択してください（CUSA00068）。',
         'gow3.ini に保存されます。ゲーム内メニュー（Insert または R3+L2）でも同じ値を変更できます。', 'アップスケーリング',
         'ゲーム自身のモーションベクトルを使うテンポラルアップスケーリング。FSR 4 にはファイル（下記）と INT8 対応 GPU が必要です。ない場合は自動で FSR 3.1 になります。',
         '画質プリセット', '軸ごとの描画スケール：Quality は出力サイズの 1/1.5 で描画します。', '出力解像度',
@@ -701,7 +701,7 @@ TRANSLATIONS = {
         '✓ 그래픽 카드: {}', '• 그래픽 카드: 확인 안 됨', '• 그래픽 카드 확인 중…',
         '✗ Vulkan 1.3 그래픽 카드를 찾을 수 없음 (드라이버를 업데이트하세요)', '먼저 게임 폴더를 선택하세요.', '게임 준비 중; 별도 창에서 열립니다…',
         '게임 실행 중.', '새 설정으로 다시 시작하는 중…', '\n게임이 종료됨 (코드 {}).\n', '시작할 수 없음: {}',
-        'eboot.bin이 있는 게임 폴더를 선택하세요 (CUSA01623).',
+        'eboot.bin이 있는 게임 폴더를 선택하세요 (CUSA00068).',
         'gow3.ini에 저장됩니다. 게임 내 메뉴(Insert 또는 R3+L2)에서도 같은 값을 바꿉니다.', '업스케일링',
         '게임 자체의 모션 벡터를 사용한 시간적 업스케일링. FSR 4에는 파일(아래)과 INT8 지원 GPU가 필요하며, 없으면 게임이 자동으로 FSR 3.1을 사용합니다.',
         '품질 프리셋', '축별 렌더 배율: Quality는 출력 크기의 1/1.5로 렌더링합니다.', '출력 해상도',
@@ -770,7 +770,7 @@ EXTRA = {
         'Items, size and corner: in-game menu (Insert / R3+L2) > Overlay.': 'Itens, tamanho e canto: menu do jogo (Insert / R3+L2) > Sobreposição.',
         'Frame rate and speed options.': 'Opções de taxa de quadros e velocidade.',
         'Frame rate limit': 'Limite de taxa de quadros',
-        'The engine frame rate (below) is the highest it can go.': 'A taxa de quadros do motor (abaixo) é o máximo que ele alcança.',
+        "Unlimited: up to 120 FPS. With VSync on, your monitor's refresh rate is the highest it goes.": 'Ilimitado: até 120 FPS. Com o VSync ligado, a taxa de atualização do seu monitor é o máximo.',
         'Frames queued': 'Quadros em fila',
         '1 is the lowest input latency; more can raise FPS when the graphics card is the limit.': '1 dá a menor latência de entrada; mais pode aumentar o FPS quando a placa de vídeo é o limite.',
         'Engine frame rate': 'Taxa de quadros do motor',
@@ -958,9 +958,10 @@ EXTRA = {
             'Mira com o mouse enquanto L2 está pressionado (Cabeça de Hélio, Arco de Apolo). Relativo: o analógico segue o movimento e volta ao centro quando o mouse para. Absoluto: onde o mouse estava ao apertar L2 é o centro, e o analógico aponta dele até o mouse. Também no menu do jogo.',
         'Aiming with the mouse while L2 is held: lower needs more mouse movement for the same stick, higher less. Also in the in-game menu.':
             'Mira com o mouse enquanto L2 está pressionado: menor precisa de mais movimento do mouse para o mesmo analógico, maior de menos. Também no menu do jogo.',
-        "Click a box, then press a key, click a mouse button or turn the wheel (it gives up after {} seconds). An input already used by another button swaps with it; the arrow puts one button back on its default. Rage of Sparta presses L3 and R3 together: tick the box above it to use one input instead of two. Grab presses L1 and Circle together. Dodge evades the way you are moving (WASD), or back when standing still. Touchpad right opens the game's pause menu. Insert always opens the port's menu and cannot be bound. Applied when the game starts.":
-            'Clique em uma caixa e aperte uma tecla, clique com um botão do mouse ou gire a roda (desiste após {} segundos). Uma entrada já usada por outro botão troca com ele; a seta devolve um botão ao padrão. Rage of Sparta aperta L3 e R3 juntos: marque a caixa acima dele para usar uma entrada em vez de duas. Agarrar aperta L1 e Círculo juntos. A esquiva vai na direção em que você anda (WASD), ou para trás quando parado. O touchpad direito abre o menu de pausa do jogo. Insert sempre abre o menu do port e não pode ser atribuído. Aplicado ao iniciar o jogo.',
+        "Click a box, then press a key, click a mouse button or turn the wheel (it gives up after {} seconds). An input already used by another button swaps with it; the arrow puts one button back on its default. Touchpad right opens the game's pause menu. Insert always opens the port's menu and cannot be bound. Applied when the game starts.":
+            'Clique em uma caixa e aperte uma tecla, clique com um botão do mouse ou gire a roda (desiste após {} segundos). Uma entrada já usada por outro botão troca com ele; a seta devolve um botão ao padrão. O touchpad direito abre o menu de pausa do jogo. Insert sempre abre o menu do port e não pode ser atribuído. Aplicado ao iniciar o jogo.',
         'Gamepad Mapping': 'Mapeamento do controle',
+        'Settings': 'Configurações',
         'General': 'Geral',
         'How the stick-rotation prompts are answered. Keyboard: type the turn instead, half turns from the top D S A (clockwise) or A S D, from the bottom A W D or D W A, full turns D S A W or A S D W; a key out of turn starts again. Adaptive mouse: draw the turn with the mouse.':
             'Como os eventos de girar o analógico são respondidos. Teclado: digite o giro, meias-voltas a partir de cima D S A (horário) ou A S D, a partir de baixo A W D ou D W A, voltas completas D S A W ou A S D W; uma tecla fora de ordem recomeça. Mouse adaptativo: desenhe o giro com o mouse.',
@@ -1019,8 +1020,8 @@ EXTRA = {
             'Elementos, tamaño y esquina: menú del juego (Insert / R3+L2) > Overlay.',
         'Frame rate and speed options.': 'Opciones de velocidad de fotogramas y de rendimiento.',
         'Frame rate limit': 'Límite de velocidad de fotogramas',
-        'The engine frame rate (below) is the highest it can go.':
-            'La velocidad de fotogramas del motor (abajo) es el máximo que se puede alcanzar.',
+        "Unlimited: up to 120 FPS. With VSync on, your monitor's refresh rate is the highest it goes.":
+            'Ilimitado: hasta 120 FPS. Con VSync activado, la frecuencia de actualización de tu monitor es el máximo.',
         'Frames queued': 'Fotogramas en cola',
         '1 is the lowest input latency; more can raise FPS when the graphics card is the limit.':
             '1 da la menor latencia de entrada; más puede subir los FPS cuando la tarjeta gráfica es el límite.',
@@ -1224,9 +1225,10 @@ EXTRA = {
             'Apuntar con el ratón mientras mantienes L2 (Cabeza de Helios, Arco de Apolo). Relativo: el stick sigue el movimiento y vuelve al centro cuando el ratón se detiene. Absoluto: donde estaba el ratón al pulsar L2 es el centro, y el stick apunta desde él hasta el ratón. También en el menú del juego.',
         'Aiming with the mouse while L2 is held: lower needs more mouse movement for the same stick, higher less. Also in the in-game menu.':
             'Apuntar con el ratón mientras mantienes L2: más bajo necesita más movimiento del ratón para el mismo stick, más alto menos. También en el menú del juego.',
-        "Click a box, then press a key, click a mouse button or turn the wheel (it gives up after {} seconds). An input already used by another button swaps with it; the arrow puts one button back on its default. Rage of Sparta presses L3 and R3 together: tick the box above it to use one input instead of two. Grab presses L1 and Circle together. Dodge evades the way you are moving (WASD), or back when standing still. Touchpad right opens the game's pause menu. Insert always opens the port's menu and cannot be bound. Applied when the game starts.":
-            'Haz clic en una casilla y luego pulsa una tecla, haz clic con un botón del ratón o gira la rueda (se cancela tras {} segundos). Una entrada ya usada por otro botón se intercambia con él; la flecha devuelve un botón a su valor predeterminado. Rage of Sparta pulsa L3 y R3 a la vez: marca la casilla de encima para usar una entrada en lugar de dos. Agarrar pulsa L1 y Círculo a la vez. Esquivar evade hacia donde te mueves (WASD), o hacia atrás si estás quieto. El touchpad derecho abre el menú de pausa del juego. Insert siempre abre el menú del port y no se puede asignar. Se aplica al iniciar el juego.',
+        "Click a box, then press a key, click a mouse button or turn the wheel (it gives up after {} seconds). An input already used by another button swaps with it; the arrow puts one button back on its default. Touchpad right opens the game's pause menu. Insert always opens the port's menu and cannot be bound. Applied when the game starts.":
+            'Haz clic en una casilla y luego pulsa una tecla, haz clic con un botón del ratón o gira la rueda (se cancela tras {} segundos). Una entrada ya usada por otro botón se intercambia con él; la flecha devuelve un botón a su valor predeterminado. El touchpad derecho abre el menú de pausa del juego. Insert siempre abre el menú del port y no se puede asignar. Se aplica al iniciar el juego.',
         'Gamepad Mapping': 'Asignación del mando',
+        'Settings': 'Ajustes',
         'General': 'General',
         'How the stick-rotation prompts are answered. Keyboard: type the turn instead, half turns from the top D S A (clockwise) or A S D, from the bottom A W D or D W A, full turns D S A W or A S D W; a key out of turn starts again. Adaptive mouse: draw the turn with the mouse.':
             'Cómo se responden los eventos de girar el stick. Teclado: escribe el giro, medias vueltas desde arriba D S A (horario) o A S D, desde abajo A W D o D W A, vueltas completas D S A W o A S D W; una tecla fuera de orden vuelve a empezar. Ratón adaptativo: dibuja el giro con el ratón.',

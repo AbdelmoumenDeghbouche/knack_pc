@@ -63,7 +63,7 @@ NO_WINDOW = getattr(subprocess, 'CREATE_NO_WINDOW', 0)
 NEW_GROUP = {} if WINDOWS else {'start_new_session': True}
 UI_FONT, MONO_FONT, SERIF_FONT = 'Segoe UI', 'Consolas', 'Georgia'
 # This build; GitHub release tags are v<VERSION>.
-VERSION = '0.1.2'
+VERSION = '0.1.3'
 RELEASES_API = 'https://api.github.com/repos/AbdelmoumenDeghbouche/knack_pc/releases/latest'
 RELEASES_PAGE = 'https://github.com/AbdelmoumenDeghbouche/knack_pc/releases/latest'
 UPDATE_DIR = Path(tempfile.gettempdir()) / 'gow3-update'
@@ -414,7 +414,7 @@ APP_DEFAULTS = {'ui_language': 'en', 'ui_scale': 'auto', 'game_dir': os.environ.
                 'perf_diag': False, 'frame_capture_key': False, 'frame_stats': False, 'gpu_profile': False,
                 'vk_validation': False, 'close_on_play': False, 'discord_rpc': False,
                 'check_updates': False, 'game_patches': {}, 'controls': {}, 'pad_style': 'playstation',
-                'rage_one_input': True, 'stick_prompts': 'keyboard', 'controls_layout': 2,
+                'controls_layout': 2,
                 'glyph_style': 'off'}
 
 # PS4 button, default key, default gamepad button (SDL names; src/runtime_pad.c). L2/R2 come
@@ -475,10 +475,6 @@ def connected_gamepad():
     return 'Gamepad: type=' in out
 
 
-# Keyboard & mouse: how the game's stick-rotation prompts (QTEs) are answered (runtime_pad.c).
-STICK_PROMPTS = [('keyboard', ('Keyboard (native)',)), ('mouse', ('Adaptive mouse (experimental)',))]
-# L2 aim with the mouse (Head of Helios, Bow of Apollo): gow3.ini mouse_aim_style.
-AIM_STYLES = [('0', ('Relative',)), ('1', ('Absolute',))]
 GLYPH_STYLES = [('off', ('Original (default)',)), ('auto', ('Match my controller',)), ('xbox', ('Xbox',)),
                 ('nintendo', ('Nintendo',)), ('keyboard', ('Keyboard',))]
 
@@ -545,34 +541,15 @@ def bind_key(bindings, button, name):
     return other
 
 
-# The keyboard & mouse table: keys and mouse inputs for the PS4 buttons plus actions of their own.
-# Its defaults put the attacks and magic on the mouse, the shoulder buttons next to WASD and the
-# weapons on 1-4 (clockwise from up, the order they are acquired); CONTROLS keeps the game's own
-# keys (src/runtime_pad.c), so only what differs from them is sent.
+# The keyboard & mouse table: keys and mouse inputs for the PS4 buttons. Its defaults put Square and
+# Triangle on the mouse, the shoulder buttons next to WASD and the D-pad on 1-4; CONTROLS keeps the
+# game's own keys (src/runtime_pad.c), so only what differs from them is sent.
 KEY_DEFAULTS = {'cross': 'Space', 'circle': 'Left Shift', 'square': 'Mouse Left', 'triangle': 'Mouse Right',
                 'l1': 'Q', 'r1': 'E', 'l2': 'R', 'r2': 'Mouse Forward', 'l3': 'Z', 'r3': 'X',
                 'options': 'Tab', 'touchpad_left': 'P', 'touchpad_right': 'Escape',
                 'up': '1', 'right': '2', 'down': '3', 'left': '4'}
-# Actions of the keyboard map only (runtime_pad.c's host-only sources), as CONTROLS rows. Rage of
-# Sparta (L3 + R3 on one input) follows R3; it is used instead of L3 and R3 while 'rage_one_input'
-# is on. "None" leaves a row without an input.
-RAGE_ROW, GRAB_ROW, DODGE_ROW = ('rage', 'Mouse Middle', None), ('grab', 'C', None), ('dodge', 'Mouse Back', None)
-KEY_ACTIONS = [RAGE_ROW, GRAB_ROW, DODGE_ROW]
-ACTION_NAMES = {'rage': 'Rage of Sparta', 'grab': 'Grab', 'dodge': 'Dodge'}
-RAGE_BUTTONS = ('l3', 'r3')
 CONTROLS_LAYOUT = 2  # settings layout: 2 = one keyboard & mouse table (migrate_controls)
 
-
-def table_rows(kind):
-    """CONTROLS rows of a table, in display order; the keyboard one adds its actions."""
-    if kind != 'key':
-        return CONTROLS
-    rows = []
-    for row in CONTROLS:
-        rows.append(row)
-        if row[0] == 'r3':
-            rows.append(RAGE_ROW)
-    return rows + [GRAB_ROW, DODGE_ROW]
 MOUSE_NAMES = {name.casefold() for name in (*TK_TO_MOUSE.values(), 'Wheel Up', 'Wheel Down')}
 
 
@@ -588,29 +565,24 @@ def default_input(row, kind):
     return KEY_DEFAULTS.get(button, key) if key else key
 
 
-def keyboard_map(controls, rage=True):
+def keyboard_map(controls):
     """GOW3_KEY_MAP of the keyboard & mouse table: each button on its chosen input, written where
-    that differs from the game's own key. With `rage` (one input for Rage of Sparta) L3 and R3 get
-    none and the Rage row is used; otherwise the Rage row is left out."""
+    that differs from the game's own key."""
     chosen = control_values(controls, 'key')
     entries = []
-    for row in table_rows('key'):
+    for row in CONTROLS:
         button, key, _pad = row
-        if not key or (button == 'rage' and not rage):
-            continue
-        if rage and button in RAGE_BUTTONS:
-            entries.append(f'{button}=None')
+        if not key:
             continue
         value = (chosen.get(button) or default_input(row, 'key')).strip()
-        game_default = key if row in CONTROLS else ''  # the game has no key of its own for an action
-        if value.casefold() != game_default.casefold() and not set(value) & set(',='):
+        if value.casefold() != key.casefold() and not set(value) & set(',='):
             entries.append(f'{button}={value}')
     return ','.join(entries)
 
 
 def control_changes(values, kind):
     """The buttons whose chosen key or SDL gamepad name differs from the default."""
-    return {row[0]: values[row[0]].strip() for row in table_rows(kind)
+    return {row[0]: values[row[0]].strip() for row in CONTROLS
             if default_input(row, kind) and values.get(row[0], '').strip()
             and values[row[0]].strip().casefold() != default_input(row, kind).casefold()}
 
@@ -624,7 +596,7 @@ def control_values(controls, kind):
     values = {button: value for button, value in chosen.items() if button != 'touchpad'}
     if 'touchpad' in chosen and 'touchpad_left' not in values:
         values['touchpad_left'] = chosen['touchpad']
-    return {button: values[button] for button, key, pad in table_rows(kind)
+    return {button: values[button] for button, key, pad in CONTROLS
             if (pad if kind == 'pad' else key) and isinstance(values.get(button), str) and values[button].strip()}
 
 
@@ -638,8 +610,7 @@ def control_map(controls, kind):
 def migrate_controls(saved):
     """Settings saved before the keyboard & mouse table (CONTROLS_LAYOUT). A player who saved keys
     in Keyboard Mapping keeps the whole layout they had (the game's keys for the rest); one who
-    used Native Translation keeps that table. A new action whose default input is already taken
-    stays without one."""
+    used Native Translation keeps that table."""
     if not isinstance(saved, dict) or not saved or saved.get('controls_layout') == CONTROLS_LAYOUT:
         return saved
     saved = dict(saved)
@@ -649,15 +620,8 @@ def migrate_controls(saved):
         controls['key'] = dict(native)  # its defaults are the new ones
     elif controls.get('key'):
         kept = control_values(controls, 'key')
-        layout = {button: kept.get(button) or key for button, key, _pad in CONTROLS if key}
-        rage = saved.get('native_rage', True)
-        taken = {value.strip().casefold() for button, value in layout.items()
-                 if not (rage and button in RAGE_BUTTONS)}
-        for button, default, _pad in KEY_ACTIONS:
-            layout[button] = 'None' if default.casefold() in taken else default
-        controls['key'] = layout
-    if 'native_rage' in saved:
-        saved['rage_one_input'] = saved.pop('native_rage')
+        controls['key'] = {button: kept.get(button) or key for button, key, _pad in CONTROLS if key}
+    saved.pop('native_rage', None)
     saved['controls'] = controls
     saved['controls_layout'] = CONTROLS_LAYOUT
     return saved
@@ -1125,13 +1089,10 @@ def game_environment(s):
         if s[key]:
             env[name] = '1'
     controls = s.get('controls', {})
-    if value := keyboard_map(controls, bool(s.get('rage_one_input', True))):
+    if value := keyboard_map(controls):
         env['GOW3_KEY_MAP'] = value
     if value := control_map(controls, 'pad'):
         env['GOW3_PAD_MAP'] = value
-    env.pop('GOW3_STICK_PROMPTS', None)
-    if s.get('stick_prompts') in dict(STICK_PROMPTS):
-        env['GOW3_STICK_PROMPTS'] = s['stick_prompts']
     glyph_style = s.get('glyph_style')
     env.pop('GOW3_GLYPH_STYLE', None)
     if glyph_style in ('auto', 'xbox', 'nintendo', 'keyboard'):
@@ -1763,7 +1724,7 @@ class Launcher:
         f = self.scrolled_page('performance', _('Performance'), _('Frame rate and speed options.'))
         self.section(f, _('Frame rate', 'Частота кадров'), top=4)
         self.row(f, _('Frame rate limit'), self.choice(f, 'fps_limit', 'ini', FPS_LIMITS),
-                 _('The engine frame rate (below) is the highest it can go.'))
+                 _("Unlimited: up to 120 FPS. With VSync on, your monitor's refresh rate is the highest it goes."))
         self.row(f, _('Frames queued'), self.choice(f, 'frames_queued', 'ini', FRAMES_QUEUED),
                  _('1 is the lowest input latency; more can raise FPS when the graphics card is the limit.'))
         self.section(f, _('Shaders'))
@@ -1991,7 +1952,6 @@ class Launcher:
         style = self.app.get('pad_style') if self.app.get('pad_style') in PAD_STYLES else 'playstation'
         self.pad_style = tk.StringVar(value=style)
         self.control_vars, self.pad_boxes, self.pad_icons = {'key': {}, 'pad': {}}, {}, {}
-        self.key_rows = {}  # keyboard button: (input box, reset arrow)
         self.capturing_key = self.capture_wheel = None  # the key box waiting for an input
         size = self.px(28)
         labels = pad_labels(style)
@@ -2010,11 +1970,7 @@ class Launcher:
             game_icon.grid(row=r, column=0, sticky='w', pady=self.px(3))
             if button in button_icons.GAME_BUTTONS:
                 button_icons.draw(game_icon, button_icons.GAME_BUTTONS[button], 'playstation', size)
-            elif button in ('rage', 'grab'):  # two buttons together
-                button_icons.draw(game_icon, 'label:L3+R3' if button == 'rage' else 'label:L1+O', 'playstation', size)
-            else:  # an action of the right stick (dodge): the stick icon labelled RS
-                button_icons.draw(game_icon, 'rightstick', 'xbox', size)
-            title = _(PS_BUTTON_NAMES.get(button) or ACTION_NAMES[button])
+            title = _(PS_BUTTON_NAMES[button])
             ttk.Label(table, text=title, width=-14).grid(row=r, column=1, sticky='w', padx=self.px((0, 12)))
 
         def slider(key, low, high, unit, parent=None):
@@ -2057,14 +2013,9 @@ class Launcher:
         self.note(f, _('Which key or mouse input presses each button of the game.'), top=4)
         table = mapping_table()
         r = 0
-        for row in table_rows('key'):
+        for row in CONTROLS:
             button = row[0]
             r += 1
-            if button == 'rage':
-                ttk.Checkbutton(table, text=_('Rage of Sparta on one input (L3 + R3 together)'),
-                                variable=self.var('rage_one_input', 'app')).grid(
-                    row=r, column=0, columnspan=4, sticky='w', pady=self.px((6, 6)))
-                r += 1
             default = default_input(row, 'key')
             game_button(table, r, button)
             var = tk.StringVar(value=saved['key'].get(button) or default)
@@ -2074,32 +2025,12 @@ class Launcher:
             arrow = ttk.Button(table, text='\u21a9', width=3, takefocus=False,
                                command=lambda b=button, d=default: self.assign_key('key', b, d))
             arrow.grid(row=r, column=3, sticky='w', padx=self.px((6, 0)))
-            self.key_rows[button] = (box, arrow)
-        self.var('rage_one_input', 'app').trace_add('write', lambda *_a: self.grey_rage_rows())
-        self.grey_rage_rows()
         self.note(f, _('Click a box, then press a key, click a mouse button or turn the wheel (it gives up after '
                        '{} seconds). An input already used by another button swaps with it; the arrow puts one '
-                       'button back on its default. Rage of Sparta presses L3 and R3 together: tick the box above '
-                       'it to use one input instead of two. Grab presses L1 and Circle together. Dodge evades the '
-                       'way you are moving (WASD), or back when standing still. Touchpad right opens the game\'s '
-                       'pause menu. Insert always opens the port\'s menu and cannot be bound. Applied when the '
-                       'game starts.').format(CAPTURE_SECONDS))
+                       'button back on its default. Touchpad right opens the game\'s pause menu. Insert always '
+                       'opens the port\'s menu and cannot be bound. Applied when the game starts.').format(CAPTURE_SECONDS))
         ttk.Button(f, text=_('Reset keyboard & mouse to defaults'), command=lambda: self.reset_controls('key')).grid(
             row=self.next_row(f), column=0, sticky='w', pady=self.px((14, 0)))
-        self.row(f, _('Joystick prompts'), self.choice(f, 'stick_prompts', 'app', STICK_PROMPTS),
-                 hint=_('How the stick-rotation prompts are answered. Keyboard: type the turn instead, half turns '
-                        'from the top D S A (clockwise) or A S D, from the bottom A W D or D W A, full turns D S A W '
-                        'or A S D W; a key out of turn starts again. Adaptive mouse: draw the turn with the mouse.'))
-        self.row(f, _('Mouse prompt distance'), slider('mouse_prompt_distance', 16, 200, ' px'),
-                 _('Adaptive mouse: how far the mouse moves for one step of a rotation. Also in the in-game menu.'))
-        self.row(f, _('Right stick style'), self.choice(f, 'mouse_aim_style', 'ini', AIM_STYLES),
-                 hint=_('Aiming with the mouse while L2 is held (Head of Helios, Bow of Apollo). Relative: the stick '
-                        'follows the movement and goes back to neutral when the mouse stops. Absolute: where the mouse '
-                        'was when L2 was pressed is the centre, and the stick points from it to the mouse. Also in '
-                        'the in-game menu.'))
-        self.row(f, _('Right stick sensitivity'), slider('mouse_aim_sensitivity', 10, 200, '%'),
-                 _('Aiming with the mouse while L2 is held: lower needs more mouse movement for the same stick, '
-                   'higher less. Also in the in-game menu.'))
         self.check(f, 'mouse_lock', 'ini', _('Keep the mouse in the game window'),
                    _('While you play, the mouse stays in the game window, so a click cannot land on another monitor '
                      'or app. The in-game menu and switching windows get it back. Also in the in-game menu.'))
@@ -2219,14 +2150,6 @@ class Launcher:
         box.configure(command=capture)
         return box
 
-    def grey_rage_rows(self):
-        """Rage of Sparta on one input greys L3 and R3; off, it greys the Rage row."""
-        combined = bool(self.var('rage_one_input', 'app').get())
-        for button in (*RAGE_BUTTONS, 'rage'):
-            enabled = combined if button == 'rage' else not combined
-            for widget in self.key_rows.get(button, ()):
-                widget.state(['!disabled'] if enabled else ['disabled'])
-
     def assign_key(self, kind, button, name):
         """Binds `name` to `button` in a table; a button that had it takes the old one (bind_key)."""
         table = self.control_vars[kind]
@@ -2265,7 +2188,7 @@ class Launcher:
     def reset_controls(self, kind=None):
         """Puts one table ('key' or 'pad') or both (None) back on the defaults."""
         for table in ('key', 'pad'):
-            for row in table_rows(table):
+            for row in CONTROLS:
                 if kind in (None, table) and row[0] in self.control_vars.get(table, {}):
                     self.control_vars[table][row[0]].set(default_input(row, table) or '')
         self.relabel_pad_controls()
@@ -2317,7 +2240,7 @@ class Launcher:
         holder = ttk.Frame(f)
         holder.grid(row=self.next_row(f), column=0, columnspan=2, sticky='w', pady=self.px((6, 0)))
         ttk.Button(holder, text=_('Port folder', 'Папка порта'), command=lambda: self.open_path(DATA_DIR)).pack(side='left')
-        ttk.Button(holder, text='gow3.ini', command=lambda: self.open_path(ini_path())).pack(side='left', padx=self.px(6))
+        ttk.Button(holder, text=_('Settings'), command=lambda: self.open_path(ini_path())).pack(side='left', padx=self.px(6))
         holder = ttk.Frame(f)
         holder.grid(row=self.next_row(f), column=0, columnspan=2, sticky='w', pady=self.px((10, 0)))
         ttk.Button(holder, text=_('Clear shader cache', 'Очистить кэш шейдеров'), command=self.clear_cache).pack(side='left')

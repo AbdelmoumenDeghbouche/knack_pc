@@ -306,10 +306,21 @@ std::string OverlayText() {
 
 constexpr const char* Unsupported = "Unavailable: game version or code signature mismatch.";
 
+// gow3: the cheats, multipliers, enemy health bar and mouse aiming are God of War III's; a game
+// whose code has none of their hooks (Knack) does not show them.
+bool GowHooks() {
+    const auto& s = Gow3Settings::Get();
+    return s.cheats_supported.load() || s.red_orbs_supported.load() || s.orb_pickup_supported.load() ||
+           s.damage_supported.load() || s.actor_watch_supported.load();
+}
+
 void GameTab() {
     auto& s = Gow3Settings::Get();
-    ImGui::SeparatorText("Cheats");
-    if (BeginRows("##cheats")) {
+    const bool gow = GowHooks();
+    if (gow) {
+        ImGui::SeparatorText("Cheats");
+    }
+    if (gow && BeginRows("##cheats")) {
         static const char* const names[] = {"Infinite health", "Infinite magic", "Infinite item meter",
                                             "Infinite Rage of Sparta", "Max red orbs",
                                             "Unlock Very Hard", "Infinite Double Jumps"};
@@ -332,18 +343,23 @@ void GameTab() {
     if (BeginRows("##controller")) {
         SliderRow("Vibration", s.vibration, 0, 100, "%d%%",
                   "Strength of the controller's vibration. 0% turns it off.");
-        SliderRow("Mouse prompt distance", s.mouse_prompt_distance, 16, 200, "%d px",
-                  "With Joystick prompts on Adaptive mouse: how far the mouse moves for one step of a rotation.");
-        static const char* const aim_styles[] = {"Relative", "Absolute"};
-        ChoiceRow("Right stick style", s.mouse_aim_style, aim_styles, nullptr, 2,
-                  "L2 aim with the mouse (Head of Helios, Bow of Apollo). Relative: the stick follows the "
-                  "movement and goes back to neutral when the mouse stops. Absolute: the stick points from "
-                  "where the mouse was when L2 was pressed to where it is.");
-        SliderRow("Right stick sensitivity", s.mouse_aim_sensitivity, 10, 200, "%d%%",
-                  "L2 aim with the mouse: lower needs more mouse movement for the same stick, higher less.");
+        if (gow) {
+            SliderRow("Mouse prompt distance", s.mouse_prompt_distance, 16, 200, "%d px",
+                      "With Joystick prompts on Adaptive mouse: how far the mouse moves for one step of a rotation.");
+            static const char* const aim_styles[] = {"Relative", "Absolute"};
+            ChoiceRow("Right stick style", s.mouse_aim_style, aim_styles, nullptr, 2,
+                      "L2 aim with the mouse (Head of Helios, Bow of Apollo). Relative: the stick follows the "
+                      "movement and goes back to neutral when the mouse stops. Absolute: the stick points from "
+                      "where the mouse was when L2 was pressed to where it is.");
+            SliderRow("Right stick sensitivity", s.mouse_aim_sensitivity, 10, 200, "%d%%",
+                      "L2 aim with the mouse: lower needs more mouse movement for the same stick, higher less.");
+        }
         CheckRow("Keep mouse in window", s.mouse_lock,
                  "While you play, the mouse stays in the game window; this menu and other windows get it back.");
         ImGui::EndTable();
+    }
+    if (!gow) {
+        return;
     }
 
     ImGui::SeparatorText("Multipliers");
@@ -563,7 +579,9 @@ void OverlayTab() {
         add(s.orb_pickup_supported.load(), "orb pickups");
         add(s.damage_supported.load(), "damage");
         add(s.actor_watch_supported.load(), "enemy health");
-        InfoRow("Game hooks", hooks.empty() ? "none" : hooks.c_str());
+        if (!hooks.empty()) {
+            InfoRow("Game hooks", hooks.c_str());
+        }
         ImGui::EndTable();
     }
 }
@@ -640,7 +658,7 @@ void Menu() {
 
     ImGui::Separator();
     ImGui::PushTextWrapPos(0.0f);
-    ImGui::TextDisabled("%s", footer_help ? footer_help : PadText("L1 / R1 or Q / E: switch tabs. Settings are saved in gow3.ini.", "LB / RB or Q / E: switch tabs. Settings are saved in gow3.ini.", "L / R or Q / E: switch tabs. Settings are saved in gow3.ini."));
+    ImGui::TextDisabled("%s", footer_help ? footer_help : PadText("L1 / R1 or Q / E: switch tabs. Changes are saved.", "LB / RB or Q / E: switch tabs. Changes are saved.", "L / R or Q / E: switch tabs. Changes are saved."));
     ImGui::PopTextWrapPos();
     if (const int changes = RestartChanges()) {
         ImGui::TextColored(ImVec4(0.85f, 0.72f, 0.45f, 1.0f), "%d change%s need%s a restart (unsaved progress is lost).",

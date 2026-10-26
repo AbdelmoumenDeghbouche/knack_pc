@@ -8,7 +8,9 @@ from pathlib import Path
 # Red-zone protection always: the startup probe sees no overwrite, but a leaf function at
 # 0x55c410 keeps pointers below the stack pointer and wrote to address 0 after a GPU write fault.
 KNACK_ENV = {'GOW3_NGS2_SKIP_UNKNOWN': '1', 'GOW3_DISABLED_OPTIMIZATIONS': str(4096 | 8192),
-             'GOW3_VBLANK_HZ': '120', 'GOW3_RED_ZONE': '1',
+             # The engine steps by the real time (48-120 FPS in play, normal speed), so the frame rate
+             # limit may go up to the vblank rate; without this run.py took it for a 60 FPS engine.
+             'GOW3_VBLANK_HZ': '120', 'GOW3_ENGINE_FPS': '120', 'GOW3_RED_ZONE': '1',
              # No resolution patch for Knack yet: the other sizes (God of War III's) did nothing.
              'GOW3_ALLOWED_RESOLUTIONS': 'native'}
 
