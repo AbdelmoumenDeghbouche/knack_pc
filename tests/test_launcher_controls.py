@@ -719,9 +719,9 @@ class PortableTest(unittest.TestCase):
 
 class ReleaseVersionTest(unittest.TestCase):
     def test_knack_release(self):
-        self.assertEqual(launcher.VERSION, '0.1.7')
-        self.assertGreater(launcher.version_tuple('v0.1.8'), launcher.version_tuple(launcher.VERSION))
-        self.assertGreater(launcher.version_tuple(launcher.VERSION), launcher.version_tuple('v0.1.6'))
+        self.assertEqual(launcher.VERSION, '0.1.8')
+        self.assertGreater(launcher.version_tuple('v0.1.9'), launcher.version_tuple(launcher.VERSION))
+        self.assertGreater(launcher.version_tuple(launcher.VERSION), launcher.version_tuple('v0.1.7'))
 
     def test_first_start_is_in_english(self):
         # The translations are partial; 'System' stays a choice in Advanced.
