@@ -47,6 +47,8 @@ public:
         }
     }
     bool Joinable() const { return thread.joinable(); }
+    /// Its function has returned (or it never ran).
+    bool Finished() const { return !finished || finished->load(); }
     void Stop() {
         if (thread.joinable()) {
             thread.request_stop();
