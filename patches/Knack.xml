@@ -1,0 +1,32 @@
+<?xml version="1.0"?>
+<!-- Knack (CUSA00068 01.10; also CUSA00006 / CUSA00004 when the code matches): cheats.
+     From the PS4 cheat "Knack 01.10" by Web Xx (HEN Cheats Collection, CUSA00068_01.10_d5e8d217.json).
+     Each site is found by its signature (Pattern/At), so other builds use them where the code is the same.
+     - God Mode: the damage function at 0xfe330 copies its damage arguments (edx, esi) to r14d/r13d;
+       they are zeroed instead (xor r14d,r14d; xor r13d,r13d).
+     - Crystals don't drain: the three "meter - cost" subtractions keep the meter (vmovaps xmm0,xmm1).
+     - Crystals fill to max on pickup: the "jge" that caps a pickup's add is removed. -->
+<Patch>
+    <TitleID>
+        <ID>CUSA00068</ID>
+        <ID>CUSA00006</ID>
+        <ID>CUSA00004</ID>
+    </TitleID>
+    <Metadata Title="Knack" Name="Cheat - God Mode" Note="Knack takes no damage." Author="Web Xx" PatchVer="1.0" AppVer="01.10" AppElf="eboot.bin" isEnabled="false">
+        <PatchList>
+            <Line Type="bytes" Address="0x004fe342" Value="4531f64531ed" Pattern="48 8d 0d ?? ?? ?? ?? 41 89 d6 41 89 f5 31 db 48 8b 00 48 89 45 d0 48 63 01" At="7"/>
+        </PatchList>
+    </Metadata>
+    <Metadata Title="Knack" Name="Cheat - Crystals don't drain" Note="Super moves do not use up the sunstone crystal meter." Author="Web Xx" PatchVer="1.0" AppVer="01.10" AppElf="eboot.bin" isEnabled="false">
+        <PatchList>
+            <Line Type="bytes" Address="0x006691fe" Value="c5f828c1" Pattern="58 d0 c5 f8 2e ca 76 21 c5 f2 5c c2 c5 fa 2c c0 89 45 d4 49 8b 07 48 8b" At="8"/>
+            <Line Type="bytes" Address="0x0066921f" Value="c5f828c1" Pattern="00 00 01 8b 55 d4 eb 0b c5 f2 5c c0 c5 fa 2c d0 89 55 d4 48" At="8"/>
+            <Line Type="bytes" Address="0x00669266" Value="c5f828c1" Pattern="59 45 d0 c5 fa 2a 4d d4 c5 f2 5c c0 c5 fa 2c d0 89 55 d4 e8" At="8"/>
+        </PatchList>
+    </Metadata>
+    <Metadata Title="Knack" Name="Cheat - Crystals fill to max on pickup" Note="One sunstone crystal fills the super move meter." Author="Web Xx" PatchVer="1.0" AppVer="01.10" AppElf="eboot.bin" isEnabled="false">
+        <PatchList>
+            <Line Type="bytes" Address="0x0066905c" Value="9090" Pattern="41 89 c6 41 39 df 7d 21 48 8d 35 ?? ?? ?? ?? 31 ff e8" At="6"/>
+        </PatchList>
+    </Metadata>
+</Patch>
