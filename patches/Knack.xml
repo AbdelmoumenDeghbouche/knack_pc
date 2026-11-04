@@ -25,6 +25,25 @@
             <Line Type="bytes" Address="0x0043863c" Value="a0050000" Pattern="48 8d 35 45 27 5a 00 4c 89 e7 e8 ?? ?? ?? ?? 48 85 c0 74 32 41 c6 86 78 27 00 00 00 41 c7 86 b0 03 00 00 80 07 00 00 c7 05 ?? ?? ?? ?? 80 07 00 00 41 c7 86 b4 03 00 00 38 04 00 00 c7 05 ?? ?? ?? ?? 38 04 00 00" At="66"/>
         </PatchList>
     </Metadata>
+    <Metadata Title="Knack" Name="Resolution Patch - 3440x1440" Note="Renders at 3440x1440 (21:9) with the camera widened to match; the HUD is stretched." Author="AbdelmoumenDeghbouche" PatchVer="1.0" AppVer="01.10" AppElf="eboot.bin" isEnabled="false">
+        <PatchList>
+            <!-- The game's own "-1080p" start option (0x385fa) sets the render size in both places it is kept
+                 ([obj+0x3b0], 0x721d90): taken always, with 2560x1440 instead of 1920x1080. At 3840x2160 (and with
+                 the game's own "-4k" option) the lighting comes out flat and too bright, and the scene draws at
+                 3456x1944: no 4K patch yet. -->
+            <Line Type="bytes" Address="0x0043860c" Value="9090" Pattern="48 8d 35 45 27 5a 00 4c 89 e7 e8 ?? ?? ?? ?? 48 85 c0 74 32 41 c6 86 78 27 00 00 00 41 c7 86 b0 03 00 00 80 07 00 00 c7 05 ?? ?? ?? ?? 80 07 00 00 41 c7 86 b4 03 00 00 38 04 00 00 c7 05 ?? ?? ?? ?? 38 04 00 00" At="18"/>
+            <Line Type="bytes" Address="0x0043861d" Value="700d0000" Pattern="48 8d 35 45 27 5a 00 4c 89 e7 e8 ?? ?? ?? ?? 48 85 c0 74 32 41 c6 86 78 27 00 00 00 41 c7 86 b0 03 00 00 80 07 00 00 c7 05 ?? ?? ?? ?? 80 07 00 00 41 c7 86 b4 03 00 00 38 04 00 00 c7 05 ?? ?? ?? ?? 38 04 00 00" At="35"/>
+            <Line Type="bytes" Address="0x00438627" Value="700d0000" Pattern="48 8d 35 45 27 5a 00 4c 89 e7 e8 ?? ?? ?? ?? 48 85 c0 74 32 41 c6 86 78 27 00 00 00 41 c7 86 b0 03 00 00 80 07 00 00 c7 05 ?? ?? ?? ?? 80 07 00 00 41 c7 86 b4 03 00 00 38 04 00 00 c7 05 ?? ?? ?? ?? 38 04 00 00" At="45"/>
+            <Line Type="bytes" Address="0x00438632" Value="a0050000" Pattern="48 8d 35 45 27 5a 00 4c 89 e7 e8 ?? ?? ?? ?? 48 85 c0 74 32 41 c6 86 78 27 00 00 00 41 c7 86 b0 03 00 00 80 07 00 00 c7 05 ?? ?? ?? ?? 80 07 00 00 41 c7 86 b4 03 00 00 38 04 00 00 c7 05 ?? ?? ?? ?? 38 04 00 00" At="56"/>
+            <Line Type="bytes" Address="0x0043863c" Value="a0050000" Pattern="48 8d 35 45 27 5a 00 4c 89 e7 e8 ?? ?? ?? ?? 48 85 c0 74 32 41 c6 86 78 27 00 00 00 41 c7 86 b0 03 00 00 80 07 00 00 c7 05 ?? ?? ?? ?? 80 07 00 00 41 c7 86 b4 03 00 00 38 04 00 00 c7 05 ?? ?? ?? ?? 38 04 00 00" At="66"/>
+            <!-- camera aspect ratio 16/9: the camera setup ([obj+0x1300], 0x493d5) and the three field of view
+                 products (0x2f0f01, 0x2f1009, 0x2f2f77 read 0x60c1d8, 0x60c1e0, 0x60c23c) -->
+            <Line Type="bytes" Address="0x004493e3" Value="8ee31840" Pattern="c4 00 00 00 00 00 00 41 c7 87 00 13 00 00 39 8e e3 3f" At="14"/>
+            <Line Type="bytes" Address="0x00a0c1d8" Value="8ee31840" Pattern="00 00 90 42 db 0f c9 3e 39 8e e3 3f db 0f c9 3e" At="8"/>
+            <Line Type="bytes" Address="0x00a0c1e0" Value="8ee31840" Pattern="39 8e e3 3f db 0f c9 3e 39 8e e3 3f 00 00 80 3f" At="8"/>
+            <Line Type="bytes" Address="0x00a0c23c" Value="8ee31840" Pattern="db 0f c9 3e 00 00 00 3f 39 8e e3 3f 00 00 80 3f" At="8"/>
+        </PatchList>
+    </Metadata>
     <Metadata Title="Knack" Name="Cheat - God Mode" Note="Knack takes no damage." Author="Web Xx" PatchVer="1.0" AppVer="01.10" AppElf="eboot.bin" isEnabled="false">
         <PatchList>
             <Line Type="bytes" Address="0x004fe342" Value="4531f64531ed" Pattern="48 8d 0d ?? ?? ?? ?? 41 89 d6 41 89 f5 31 db 48 8b 00 48 89 45 d0 48 63 01" At="7"/>
