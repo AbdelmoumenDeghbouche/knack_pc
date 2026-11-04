@@ -12,6 +12,19 @@
         <ID>CUSA00006</ID>
         <ID>CUSA00004</ID>
     </TitleID>
+    <Metadata Title="Knack" Name="Resolution Patch - 1440p" Note="Renders at 2560x1440." Author="AbdelmoumenDeghbouche" PatchVer="1.0" AppVer="01.10" AppElf="eboot.bin" isEnabled="false">
+        <PatchList>
+            <!-- The game's own "-1080p" start option (0x385fa) sets the render size in both places it is kept
+                 ([obj+0x3b0], 0x721d90): taken always, with 2560x1440 instead of 1920x1080. At 3840x2160 (and with
+                 the game's own "-4k" option) the lighting comes out flat and too bright, and the scene draws at
+                 3456x1944: no 4K patch yet. -->
+            <Line Type="bytes" Address="0x0043860c" Value="9090" Pattern="48 8d 35 45 27 5a 00 4c 89 e7 e8 ?? ?? ?? ?? 48 85 c0 74 32 41 c6 86 78 27 00 00 00 41 c7 86 b0 03 00 00 80 07 00 00 c7 05 ?? ?? ?? ?? 80 07 00 00 41 c7 86 b4 03 00 00 38 04 00 00 c7 05 ?? ?? ?? ?? 38 04 00 00" At="18"/>
+            <Line Type="bytes" Address="0x0043861d" Value="000a0000" Pattern="48 8d 35 45 27 5a 00 4c 89 e7 e8 ?? ?? ?? ?? 48 85 c0 74 32 41 c6 86 78 27 00 00 00 41 c7 86 b0 03 00 00 80 07 00 00 c7 05 ?? ?? ?? ?? 80 07 00 00 41 c7 86 b4 03 00 00 38 04 00 00 c7 05 ?? ?? ?? ?? 38 04 00 00" At="35"/>
+            <Line Type="bytes" Address="0x00438627" Value="000a0000" Pattern="48 8d 35 45 27 5a 00 4c 89 e7 e8 ?? ?? ?? ?? 48 85 c0 74 32 41 c6 86 78 27 00 00 00 41 c7 86 b0 03 00 00 80 07 00 00 c7 05 ?? ?? ?? ?? 80 07 00 00 41 c7 86 b4 03 00 00 38 04 00 00 c7 05 ?? ?? ?? ?? 38 04 00 00" At="45"/>
+            <Line Type="bytes" Address="0x00438632" Value="a0050000" Pattern="48 8d 35 45 27 5a 00 4c 89 e7 e8 ?? ?? ?? ?? 48 85 c0 74 32 41 c6 86 78 27 00 00 00 41 c7 86 b0 03 00 00 80 07 00 00 c7 05 ?? ?? ?? ?? 80 07 00 00 41 c7 86 b4 03 00 00 38 04 00 00 c7 05 ?? ?? ?? ?? 38 04 00 00" At="56"/>
+            <Line Type="bytes" Address="0x0043863c" Value="a0050000" Pattern="48 8d 35 45 27 5a 00 4c 89 e7 e8 ?? ?? ?? ?? 48 85 c0 74 32 41 c6 86 78 27 00 00 00 41 c7 86 b0 03 00 00 80 07 00 00 c7 05 ?? ?? ?? ?? 80 07 00 00 41 c7 86 b4 03 00 00 38 04 00 00 c7 05 ?? ?? ?? ?? 38 04 00 00" At="66"/>
+        </PatchList>
+    </Metadata>
     <Metadata Title="Knack" Name="Cheat - God Mode" Note="Knack takes no damage." Author="Web Xx" PatchVer="1.0" AppVer="01.10" AppElf="eboot.bin" isEnabled="false">
         <PatchList>
             <Line Type="bytes" Address="0x004fe342" Value="4531f64531ed" Pattern="48 8d 0d ?? ?? ?? ?? 41 89 d6 41 89 f5 31 db 48 8b 00 48 89 45 d0 48 63 01" At="7"/>

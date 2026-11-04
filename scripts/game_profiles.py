@@ -11,8 +11,8 @@ KNACK_ENV = {'GOW3_NGS2_SKIP_UNKNOWN': '1', 'GOW3_DISABLED_OPTIMIZATIONS': str(4
              # The engine steps by the real time (48-120 FPS in play, normal speed), so the frame rate
              # limit may go up to the vblank rate; without this run.py took it for a 60 FPS engine.
              'GOW3_VBLANK_HZ': '120', 'GOW3_ENGINE_FPS': '120', 'GOW3_RED_ZONE': '1',
-             # No resolution patch for Knack yet: the other sizes (God of War III's) did nothing.
-             'GOW3_ALLOWED_RESOLUTIONS': 'native'}
+             # The resolution patches of patches/Knack.xml (update 1.10, #6); the other sizes did nothing.
+             'GOW3_ALLOWED_RESOLUTIONS': 'native;1440p'}
 
 PROFILES = {
     # WipEout Omega Collection. NpToolkit2 is the game's own PSN toolkit. Red-zone protection
