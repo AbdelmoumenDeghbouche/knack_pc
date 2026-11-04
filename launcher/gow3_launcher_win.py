@@ -2390,7 +2390,7 @@ class Launcher:
         chosen = load_json(DATA_DIR / 'patches.json', {})
         _title_id, game = game_profile_of(self.meta_dir())
         found = external_patches(Path(self.var('patches_dir', 'app').get() or DATA_DIR / 'patches'),
-                                 game[2], game[1], game[0]) if game else []
+                                 {game[2], game_sfo(self.meta_dir()).get('APP_VER')}, game[1], game[0]) if game else []
         old = {n: v.get() for n, v in self.patch_vars.items()}
         self.patch_vars = {}
         if not found:

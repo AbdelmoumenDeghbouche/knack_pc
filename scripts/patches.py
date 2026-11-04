@@ -165,8 +165,12 @@ GAMES=[({'CUSA01623','CUSA01715','CUSA01720'},PATCHES_DIR/'God_of_War_III_Remast
        ({'CUSA07671','CUSA05670'},PATCHES_DIR/'WipEout_Omega_Collection.xml','01.00',
         'WipEout Omega Collection'),
        ({'CUSA00068','CUSA00006','CUSA00004'},PATCHES_DIR/'Knack.xml','01.10','Knack')]
-# The build the built-in Address values and third-party patch files are written for.
+# The builds the built-in Address values and third-party patch files are written for: God of War III,
+# and Knack 1.00 (Niko's shadPS4 resolution patches, #12) and 1.10.
 REFERENCE_SHA256='d85c8135d330c3b601bf5dc3f1dd86bd6119fb8a9fce372bed2c9785f9a79299'
+REFERENCE_SHA256S={REFERENCE_SHA256,
+                   '7c9574f72fbefa2012e13817afab94e4a785a709c2c1344195428276c398c157',
+                   'b4b05b4b5cbdc2d603621e8d3f075e3fce19f9b2ff907c9496d4887195cc8f14'}
 DMEM_RETAIL_MB=5056  # runtime_memory.c POOL_SIZE default
 
 
@@ -341,7 +345,9 @@ def external_patches(directory, app_version, exclude, ids):
         file_ids={e.text.strip() for e in root.iter('ID') if e.text}
         if file_ids and not file_ids&ids: continue
         for meta in root.iter('Metadata'):
-            if meta.get('AppVer')==app_version and meta.get('AppElf','eboot.bin')=='eboot.bin':
+            # The profile's tag, or the game's own version (Knack 1.00 files on a 1.00 dump, #12).
+            versions={app_version} if isinstance(app_version,str) else set(app_version)
+            if meta.get('AppVer') in versions and meta.get('AppElf','eboot.bin')=='eboot.bin':
                 found.append((f'{path.name}/{meta.get("Name")}',path,meta))
     return found
 
@@ -413,10 +419,10 @@ def main():
     writes=compile_patches(xml,names,None,segments,eboot_image(elf),skipped)
     for name,reason in skipped.items():
         print(f'Patches: {name} skipped ({reason} in this eboot.bin)')
-    if a.patches_dir and sha==REFERENCE_SHA256:
+    if a.patches_dir and sha in REFERENCE_SHA256S:
         # Third-party files use the absolute addresses of the reference build, so they are only
         # applied there. After the built-in ones: an external patch of the same bytes wins.
-        writes+=compile_external(external_selection(external_patches(a.patches_dir,tag,xml,ids),
+        writes+=compile_external(external_selection(external_patches(a.patches_dir,{tag,game_app_version(a.game_dir)},xml,ids),
                                                     a.patches_config),segments)
     write_patches(a.out,writes)
     applied=[n for n in names if n not in skipped]
