@@ -138,10 +138,8 @@ static void describe_address(char *out, size_t size, uintptr_t address) {
  * pointers, so the stack is scanned instead of walked.
  * ponytail: stack scan can list stale return addresses; use a debugger for exact frames. */
 static unsigned watchdog_seconds;
-static DWORD WINAPI watchdog_thread(LPVOID unused) {
-    (void)unused;
-    Sleep(watchdog_seconds*1000u);
-    fputs("STOP: watchdog timeout; thread stacks:\n",stderr);
+/* Every other thread's position and the guest return addresses on its stack (resumed after). */
+static void dump_threads(void) {
     HANDLE snap=CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD,0);
     THREADENTRY32 entry={.dwSize=sizeof(entry)};
     const DWORD pid=GetCurrentProcessId(), self=GetCurrentThreadId();
@@ -150,13 +148,19 @@ static DWORD WINAPI watchdog_thread(LPVOID unused) {
         HANDLE thread=OpenThread(THREAD_SUSPEND_RESUME|THREAD_GET_CONTEXT,FALSE,entry.th32ThreadID);
         if (!thread) continue;
         CONTEXT c={.ContextFlags=CONTEXT_CONTROL|CONTEXT_INTEGER};
-        if (SuspendThread(thread)!=(DWORD)-1 && GetThreadContext(thread,&c)) {
+        static uintptr_t stack[4096];
+        SIZE_T got=0;
+        BOOL have=FALSE;
+        /* Only system calls while it is stopped: it may hold the heap, loader or stdio lock. */
+        if (SuspendThread(thread)!=(DWORD)-1) {
+            if ((have=GetThreadContext(thread,&c)))
+                ReadProcessMemory(GetCurrentProcess(),(void *)(uintptr_t)c.Rsp,stack,sizeof(stack),&got);
+            ResumeThread(thread);
+        }
+        if (have) {
             char where[MAX_PATH+96];
             describe_address(where,sizeof(where),(uintptr_t)c.Rip);
             fprintf(stderr,"thread %lu at %s rdi=0x%llx\n",entry.th32ThreadID,where,(unsigned long long)c.Rdi);
-            uintptr_t stack[4096];
-            SIZE_T got=0;
-            ReadProcessMemory(GetCurrentProcess(),(void *)(uintptr_t)c.Rsp,stack,sizeof(stack),&got);
             for (size_t i=0, shown=0; i<got/sizeof(*stack) && shown<10; ++i)
                 if (stack[i]-(uintptr_t)image<image_size) {
                     fprintf(stderr,"  guest return 0x%" PRIxPTR "\n",stack[i]-(uintptr_t)image); ++shown;
@@ -166,7 +170,23 @@ static DWORD WINAPI watchdog_thread(LPVOID unused) {
     }
     CloseHandle(snap);
     fflush(stderr);
+}
+static DWORD WINAPI watchdog_thread(LPVOID unused) {
+    (void)unused;
+    Sleep(watchdog_seconds*1000u);
+    fputs("STOP: watchdog timeout; thread stacks:\n",stderr);
+    dump_threads();
     _exit(124);
+}
+/* A start that never gets to read the pad (black screen, #7 #19) puts the thread stacks in the
+ * log once, for the bug report; the game goes on. Knack opens the pad early, so the reads count. */
+static DWORD WINAPI start_watch_thread(LPVOID unused) {
+    (void)unused;
+    Sleep(90000);
+    if (runtime_pad_opened) return 0;
+    fputs("Start: the game has not read the pad after 90 s (black screen?); thread stacks for the bug report:\n",stderr);
+    dump_threads();
+    return 0;
 }
 /* GOW3_PROFILE=1: sample every thread's instruction pointer every 5 ms and print the hottest
  * addresses of each 5-second window (guest offsets, or host module+offset).
@@ -913,6 +933,7 @@ int main(int argc, char **argv) {
     }
     watchdog_seconds = timeout_seconds;
     if (watchdog_seconds) CloseHandle(CreateThread(NULL,0,watchdog_thread,NULL,0,NULL));
+    CloseHandle(CreateThread(NULL,0,start_watch_thread,NULL,0,NULL));
 #else
     page_size = (size_t)sysconf(_SC_PAGESIZE);
     struct sigaction sa = {0}; sa.sa_sigaction = fault; sa.sa_flags = SA_SIGINFO;

@@ -18,6 +18,13 @@ static bool SDLCALL record_rumble(void *userdata, uint16_t low, uint16_t high) {
     rumble_high=high;
     return true;
 }
+void runtime_user_events(void) {}
+int gow3gpu_stick_deadzone_percent(void) { return 0; }
+void gow3gpu_request_screenshot(void) {}
+int gow3gpu_mouse_prompt_distance(void) { return 0; }
+void gow3gpu_mouse_pause_key(void) {}
+int gow3gpu_mouse_aim_style(void) { return 0; }
+int gow3gpu_mouse_aim_sensitivity(void) { return 100; }
 uintptr_t runtime_lookup(const RuntimeExport *table, size_t count, const char *name) {
     (void)table; (void)count; (void)name;
     return 0;
@@ -205,11 +212,36 @@ int main(void) {
     usleep(220000);
     data=read_pad();
     assert(data.buttons==0 && data.touch_count==0);
+    /* Split-screen: a second gamepad logs user 2 in; its pad reads only that gamepad. */
+    assert(!runtime_pad_second_user());
+    desc.name="gow3 test controller 2";
+    SDL_JoystickID id2=SDL_AttachVirtualJoystick(&desc);
+    assert(id2!=0);
+    SDL_Joystick *joystick2=SDL_OpenJoystick(id2);
+    assert(joystick2);
+    pump();
+    assert(runtime_pad_second_user());
+    assert(pad_open(2,0,0,NULL)==2 && pad_open(2,0,0,NULL)==ERR_ALREADY_OPENED);
+    assert(SDL_SetJoystickVirtualButton(joystick2,SDL_GAMEPAD_BUTTON_SOUTH,true));
+    assert(SDL_SetJoystickVirtualAxis(joystick2,SDL_GAMEPAD_AXIS_LEFTX,-32768));
+    pump();
+    PadData second;
+    assert(pad_read_state(2,&second)==0);
+    assert(second.connected && (second.buttons & BTN_CROSS) && second.left_x==0);
+    data=read_pad();
+    assert(!(data.buttons & BTN_CROSS) && data.left_x==128);
+    assert(SDL_SetJoystickVirtualButton(joystick2,SDL_GAMEPAD_BUTTON_SOUTH,false));
+    SDL_CloseJoystick(joystick2);
+    assert(SDL_DetachVirtualJoystick(id2));
+    pump();
+    assert(pad_read_state(2,&second)==0 && !second.connected && second.buttons==0);
+    assert(!runtime_pad_second_user());
+    assert(pad_close(2)==0 && pad_read_state(2,&second)==ERR_INVALID_HANDLE);
     SDL_CloseJoystick(joystick);
     if (gamepad) SDL_CloseGamepad(gamepad);
     gamepad=NULL;
     assert(SDL_DetachVirtualJoystick(id));
     SDL_Quit();
     unlink(path);
-    puts("PASS: pad ABI, staged left/right clicks, L1 chord, SDL touch coordinates, overlay capture");
+    puts("PASS: pad ABI, staged left/right clicks, L1 chord, SDL touch coordinates, overlay capture, player 2");
 }

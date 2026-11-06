@@ -21,6 +21,8 @@
 
 #define USER_ID 1
 #define USER_NAME "Player"
+#define USER2_ID 2 /* split-screen player 2 (#80): logged in while runtime_pad_second_user() */
+#define USER2_NAME "Player 2"
 #define ORBIS_OK 0
 #define USER_INVALID_ARGUMENT ((int32_t)0x80960005)
 #define USER_NO_EVENT ((int32_t)0x80960007)
@@ -49,26 +51,68 @@ static int new_id(void) { pthread_mutex_lock(&lock); int id=next_id++; pthread_m
 static void note(const char *what) { printf("Runtime: %s\n",what); }
 
 /* ---- UserService ---- */
-static int login_event_pending=1;
+static int login_event_pending=1, user2_reported;
 static ABI int32_t user_initialize(const void *params) { (void)params; note("UserService initialized (user 1 logged in)"); return 0; }
 static ABI int32_t user_terminate(void) { return 0; }
 static ABI int32_t user_initial(int32_t *id) { if (!id) return USER_INVALID_ARGUMENT; *id=USER_ID; return 0; }
 static ABI int32_t user_list(int32_t *ids) {
     if (!ids) return USER_INVALID_ARGUMENT;
-    ids[0]=USER_ID; ids[1]=ids[2]=ids[3]=-1; return 0;
+    const int present=runtime_pad_second_user();
+    pthread_mutex_lock(&lock);
+    user2_reported=present; /* the game knows it now */
+    pthread_mutex_unlock(&lock);
+    ids[0]=USER_ID; ids[1]=present ? USER2_ID : -1; ids[2]=ids[3]=-1; return 0;
+}
+/* 1 when user 2 logged in or out since the game last heard; *present is the new state. */
+static int user2_changed(int *present) {
+    *present=runtime_pad_second_user();
+    pthread_mutex_lock(&lock);
+    const int changed=*present!=user2_reported; user2_reported=*present;
+    pthread_mutex_unlock(&lock);
+    if (changed) printf("Runtime: user 2 logged %s\n",*present ? "in" : "out");
+    return changed;
+}
+/* The game learns about logins from a callback (sceUserServiceRegisterEventCallback). The pad
+ * module calls runtime_user_events from player 1's pad read, about twice a second, and the
+ * callback runs there, on that game thread. */
+typedef ABI void (*UserEventCallback)(const int32_t *event,void *arg);
+static UserEventCallback user_callback;
+static void *user_callback_arg;
+static ABI int32_t user_register_callback(UserEventCallback callback,void *arg) {
+    pthread_mutex_lock(&lock); user_callback=callback; user_callback_arg=arg; pthread_mutex_unlock(&lock);
+    return 0;
+}
+static ABI int32_t user_unregister_callback(void) {
+    pthread_mutex_lock(&lock); user_callback=NULL; pthread_mutex_unlock(&lock);
+    return 0;
+}
+void runtime_user_events(void) {
+    static unsigned calls;
+    pthread_mutex_lock(&lock);
+    UserEventCallback callback=user_callback; void *arg=user_callback_arg;
+    pthread_mutex_unlock(&lock);
+    if (!callback || ++calls%30) return;
+    int present;
+    if (!user2_changed(&present)) return;
+    const int32_t event[2]={present ? 0 : 1,USER2_ID}; /* LOGIN / LOGOUT */
+    callback(event,arg);
 }
 static ABI int32_t user_name(int32_t id,char *name,uint64_t size) {
-    if (id!=USER_ID || !name) return USER_INVALID_ARGUMENT;
-    if (sizeof USER_NAME>size) return (int32_t)0x8096000a; /* BUFFER_TOO_SHORT */
-    strcpy(name,USER_NAME); return 0;
+    if ((id!=USER_ID && id!=USER2_ID) || !name) return USER_INVALID_ARGUMENT;
+    const char *text=id==USER_ID ? USER_NAME : USER2_NAME;
+    if (strlen(text)+1>size) return (int32_t)0x8096000a; /* BUFFER_TOO_SHORT */
+    strcpy(name,text); return 0;
 }
 static ABI int32_t user_event(int32_t *event) {
     if (!event) return USER_INVALID_ARGUMENT;
     pthread_mutex_lock(&lock);
     int pending=login_event_pending; login_event_pending=0;
     pthread_mutex_unlock(&lock);
-    if (!pending) return USER_NO_EVENT;
-    event[0]=0; event[1]=USER_ID; /* LOGIN */
+    if (pending) { event[0]=0; event[1]=USER_ID; return 0; } /* LOGIN */
+    /* User 2 logs in and out with the second gamepad. */
+    int present;
+    if (!user2_changed(&present)) return USER_NO_EVENT;
+    event[0]=present ? 0 : 1; event[1]=USER2_ID; /* LOGIN / LOGOUT */
     return 0;
 }
 
@@ -695,7 +739,8 @@ static const RuntimeExport exports[]={
     {"sceNetCtlCheckCallbackForNpToolkit",netctl_check},
     {"sceNpRegisterStateCallbackForToolkit",ok_void}, {"sceNpUnregisterStateCallbackForToolkit",ok_void},
     {"sceNpCheckCallbackForLib",ok_void},
-    {"sceUserServiceRegisterEventCallback",ok_void}, {"sceUserServiceUnregisterEventCallback",ok_void},
+    {"sceUserServiceRegisterEventCallback",user_register_callback},
+    {"sceUserServiceUnregisterEventCallback",user_unregister_callback},
     {"sceNpGetAccountIdA",np_signed_out}, {"sceNpGetAccountCountryA",np_signed_out},
     {"sceNpGetAccountLanguageA",np_signed_out}, {"sceNpGetAccountDateOfBirthA",np_signed_out},
     {"sceNpGetUserIdByAccountId",np_signed_out}, {"sceNpCheckNpAvailabilityA",np_signed_out},

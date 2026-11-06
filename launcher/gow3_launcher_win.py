@@ -2009,7 +2009,8 @@ class Launcher:
         for value, label in CONTROL_DEVICES:
             ttk.Radiobutton(devices, text=_(label), value=value, variable=self.device,
                             command=choose_device).pack(side='left', padx=self.px((0, 18)))
-        self.row(page, _('Device'), devices)
+        self.row(page, _('Device'), devices,
+                 _('Co-op: a second gamepad plays as player 2 (Robo Knack), with the same gamepad mapping.'))
 
         # Keyboard & mouse: one table for the keys and the mouse, with its own actions.
         f = self.key_section = ttk.Frame(page)

@@ -19,6 +19,13 @@ int gow3gpu_choice_begin(const char *title, const char *const *items, const char
 int gow3gpu_choice_poll(void) { return choice_next; }
 int runtime_savedata_param(int32_t user, const char *dir, void *param) { (void)user; (void)dir; (void)param; return -1; }
 int runtime_savedata_icon(int32_t user, const char *dir, char *out, size_t size) { (void)user; (void)dir; (void)out; (void)size; return -1; }
+static int second_pad;
+int runtime_pad_second_user(void) { return second_pad; }
+static struct { int count; int32_t event[2]; } heard;
+static ABI void heard_event(const int32_t *event, void *arg) {
+    assert(arg==&heard);
+    ++heard.count; heard.event[0]=event[0]; heard.event[1]=event[1];
+}
 
 int main(void) {
     unsigned char param[128]={0}, result[64]={0}; /* the game zeroes the pointers it does not want */
@@ -93,6 +100,32 @@ int main(void) {
     trophies_loaded=0; trophy_count=0; memset(trophy_flags,0,sizeof(trophy_flags)); /* a new start */
     assert(trophy_unlock_state(1,1,flags,&count)==0 && flags[1]==2u && !flags[0] && count==2);
     assert(trophy_unlock_state(1,1,NULL,&count)==TROPHY_INVALID && trophy_release(0)==TROPHY_INVALID);
+
+    /* Users: 1 logs in at start; 2 logs in and out with the second gamepad (split-screen). */
+    int32_t event[2], ids[4];
+    char name[17];
+    assert(user_event(event)==0 && event[0]==0 && event[1]==USER_ID);
+    assert(user_event(event)==USER_NO_EVENT);
+    assert(user_list(ids)==0 && ids[0]==USER_ID && ids[1]==-1);
+    second_pad=1;
+    assert(user_event(event)==0 && event[0]==0 && event[1]==USER2_ID);
+    assert(user_event(event)==USER_NO_EVENT);
+    assert(user_list(ids)==0 && ids[1]==USER2_ID);
+    assert(user_name(USER2_ID,name,sizeof name)==0 && !strcmp(name,"Player 2"));
+    second_pad=0;
+    assert(user_event(event)==0 && event[0]==1 && event[1]==USER2_ID);
+    assert(user_event(event)==USER_NO_EVENT);
+    /* The callback hears the same, from player 1's pad reads (every 30th). */
+    assert(user_register_callback(heard_event,&heard)==0);
+    second_pad=1;
+    for (int i=0;i<30;++i) runtime_user_events();
+    assert(heard.count==1 && heard.event[0]==0 && heard.event[1]==USER2_ID);
+    for (int i=0;i<60;++i) runtime_user_events();
+    assert(heard.count==1);
+    second_pad=0;
+    for (int i=0;i<30;++i) runtime_user_events();
+    assert(heard.count==2 && heard.event[0]==1);
+    assert(user_unregister_callback()==0);
 
     float ratio=0; assert(safe_area(&ratio)==0 && ratio==1.0f && safe_area(NULL)==SYSTEM_PARAMETER);
     puts("services test: ok");

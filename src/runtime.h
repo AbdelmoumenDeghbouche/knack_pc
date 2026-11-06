@@ -92,8 +92,11 @@ uintptr_t runtime_audio_resolve(const char *name);
 void runtime_audio_report(void);
 uintptr_t runtime_pad_resolve(const char *name);
 void runtime_pad_report(void);
+extern volatile int runtime_pad_opened; /* the game read the pad 30 times: it got past its start (start watch) */
 /* probe --gamepad: prints one "Gamepad:" line for the first pad found (returns 1) or none (0). */
 int runtime_pad_describe(void);
+int runtime_pad_second_user(void);
+void runtime_user_events(void);
 uintptr_t runtime_rtc_resolve(const char *name);
 const char *runtime_file_user_dir(void);
 void runtime_savedata_configure(const char *title);
