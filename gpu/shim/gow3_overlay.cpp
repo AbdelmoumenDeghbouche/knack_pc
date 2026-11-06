@@ -496,8 +496,13 @@ void PerformanceTab() {
         static_assert(std::size(builtin_labels) == G::Resolutions.size());
         const std::vector<std::string> resolution_names = G::ResolutionNames();
         std::vector<const char*> resolution_labels;
-        for (std::size_t i = 0; i < resolution_names.size(); ++i) {
-            resolution_labels.push_back(i < G::Resolutions.size() ? builtin_labels[i] : resolution_names[i].c_str());
+        // By name: GOW3_ALLOWED_RESOLUTIONS leaves only some built-ins, so a position in the list
+        // is not a position in builtin_labels (#17: native, 1440p and 3440x1440 read "480p", "720p").
+        for (const auto& name : resolution_names) {
+            const auto found = std::find(G::Resolutions.begin(), G::Resolutions.end(), name);
+            resolution_labels.push_back(found != G::Resolutions.end()
+                                            ? builtin_labels[found - G::Resolutions.begin()]
+                                            : name.c_str());
         }
         ChoiceRow("Render resolution", s.render_resolution, resolution_labels.data(), nullptr,
                   int(resolution_labels.size()), "The resolution the game draws at. Higher is sharper and slower.");
