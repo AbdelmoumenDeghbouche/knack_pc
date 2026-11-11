@@ -78,8 +78,8 @@ def main():
         pr = json.loads(run('gh', 'pr', 'view', number, '-R', REPO, '--json', 'title,author'))
         lines.append(f'- {pr["title"]} (#{number}, by @{pr["author"]["login"]})')
     notes = (section(latest['body'], 'Project status') +
-             '## What\'s new\n\nCommunity update: these pull requests were reviewed and approved by trusted '
-             'contributors and merged by the merge bot (see CONTRIBUTING.md).\n\n' + '\n'.join(lines) + '\n\n' +
+             '## What\'s new\n\nPull requests merged since the last release (how they get merged: '
+             'CONTRIBUTING.md).\n\n' + '\n'.join(lines) + '\n\n' +
              section(latest['body'], 'All features') + section(latest['body'], 'Download'))
     Path('notes.md').write_text(notes, encoding='utf-8')
     run('gh', 'release', 'create', tag, '-R', REPO, '--prerelease', '--verify-tag',
