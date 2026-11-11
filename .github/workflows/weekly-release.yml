@@ -1,0 +1,31 @@
+# Every Sunday: when pull requests were merged since the last release, a new release with the
+# Windows zip and the Linux AppImage (.github/release_bot.py). Can also be run by hand.
+name: Weekly release
+
+on:
+  schedule:
+    - cron: '0 12 * * 0'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  actions: write
+
+concurrency:
+  group: weekly-release
+
+jobs:
+  release:
+    if: github.repository_owner == 'AbdelmoumenDeghbouche'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 240
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Release what was merged
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG_PREFIX: v
+        run: python3 .github/release_bot.py

@@ -1,0 +1,29 @@
+# Merges the pull requests that pass the rules in CONTRIBUTING.md (.github/merge_bot.py), every hour.
+name: Merge bot
+
+on:
+  schedule:
+    - cron: '23 * * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: merge-bot
+
+jobs:
+  merge:
+    if: github.repository_owner == 'AbdelmoumenDeghbouche'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: .github
+      - name: Merge what passes the rules
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TRUST_REPOS: AbdelmoumenDeghbouche/wipeout_pc AbdelmoumenDeghbouche/knack_pc
+        run: python3 .github/merge_bot.py

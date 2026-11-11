@@ -7,6 +7,8 @@
 name: Windows zip
 
 on:
+  # Every pull request: build and smoke test only (the merge bot needs this check).
+  pull_request:
   workflow_dispatch:
     inputs:
       tag:
@@ -22,6 +24,7 @@ concurrency:
 
 jobs:
   build:
+    name: Windows build
     runs-on: windows-2025
     timeout-minutes: 150
     defaults:
@@ -68,6 +71,7 @@ jobs:
           if-no-files-found: error
 
   smoke:
+    name: Windows smoke
     needs: build
     runs-on: windows-2025
     steps:

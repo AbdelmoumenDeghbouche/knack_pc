@@ -7,6 +7,8 @@
 name: Linux AppImage
 
 on:
+  # Every pull request: build and smoke test only (the merge bot needs this check).
+  pull_request:
   workflow_dispatch:
     inputs:
       tag:
@@ -22,6 +24,7 @@ concurrency:
 
 jobs:
   build:
+    name: Linux build
     runs-on: ubuntu-24.04
     timeout-minutes: 150
     steps:
@@ -43,6 +46,7 @@ jobs:
           if-no-files-found: error
 
   smoke:
+    name: Linux smoke (${{ matrix.image }})
     needs: build
     runs-on: ubuntu-24.04
     strategy:
