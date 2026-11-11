@@ -13,6 +13,11 @@ lists what was added for Knack.
 > 120 FPS: fights, super moves, story videos, music, sound effects and saves.** Later chapters are
 > not tested yet. See [Progress](#progress) and [Known issues](#known-issues).
 
+> The project is now community-maintained: pull requests are reviewed by trusted contributors and
+> merged by a bot, and a new release comes out every Sunday. See [CONTRIBUTING.md](CONTRIBUTING.md).
+
+> 💙 **Like the port? You can donate with PayPal to `a.deghbouche@esi-sba.dz`.** See [Donate](#donate).
+
 > **No game files are included.** You need your own copy of the game, dumped from your own PS4.
 > This project is not affiliated with Sony Interactive Entertainment or Japan Studio. Knack is a
 > trademark of Sony Interactive Entertainment.
@@ -33,6 +38,16 @@ uses about 5 to 6 GB).
 
 Tested dump: CUSA00068 (US) with update 01.10. The EU versions (CUSA00006, CUSA00202) are listed
 but untested.
+
+## Donate
+
+The port is free and I made it in my free time. If you want to thank me or help it go on, you can
+send a donation with **PayPal** to:
+
+**a.deghbouche@esi-sba.dz**
+
+In the PayPal app or on [paypal.com](https://www.paypal.com): **Send**, enter the email above, then
+the amount. Thank you!
 
 ## Progress
 
