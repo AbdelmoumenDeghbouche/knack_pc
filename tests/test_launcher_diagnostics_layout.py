@@ -29,7 +29,7 @@ class DiagnosticsLayoutTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory, contextlib.ExitStack() as stack:
             folder = Path(directory)
             config = folder / 'settings.json'
-            config.write_text(json.dumps({'game_dir': '', 'check_updates': False}), encoding='utf-8')
+            config.write_text(json.dumps({'game_dir': '', 'update_popup': False}), encoding='utf-8')
             for name, value in (('CONFIG_DIR', folder), ('CONFIG_FILE', config),
                                 ('DATA_DIR', folder), ('LANG', language)):
                 stack.enter_context(mock.patch.object(launcher, name, value))

@@ -37,7 +37,7 @@ class LauncherGameFilesTests(unittest.TestCase):
         config.mkdir()
         config_file = config / 'settings.json'
         config_file.write_text(json.dumps({**launcher.APP_DEFAULTS, 'game_dir': str(self.game),
-                                           'ui_language': 'en', 'check_updates': False}), encoding='utf-8')
+                                           'ui_language': 'en', 'update_popup': False}), encoding='utf-8')
         for name, value in [('CONFIG_DIR', config), ('CONFIG_FILE', config_file), ('DATA_DIR', self.folder)]:
             patch = mock.patch.object(launcher, name, value)
             patch.start()

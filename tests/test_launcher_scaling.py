@@ -136,7 +136,7 @@ class LauncherScalingTest(unittest.TestCase):
         for patcher in patchers:
             patcher.start()
             self.addCleanup(patcher.stop)
-        launcher.CONFIG_FILE.write_text('{"ui_scale": "1", "check_updates": false}', encoding='utf-8')
+        launcher.CONFIG_FILE.write_text('{"ui_scale": "1", "update_popup": false}', encoding='utf-8')
         self.root = None
         self.addCleanup(self.close_window)
         self.open_window()

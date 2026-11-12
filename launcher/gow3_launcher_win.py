@@ -405,6 +405,28 @@ FPS_LIMITS = [('30', ('30',)), ('60', ('60',)), ('100', ('100',)), ('120', ('120
 # The sidebar's pages, top to bottom, and the methods that refresh a page's lists when it is shown.
 PAGES = ('home', 'graphics', 'performance', 'game', 'controls', 'mods', 'advanced')
 PAGE_REFRESH = {'home': ('refresh_status',), 'game': ('refresh_game_patches',), 'mods': ('refresh_lists',)}
+# #145: XInput buttons (the left stick reads as the D-pad) and what they do in the launcher.
+PAD_ACTIONS = ((0x1, 'up'), (0x2, 'down'), (0x4, 'left'), (0x8, 'right'), (0x10, 'play'), (0x20, 'save'),
+               (0x100, 'prev_page'), (0x200, 'next_page'), (0x1000, 'select'), (0x2000, 'back'))
+
+
+def xinput_buttons():
+    """The first connected Xbox controller's buttons, None when there is none (Windows only)."""
+    global _xinput
+    if '_xinput' not in globals():
+        _xinput = None
+        for name in ('xinput1_4', 'xinput9_1_0'):
+            with contextlib.suppress(OSError):
+                _xinput = ctypes.WinDLL(name).XInputGetState
+                break
+    if not _xinput:
+        return None
+    state = (ctypes.c_ubyte * 16)()  # dwPacketNumber, wButtons, triggers, thumb LX, LY, RX, RY
+    for pad in range(4):
+        if _xinput(pad, state) == 0:
+            buttons, lx, ly = int.from_bytes(bytes(state[4:6]), 'little'),                 int.from_bytes(bytes(state[8:10]), 'little', signed=True),                 int.from_bytes(bytes(state[10:12]), 'little', signed=True)
+            return buttons | (ly > 16000) | (ly < -16000) << 1 | (lx < -16000) << 2 | (lx > 16000) << 3
+    return None
 UI_SCALES = [('auto', ('Auto',)), ('1', ('1x',)), ('2', ('2x',))]
 APP_DEFAULTS = {'ui_language': 'en', 'ui_scale': 'auto', 'game_dir': os.environ.get('GOW3_GAME_DIR', str(PORT_DIR.parent / 'CUSA00068') if WINDOWS else ''), 'update_dir': '', 'experimental_upscaler': False,
                 'video_backend': 'auto', 'gamemode': False, 'mangohud': False, 'desktop_integration': True, 'user_dir': '',
@@ -413,7 +435,7 @@ APP_DEFAULTS = {'ui_language': 'en', 'ui_scale': 'auto', 'game_dir': os.environ.
                 'gpu_id': '', 'partial_height_views': True, 'background_warmup': True, 'parallel_warmup': True, 'pipeline_binary_cache': True,
                 'perf_diag': False, 'frame_capture_key': False, 'frame_stats': False, 'gpu_profile': False,
                 'vk_validation': False, 'close_on_play': False, 'discord_rpc': False,
-                'check_updates': False, 'game_patches': {}, 'controls': {}, 'pad_style': 'playstation',
+                'update_popup': True, 'launcher_gamepad': True, 'game_patches': {}, 'controls': {}, 'pad_style': 'playstation',
                 'controls_layout': 2,
                 'glyph_style': 'off'}
 
@@ -1191,7 +1213,10 @@ class Launcher:
         root.protocol('WM_DELETE_WINDOW', self.close)
         root.after(100, self.drain_output)
         root.after(500, self.watch_changes)
-        if WINDOWS and self.app.get('check_updates', True):
+        if WINDOWS:
+            root.after(500, self.poll_gamepad)
+        # #26: a new key, on by default: the old 'check_updates' was saved off in everyone's settings.
+        if WINDOWS and self.app['update_popup']:
             threading.Thread(target=self.check_update, daemon=True).start()
 
     def meta_dir(self):
@@ -1517,6 +1542,14 @@ class Launcher:
         canvas.pack(side='left', fill='both', expand=True)
         outer.scroll = lambda units: canvas.yview_scroll(units, 'units') if inner.winfo_height() > canvas.winfo_height() else None
 
+        def see(widget):  # a controller moved the focus (#145): keep it in view
+            height = max(1, inner.winfo_height())
+            y = widget.winfo_rooty() - inner.winfo_rooty()
+            top, bottom = (f * height for f in canvas.yview())
+            if y < top or y + widget.winfo_height() > bottom:
+                canvas.yview_moveto(max(0.0, (y - canvas.winfo_height() / 3) / height))
+        outer.see = see
+
         def fit():  # after a section is hidden: the shorter content, kept in view
             canvas.update_idletasks()
             canvas.configure(scrollregion=(0, 0, canvas.winfo_width(), inner.winfo_reqheight()))
@@ -1585,6 +1618,8 @@ class Launcher:
         self.game_changed()
 
     def wheel(self, event):
+        if hasattr(self, 'pad_marker'):  # it would stay put over the scrolled page
+            self.pad_marker.place_forget()
         if self.capture_wheel:
             return self.capture_wheel(event)
         page = self.pages.get(self.current_page)
@@ -1592,7 +1627,62 @@ class Launcher:
                 and 'popdown' not in str(event.widget):
             page.scroll({4: -1, 5: 1}.get(event.num) or int(-event.delta / 120))
 
+    def poll_gamepad(self):
+        """#145: an Xbox (XInput) controller drives the launcher while its window is in front:
+        LB/RB pages, D-pad or left stick up/down moves, left/right changes a choice or a slider,
+        A selects, B goes home, Start plays, Back saves."""
+        state = xinput_buttons()
+        on = self.var('launcher_gamepad', 'app').get()  # off for players who move the cursor with the stick
+        held = state if on and state and ctypes.windll.user32.GetForegroundWindow() == int(self.root.wm_frame(), 16) else 0
+        now = time.monotonic()
+        fire = held & ~getattr(self, 'pad_prev', 0)
+        if fire:
+            self.pad_repeat_at = now + 0.4
+        elif held & 0xF and now >= getattr(self, 'pad_repeat_at', now):  # a held direction repeats
+            fire, self.pad_repeat_at = held & 0xF, now + 0.12
+        self.pad_prev = held
+        for bit, action in PAD_ACTIONS:
+            if fire & bit:
+                self.gamepad_action(action)
+        self.root.after(33 if state is not None else 1000, self.poll_gamepad)
+
+    def gamepad_action(self, action):
+        page = self.pages[self.current_page]
+        widget = self.root.focus_get()
+        if action in ('prev_page', 'next_page'):
+            i = PAGES.index(self.current_page) + (1 if action == 'next_page' else -1)
+            self.show(PAGES[i % len(PAGES)])
+        elif action in ('up', 'down'):
+            nxt = (widget.tk_focusNext() if action == 'down' else widget.tk_focusPrev()) if widget else \
+                page.tk_focusNext()
+            if nxt:
+                nxt.focus_set()
+                if hasattr(page, 'see') and str(nxt).startswith(str(page)):
+                    page.see(nxt)
+                if not hasattr(self, 'pad_marker'):  # the focus ring of the theme is hard to see
+                    self.pad_marker = self.tk.Frame(self.root, bg=ACCENT_HI)
+                self.pad_marker.place(in_=nxt, x=-self.px(10), y=0, width=self.px(4), relheight=1)
+                self.pad_marker.lift()
+        elif action in ('left', 'right', 'select') and widget:
+            step = -1 if action == 'left' else 1
+            if isinstance(widget, self.ttk.Combobox) and widget['values']:
+                widget.current((widget.current() + step) % len(widget['values']))
+                widget.event_generate('<<ComboboxSelected>>')
+            elif isinstance(widget, (self.ttk.Scale, self.tk.Scale)):
+                low, high = sorted((float(widget.cget('from')), float(widget.cget('to'))))
+                widget.set(min(high, max(low, float(widget.get()) + step * max(1.0, (high - low) / 20))))
+            elif action == 'select' and hasattr(widget, 'invoke'):
+                widget.invoke()
+        elif action == 'back':
+            self.show('home')
+        elif action == 'play':
+            self.play()
+        elif action == 'save' and str(self.save_button['state']) != 'disabled':
+            self.save()
+
     def show(self, name):
+        if hasattr(self, 'pad_marker'):
+            self.pad_marker.place_forget()
         for page in self.pages.values():
             page.pack_forget()
         self.pages[name].pack(fill='both', expand=True)
@@ -2230,8 +2320,10 @@ class Launcher:
                  _('For launcher only. Applies after Save.'))
         self.check(f, 'close_on_play', 'app', _('Close the launcher when the game starts', 'Закрывать лаунчер при запуске игры'))
         if WINDOWS:
-            self.check(f, 'check_updates', 'app', _('Check for updates when the launcher opens',
+            self.check(f, 'update_popup', 'app', _('Check for updates when the launcher opens',
                                                     'Проверять обновления при открытии лаунчера'))
+            self.check(f, 'launcher_gamepad', 'app', _('Control the launcher with an Xbox controller'),
+                       _('Off: the controller does nothing in the launcher (for example while it moves the mouse).'))
         holder = ttk.Frame(f)
         holder.grid(row=self.next_row(f), column=0, columnspan=2, sticky='w', pady=self.px((10, 0)))
         if WINDOWS:
@@ -2939,16 +3031,15 @@ class Launcher:
                 shutil.rmtree(UPDATE_DIR, ignore_errors=True)
                 UPDATE_DIR.mkdir(parents=True, exist_ok=True)
                 archive = UPDATE_DIR / 'update.zip'
-                request = urllib.request.Request(url, headers={'User-Agent': 'gow3-launcher'})
-                with urllib.request.urlopen(request, timeout=60) as response, open(archive, 'wb') as out:
-                    total, done, shown = int(response.headers.get('Content-Length') or 0), 0, -1
-                    while chunk := response.read(1 << 20):
-                        out.write(chunk)
-                        done += len(chunk)
-                        percent = done * 100 // total if total else 0
-                        if percent != shown:
-                            shown = percent
-                            self.ui_calls.put(lambda p=percent: progress(p))
+                for attempt in range(3):  # a dropped connection left a cut zip ("not a zip file")
+                    try:
+                        download_update(url, archive, lambda done, total: self.ui_calls.put(
+                            lambda p=done * 100 // total if total else 0: progress(p)))
+                        break
+                    except OSError:
+                        if attempt == 2:
+                            raise
+                        time.sleep(3)
                 with zipfile.ZipFile(archive) as package:
                     package.extractall(UPDATE_DIR / 'new')
                 archive.unlink()
@@ -3177,6 +3268,22 @@ def latest_release():
     url = next((asset['browser_download_url'] for asset in release.get('assets', [])
                 if asset.get('name', '').lower().endswith('.zip')), None)
     return version, url, release.get('html_url') or RELEASES_PAGE
+
+
+def download_update(url, archive, progress=None, opener=urllib.request.urlopen):
+    """Downloads the release zip to `archive`; progress(done, total) per MiB. Raises OSError when
+    the connection ends early or the file is not a whole zip."""
+    request = urllib.request.Request(url, headers={'User-Agent': 'knack-launcher'})
+    with opener(request, timeout=60) as response, open(archive, 'wb') as out:
+        total, done, shown = int(response.headers.get('Content-Length') or 0), 0, -1
+        while chunk := response.read(1 << 20):
+            out.write(chunk)
+            done += len(chunk)
+            if progress and done >> 20 != shown:
+                shown = done >> 20
+                progress(done, total)
+    if (total and done != total) or not zipfile.is_zipfile(archive):
+        raise OSError(f'the download stopped early ({done >> 20} of {total >> 20} MB)')
 
 
 def install_update(target, wait_pid):

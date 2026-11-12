@@ -72,6 +72,24 @@ class ControlMapTest(unittest.TestCase):
         self.assertIn('cheat_double_jumps', launcher.INI_FLAGS)
         self.assertIn('cheat_very_hard', launcher.INI_FLAGS)
 
+    def test_controller_buttons_and_stick(self):
+        # #145: the first connected pad's buttons; the left stick past a quarter reads as the D-pad.
+        def pad(raw):
+            def get_state(index, state):
+                if index != 1:
+                    return 1167  # ERROR_DEVICE_NOT_CONNECTED
+                state[4:6], state[8:10], state[10:12] = (v.to_bytes(2, 'little', signed=True) for v in raw)
+                return 0
+            return get_state
+        with mock.patch.object(launcher, '_xinput', pad((0x1000, 0, 0)), create=True):
+            self.assertEqual(launcher.xinput_buttons(), 0x1000)
+        with mock.patch.object(launcher, '_xinput', pad((0, -20000, 20000)), create=True):
+            self.assertEqual(launcher.xinput_buttons(), 0x1 | 0x4)
+        with mock.patch.object(launcher, '_xinput', pad((0x200, 20000, -20000)), create=True):
+            self.assertEqual(launcher.xinput_buttons(), 0x200 | 0x2 | 0x8)
+        with mock.patch.object(launcher, '_xinput', lambda _i, _s: 1167, create=True):
+            self.assertIsNone(launcher.xinput_buttons())
+
     def test_pipeline_binary_cache_switch(self):
         settings = {**launcher.APP_DEFAULTS}
         self.assertTrue(settings['pipeline_binary_cache'])
@@ -715,6 +733,51 @@ class PortableTest(unittest.TestCase):
                     self.assertEqual(launcher.load_json(launcher.CONFIG_FILE, {}), {})
             finally:
                 importlib.reload(launcher)
+
+
+class LauncherGamepadSwitchTest(unittest.TestCase):
+    def test_the_switch_off_ignores_the_controller(self):
+        # players who move the mouse with the stick turn the launcher's controller off.
+        for on, calls in ((True, 1), (False, 0)):
+            app = types.SimpleNamespace(var=lambda key, store, on=on: types.SimpleNamespace(get=lambda: on),
+                                        root=mock.Mock(), gamepad_action=mock.Mock(), poll_gamepad=None)
+            app.root.wm_frame.return_value = '0x10'
+            with mock.patch.object(launcher, 'xinput_buttons', return_value=0x1000), \
+                    mock.patch.object(launcher, 'ctypes', create=True) as fake_ctypes:
+                fake_ctypes.windll.user32.GetForegroundWindow.return_value = 0x10
+                launcher.Launcher.poll_gamepad(app)
+            self.assertEqual(app.gamepad_action.call_count, calls)
+
+
+class UpdateDownloadTest(unittest.TestCase):
+    def test_a_cut_download_is_an_error_and_a_whole_zip_is_kept(self):
+        # the connection ended early and the launcher said "File is not a zip file".
+        import io
+        import zipfile
+        whole = io.BytesIO()
+        with zipfile.ZipFile(whole, 'w') as package:
+            package.writestr('Knack.exe', b'x' * 5000)
+        data = whole.getvalue()
+
+        def opener(body, length):
+            response = io.BytesIO(body)
+            response.headers = {'Content-Length': str(length)}
+            return lambda request, timeout: response
+        with tempfile.TemporaryDirectory() as folder:
+            archive = Path(folder) / 'update.zip'
+            with self.assertRaises(OSError):
+                launcher.download_update('https://example.invalid/w.zip', archive, opener=opener(data[:100], len(data)))
+            with self.assertRaises(OSError):  # no length from the server and not a zip
+                launcher.download_update('https://example.invalid/w.zip', archive, opener=opener(b'<html>', 0))
+            launcher.download_update('https://example.invalid/w.zip', archive, opener=opener(data, len(data)))
+            self.assertTrue(zipfile.is_zipfile(archive))
+
+
+class UpdateCheckDefaultTest(unittest.TestCase):
+    def test_update_check_is_on_by_default(self):
+        # #26: a new key: the old 'check_updates' was saved off in everyone's settings.
+        self.assertIs(launcher.APP_DEFAULTS['update_popup'], True)
+        self.assertNotIn('check_updates', launcher.APP_DEFAULTS)
 
 
 class ReleaseVersionTest(unittest.TestCase):
