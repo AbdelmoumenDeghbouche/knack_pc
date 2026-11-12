@@ -47,7 +47,9 @@ send a donation with **PayPal** to:
 **a.deghbouche@esi-sba.dz**
 
 In the PayPal app or on [paypal.com](https://www.paypal.com): **Send**, enter the email above, then
-the amount. Thank you!
+the amount.
+
+Or on **Ko-fi**: [ko-fi.com/abd_dbh](https://ko-fi.com/abd_dbh). Thank you!
 
 ## Progress
 
