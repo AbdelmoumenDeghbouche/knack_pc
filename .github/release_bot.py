@@ -52,9 +52,11 @@ def section(body, title):
 
 def main():
     run('git', 'fetch', '-q', '--tags', 'origin', 'main')
-    latest = json.loads(run('gh', 'release', 'view', '-R', REPO, '--json', 'tagName,body'))
-    merged = re.findall(r'^Merge pull request #(\d+) ',
-                        run('git', 'log', f'{latest["tagName"]}..origin/main', '--merges', '--format=%s'), flags=re.M)
+    latest = json.loads(run('gh', 'release', 'view', '-R', REPO, '--json', 'tagName,body,createdAt'))
+    # Asked from GitHub, not read from merge commits: a squash merge leaves none.
+    merged = [str(p['number']) for p in json.loads(run(
+        'gh', 'pr', 'list', '-R', REPO, '--state', 'merged', '--base', 'main', '--limit', '100',
+        '--search', f'merged:>{latest["createdAt"]}', '--json', 'number'))]
     if not merged:
         print(f'Nothing merged since {latest["tagName"]}: no release this week.')
         return
