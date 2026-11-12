@@ -25,6 +25,7 @@ import runpy
 import shutil
 import stat
 import signal
+import struct
 import subprocess
 import sys
 import tempfile
@@ -308,6 +309,11 @@ def launcher_ui_scale(mode, desktop_scale=1.0):
     return float(mode) if mode in ('1', '2') else desktop_scale
 
 
+def can_update():
+    """Windows installs a zip; Linux replaces the AppImage it runs from (#28)."""
+    return WINDOWS or bool(os.environ.get('APPIMAGE'))
+
+
 def host_environment():
     """The environment of the user's session for programs outside the bundle (xdg-open)."""
     env = dict(os.environ)
@@ -411,7 +417,9 @@ PAD_ACTIONS = ((0x1, 'up'), (0x2, 'down'), (0x4, 'left'), (0x8, 'right'), (0x10,
 
 
 def xinput_buttons():
-    """The first connected Xbox controller's buttons, None when there is none (Windows only)."""
+    """The first connected Xbox controller's buttons, None when there is none (LINUX_PAD on Linux)."""
+    if not WINDOWS:
+        return LINUX_PAD.read()
     global _xinput
     if '_xinput' not in globals():
         _xinput = None
@@ -427,6 +435,79 @@ def xinput_buttons():
             buttons, lx, ly = int.from_bytes(bytes(state[4:6]), 'little'),                 int.from_bytes(bytes(state[8:10]), 'little', signed=True),                 int.from_bytes(bytes(state[10:12]), 'little', signed=True)
             return buttons | (ly > 16000) | (ly < -16000) << 1 | (lx < -16000) << 2 | (lx > 16000) << 3
     return None
+
+
+# Knack #28: on Linux the first joystick device (/dev/input/js*, readable without extra groups) gives
+# the same bits as xinput_buttons. Its buttons and axes are found by the kernel's codes (JSIOCGBTNMAP,
+# JSIOCGAXMAP), so Xbox, PlayStation and Steam Deck pads map alike.
+JS_KEYS = {0x130: 0x1000, 0x131: 0x2000, 0x136: 0x100, 0x137: 0x200, 0x13a: 0x20, 0x13b: 0x10,
+           0x220: 0x1, 0x221: 0x2, 0x222: 0x4, 0x223: 0x8}  # BTN_SOUTH, EAST, TL, TR, SELECT, START, D-pad
+JS_AXES = {0x00: (0x4, 0x8), 0x01: (0x1, 0x2), 0x10: (0x4, 0x8), 0x11: (0x1, 0x2)}  # X, Y, hat X, hat Y
+JS_DEFAULT_KEYS = (0x130, 0x131, 0x133, 0x134, 0x136, 0x137, 0x13a, 0x13b, 0x13c, 0x13d, 0x13e)  # xpad order
+JS_DEFAULT_AXES = (0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x10, 0x11)
+
+
+class LinuxPad:
+    def __init__(self):
+        self.fd, self.keys, self.axes, self.down, self.values, self.next_try = None, JS_DEFAULT_KEYS, JS_DEFAULT_AXES, set(), {}, 0.0
+
+    def feed(self, data):
+        """js_event records (u32 time, s16 value, u8 type, u8 number), JS_EVENT_INIT ones included."""
+        for offset in range(0, len(data) - 7, 8):
+            _time, value, kind, number = struct.unpack_from('<IhBB', data, offset)
+            if kind & 0x7f == 1 and number < len(self.keys):
+                (self.down.add if value else self.down.discard)(self.keys[number])
+            elif kind & 0x7f == 2 and number < len(self.axes):
+                self.values[self.axes[number]] = value
+
+    def buttons(self):
+        bits = 0
+        for code in self.down:
+            bits |= JS_KEYS.get(code, 0)
+        for code, (negative, positive) in JS_AXES.items():
+            value = self.values.get(code, 0)
+            bits |= negative if value < -16000 else positive if value > 16000 else 0
+        return bits
+
+    def read(self):
+        """The buttons now; None without a joystick (looked for every 3 seconds)."""
+        if self.fd is None:
+            if time.monotonic() < self.next_try:
+                return None
+            self.next_try = time.monotonic() + 3
+            for path in sorted(glob.glob('/dev/input/js*')):
+                with contextlib.suppress(OSError):
+                    self.fd = os.open(path, os.O_RDONLY | os.O_NONBLOCK)
+                    self.keys, self.axes, self.down, self.values = JS_DEFAULT_KEYS, JS_DEFAULT_AXES, set(), {}
+                    with contextlib.suppress(OSError, ImportError):
+                        import array
+                        import fcntl
+                        count = array.array('B', [0])
+                        fcntl.ioctl(self.fd, 0x80016a12, count)  # JSIOCGBUTTONS
+                        keys = array.array('H', [0] * 0x200)
+                        fcntl.ioctl(self.fd, 0x84006a34, keys)  # JSIOCGBTNMAP
+                        self.keys = tuple(keys[:count[0]])
+                        count = array.array('B', [0])
+                        fcntl.ioctl(self.fd, 0x80016a11, count)  # JSIOCGAXES
+                        axes = array.array('B', [0] * 0x40)
+                        fcntl.ioctl(self.fd, 0x80406a32, axes)  # JSIOCGAXMAP
+                        self.axes = tuple(axes[:count[0]])
+                    break
+            if self.fd is None:
+                return None
+        try:
+            while data := os.read(self.fd, 8 * 64):
+                self.feed(data)
+        except BlockingIOError:
+            pass
+        except OSError:  # unplugged
+            os.close(self.fd)
+            self.fd = None
+            return None
+        return self.buttons()
+
+
+LINUX_PAD = LinuxPad()
 UI_SCALES = [('auto', ('Auto',)), ('1', ('1x',)), ('2', ('2x',))]
 APP_DEFAULTS = {'ui_language': 'en', 'ui_scale': 'auto', 'game_dir': os.environ.get('GOW3_GAME_DIR', str(PORT_DIR.parent / 'CUSA00068') if WINDOWS else ''), 'update_dir': '', 'experimental_upscaler': False,
                 'video_backend': 'auto', 'gamemode': False, 'mangohud': False, 'desktop_integration': True, 'user_dir': '',
@@ -1213,10 +1294,9 @@ class Launcher:
         root.protocol('WM_DELETE_WINDOW', self.close)
         root.after(100, self.drain_output)
         root.after(500, self.watch_changes)
-        if WINDOWS:
-            root.after(500, self.poll_gamepad)
+        root.after(500, self.poll_gamepad)
         # #26: a new key, on by default: the old 'check_updates' was saved off in everyone's settings.
-        if WINDOWS and self.app['update_popup']:
+        if can_update() and self.app['update_popup']:
             threading.Thread(target=self.check_update, daemon=True).start()
 
     def meta_dir(self):
@@ -1627,13 +1707,22 @@ class Launcher:
                 and 'popdown' not in str(event.widget):
             page.scroll({4: -1, 5: 1}.get(event.num) or int(-event.delta / 120))
 
+    def in_front(self):
+        """Whether the launcher window has the focus (its gamepad input is only for itself)."""
+        if WINDOWS:
+            return ctypes.windll.user32.GetForegroundWindow() == int(self.root.wm_frame(), 16)
+        try:
+            return self.root.focus_displayof() is not None
+        except self.tk.TclError:
+            return False
+
     def poll_gamepad(self):
         """#145: an Xbox (XInput) controller drives the launcher while its window is in front:
         LB/RB pages, D-pad or left stick up/down moves, left/right changes a choice or a slider,
         A selects, B goes home, Start plays, Back saves."""
         state = xinput_buttons()
         on = self.var('launcher_gamepad', 'app').get()  # off for players who move the cursor with the stick
-        held = state if on and state and ctypes.windll.user32.GetForegroundWindow() == int(self.root.wm_frame(), 16) else 0
+        held = state if on and state and self.in_front() else 0
         now = time.monotonic()
         fire = held & ~getattr(self, 'pad_prev', 0)
         if fire:
@@ -2319,11 +2408,11 @@ class Launcher:
         self.row(f, _('GUI Scale'), self.choice(f, 'ui_scale', 'app', UI_SCALES),
                  _('For launcher only. Applies after Save.'))
         self.check(f, 'close_on_play', 'app', _('Close the launcher when the game starts', 'Закрывать лаунчер при запуске игры'))
-        if WINDOWS:
+        if can_update():
             self.check(f, 'update_popup', 'app', _('Check for updates when the launcher opens',
                                                     'Проверять обновления при открытии лаунчера'))
-            self.check(f, 'launcher_gamepad', 'app', _('Control the launcher with an Xbox controller'),
-                       _('Off: the controller does nothing in the launcher (for example while it moves the mouse).'))
+        self.check(f, 'launcher_gamepad', 'app', _('Control the launcher with a gamepad'),
+                   _('Off: the controller does nothing in the launcher (for example while it moves the mouse).'))
         holder = ttk.Frame(f)
         holder.grid(row=self.next_row(f), column=0, columnspan=2, sticky='w', pady=self.px((10, 0)))
         if WINDOWS:
@@ -3012,7 +3101,7 @@ class Launcher:
         if self.process:
             self.messagebox.showinfo(APP_NAME, _('Close the game before updating.', 'Закройте игру перед обновлением.'))
             return
-        if not FROZEN or not url:  # a source tree updates with git
+        if not FROZEN or not url or not can_update():  # a source tree updates with git
             open_url(page)
             return
         if not self.messagebox.askyesno(APP_NAME, _(
@@ -3031,15 +3120,22 @@ class Launcher:
                 shutil.rmtree(UPDATE_DIR, ignore_errors=True)
                 UPDATE_DIR.mkdir(parents=True, exist_ok=True)
                 archive = UPDATE_DIR / 'update.zip'
+                appimage = None if WINDOWS else Path(os.environ['APPIMAGE'])
+                if appimage:  # #28: the new AppImage next to the running one, then in its place
+                    archive = appimage.with_name(appimage.name + '.part')
                 for attempt in range(3):  # a dropped connection left a cut zip ("not a zip file")
                     try:
                         download_update(url, archive, lambda done, total: self.ui_calls.put(
-                            lambda p=done * 100 // total if total else 0: progress(p)))
+                            lambda p=done * 100 // total if total else 0: progress(p)), whole_zip=not appimage)
                         break
                     except OSError:
                         if attempt == 2:
                             raise
                         time.sleep(3)
+                if appimage:
+                    install_appimage(archive, appimage)
+                    self.ui_calls.put(self.root.destroy)
+                    return
                 with zipfile.ZipFile(archive) as package:
                     package.extractall(UPDATE_DIR / 'new')
                 archive.unlink()
@@ -3266,11 +3362,11 @@ def latest_release():
         release = json.load(response)
     version = '.'.join(re.findall(r'\d+', release['tag_name']))
     url = next((asset['browser_download_url'] for asset in release.get('assets', [])
-                if asset.get('name', '').lower().endswith('.zip')), None)
+                if asset.get('name', '').lower().endswith('.zip' if WINDOWS else '.appimage')), None)
     return version, url, release.get('html_url') or RELEASES_PAGE
 
 
-def download_update(url, archive, progress=None, opener=urllib.request.urlopen):
+def download_update(url, archive, progress=None, opener=urllib.request.urlopen, whole_zip=True):
     """Downloads the release zip to `archive`; progress(done, total) per MiB. Raises OSError when
     the connection ends early or the file is not a whole zip."""
     request = urllib.request.Request(url, headers={'User-Agent': 'knack-launcher'})
@@ -3282,8 +3378,16 @@ def download_update(url, archive, progress=None, opener=urllib.request.urlopen):
             if progress and done >> 20 != shown:
                 shown = done >> 20
                 progress(done, total)
-    if (total and done != total) or not zipfile.is_zipfile(archive):
+    if (total and done != total) or (whole_zip and not zipfile.is_zipfile(archive)):
         raise OSError(f'the download stopped early ({done >> 20} of {total >> 20} MB)')
+
+
+def install_appimage(new, running):
+    """Linux: the downloaded AppImage takes the running one's place (the running launcher keeps its
+    open copy) and starts; the old one exits."""
+    os.chmod(new, 0o755)
+    os.replace(new, running)
+    subprocess.Popen([str(running)], env=host_environment(), stdin=subprocess.DEVNULL, start_new_session=True)
 
 
 def install_update(target, wait_pid):
